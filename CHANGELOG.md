@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1] - 2026-06-26
+### Changed
+- `abios-feedback` hardened with explicit anti-confusion rules: capture is a sanitized issue on the
+  CONSTANT target `CSalcedoDataBI/agentic-bi-ops` (never `gh repo view` of the cwd), personal account
+  always, no writes to the current project; implementing happens in `$ABIOS_HOME`, not the cwd.
+
 ## [0.3.0] - 2026-06-26
 ### Added
 - Coherent `board init`: now also sets the project's short description and README and links the repo
