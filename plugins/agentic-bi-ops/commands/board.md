@@ -9,7 +9,9 @@ CSalcedoDataBI; honor an explicit `--account pal-devs` in the arguments). Never 
 Then apply the `projects-admin` skill. Parse the request into ONE of these sub-actions and run the
 matching recipe from the projects-admin references:
 
-- **init** — create a board and link it to the current repo (references/board-ops.md)
+- **init** — create a board and fill it coherently: title, short description, README, and link the
+  repo (references/board-ops.md). Tell the user the two UI-only items (Default repository pick, View
+  name/layout) need one click in settings — do not claim they were set.
 - **add** — add an issue/PR to the board (references/issue-ops.md)
 - **move** — set an item's Status (references/board-ops.md single-select recipe)
 - **field** — create or set Priority/Target/Status values (references/board-ops.md)

@@ -4,18 +4,47 @@ Concrete commands for creating, configuring, and inspecting a GitHub Projects v2
 
 ---
 
-## Create a board and link it to the current repo
+## Create a board and link it to the current repo (coherent `init`)
+
+A board should never be left blank. On **init**, set its identity coherently so the GitHub
+Project settings page is not full of empty "Select a repository / short description / README"
+placeholders.
 
 ```bash
-# Create the board under the owner (user or org)
-gh project create --owner <owner> --title "<repo> — Board"
+# 1) Create the board under the owner (user or org)
+gh project create --owner <owner> --title "<repo> — Roadmap"
 # Returns: the new project number (e.g. 3)
 
-# Link the board to a single repo (run inside the repo working directory)
+# 2) Short description (settings → "Short description")
+gh project edit <num> --owner <owner> \
+  --description "Roadmap + issue tracking for <owner>/<repo>. Anchored to that repo."
+
+# 3) README (settings → "README")
+gh project edit <num> --owner <owner> --readme "# <repo> — Roadmap
+
+Tracks planned work and issues for **<owner>/<repo>**.
+Status: Todo / In Progress / Done.
+Repo: https://github.com/<owner>/<repo>"
+
+# 4) Link the repo (settings → linked repositories; required before "Default repository")
 gh project link <num> --owner <owner> --repo <owner>/<repo>
 ```
 
-Replace `<owner>` with the GitHub username or org (e.g. `CSalcedoDataBI`) and `<num>` with the project number returned above.
+Replace `<owner>` with the GitHub username or org (e.g. `CSalcedoDataBI`) and `<num>` with the
+project number returned above. Verify it took:
+`gh project view <num> --owner <owner> --format json` → check `shortDescription` and `readme`.
+
+### What `gh` can and cannot do for the settings page
+| Settings field | Automatable? | How |
+|---|---|---|
+| Short description | ✅ | `gh project edit --description` |
+| README | ✅ | `gh project edit --readme` |
+| Linked repository | ✅ | `gh project link --repo` |
+| **Default repository** (pick among linked) | ⚠️ UI only | no `gh`/GraphQL mutation — one click in settings after linking |
+| **View name / layout** ("View 1" → Board, group by Status) | ⚠️ UI only | `gh` has no view-management command; rename/group in the UI |
+
+On init, do the four `✅` steps automatically and tell the user the two `⚠️` items are a one-time
+UI click (don't claim they were set).
 
 ---
 

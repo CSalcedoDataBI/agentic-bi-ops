@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0] - 2026-06-26
+### Added
+- Coherent `board init`: now also sets the project's short description and README and links the repo
+  (`gh project edit --description/--readme`, `gh project link`). Documents that the Default-repository
+  pick and View name/layout are UI-only (no gh/GraphQL mutation).
+
 ## [0.2.1] - 2026-06-26
 ### Fixed
 - Packaging: the plugin now lives in `plugins/agentic-bi-ops/` with its own `.claude-plugin/plugin.json`

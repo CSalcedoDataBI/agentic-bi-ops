@@ -11,6 +11,15 @@ describes a change to the **public** tool with **no** private project context. S
 - **Fix:** <concrete public change>
 -->
 
+## 2026-06-26 — `init` should fill the board settings coherently
+- **Where:** `skills/projects-admin/references/board-ops.md`, `commands/board.md` (init).
+- **Problem:** a freshly created board left Short description / README / linked repository empty,
+  so the GitHub Project settings page looked unfinished/unprofessional.
+- **Fix (shipped 0.3.0):** init now sets the short description and README (`gh project edit
+  --description/--readme`) and links the repo (`gh project link`). Documented that two settings are
+  UI-only with no `gh`/GraphQL mutation: the **Default repository** pick (among linked repos) and the
+  **View name/layout** ("View 1" → Board, group by Status).
+
 ## 2026-06-26 — plugin packaging: root-as-plugin is rejected by the installer
 - **Where:** `.claude-plugin/marketplace.json`, repo layout.
 - **Problem:** a single-plugin repo using `source: "./"` (plugin = repo root) is silently rejected
