@@ -77,7 +77,30 @@ are cross-platform.
 |---|---|
 | `gh-account` skill | Resolves the active account and injects its token per-operation. The shared foundation for every module. |
 | `projects-admin` skill | Board + issue governance: fields, item moves, bulk ops, CI auto-add — with dry-run safety on destructive actions. |
+| `abios-feedback` skill | Capture tool improvements found while working in any project, sanitized so private data never leaks back here. |
 | `/board` command | Natural-language entry point for the above. |
+
+---
+
+## Contributing safely (private → public)
+
+This tool improves itself: most fixes are discovered while using it inside **private** projects.
+The hard rule is that the cause may be private, but the contribution must be public-only.
+
+Two layers protect this repo:
+
+1. **Discipline** — the `abios-feedback` skill captures each improvement abstracted to the public
+   tool (no repo names, client names, data, GUIDs, or paths).
+2. **A guard you can't forget** — after cloning, run once:
+   ```
+   powershell -File scripts/install-guard.ps1
+   ```
+   This wires a `pre-commit` + `pre-push` hook that **blocks** any commit/push whose added lines
+   contain a known secret pattern or a term from your local `.abios/private-denylist.txt`
+   (gitignored — never committed). Seed that file with your own private fingerprints.
+
+It's defense-in-depth, not a guarantee: a denylist only catches terms you list, so keep layer 1
+honest. Override (`--no-verify`) only for a confirmed false positive.
 
 ---
 

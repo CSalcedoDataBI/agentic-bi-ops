@@ -1,0 +1,16 @@
+# agentic-bi-ops — private denylist (TEMPLATE)
+#
+# Copy this to  .abios/private-denylist.txt  (gitignored — NEVER committed) and list the
+# strings that must NEVER appear in this PUBLIC repo. The pre-commit / pre-push guard blocks
+# any commit or push whose ADDED lines contain any term below (case-insensitive substring)
+# or a known secret pattern.
+#
+# One term per line. Lines starting with # are ignored. Use YOUR real private values
+# in the real file — do not put them here in the committed template.
+#
+# Put here (examples — replace with your own):
+#   my-private-repo-name          # name of a private repo
+#   AcmeCorp                      # a client / customer name
+#   00000000-0000-0000-0000-000000000000   # a Fabric/Power BI workspace or model GUID
+#   OneLake - Microsoft\Acme      # a local data path fragment
+#   internal.example.com          # an internal domain

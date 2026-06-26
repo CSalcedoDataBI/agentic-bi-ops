@@ -5,3 +5,7 @@ Thumbs.db
 # local scratch
 /tmp/
 /.local/
+# local-only private denylist — MUST NEVER be committed
+.abios/private-denylist.txt
+# internal dev scaffolding (kept local, not shipped in the public plugin)
+/docs/
