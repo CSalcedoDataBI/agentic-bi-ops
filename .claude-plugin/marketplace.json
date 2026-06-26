@@ -1,11 +1,12 @@
 {
   "name": "agentic-bi-ops",
+  "description": "GitOps for BI with AI agents — cross-account GitHub Projects & issues governance, plus future BI GitOps modules.",
   "owner": { "name": "CSalcedoDataBI", "url": "https://github.com/CSalcedoDataBI" },
   "plugins": [
     {
       "name": "agentic-bi-ops",
-      "source": "./",
-      "description": "Cross-account GitHub Projects & issues governance, plus future BI GitOps modules."
+      "source": "./plugins/agentic-bi-ops",
+      "description": "Cross-account GitHub Projects & issues governance: gh-account, projects-admin, abios-feedback, /board."
     }
   ]
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1] - 2026-06-26
+### Fixed
+- Packaging: the plugin now lives in `plugins/agentic-bi-ops/` with its own `.claude-plugin/plugin.json`
+  and the marketplace points to it (`source: ./plugins/agentic-bi-ops`). The previous root-as-plugin
+  layout (`source: ./`) was silently rejected by `/plugin marketplace add`. Guard/dev-infra stays at root.
+
 ## [0.2.0] - 2026-06-26
 ### Added
 - `abios-feedback` skill — capture tool improvements discovered in any project in a sanitized,
