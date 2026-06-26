@@ -11,6 +11,16 @@ describes a change to the **public** tool with **no** private project context. S
 - **Fix:** <concrete public change>
 -->
 
+## 2026-06-26 — plugin packaging: root-as-plugin is rejected by the installer
+- **Where:** `.claude-plugin/marketplace.json`, repo layout.
+- **Problem:** a single-plugin repo using `source: "./"` (plugin = repo root) is silently rejected
+  by `/plugin marketplace add` — it never registers, so the slash command shows "Unknown command".
+- **Fix (shipped 0.2.1):** the plugin must live in `plugins/<name>/` with its own
+  `.claude-plugin/plugin.json`; the marketplace points to `./plugins/<name>`. Dev-infra (guard, hooks)
+  stays at repo root.
+- **Follow-up idea:** add a `validate-plugin-structure` check (CI or a guard step) that fails if
+  `marketplace.json` references a plugin source that lacks `<source>/.claude-plugin/plugin.json`.
+
 ## 2026-06-26 — guard secret patterns self-matched their own definition lines
 - **Where:** `scripts/guard-no-private.ps1`
 - **Problem:** loose secret regexes matched the pattern-definition lines in the guard's own
