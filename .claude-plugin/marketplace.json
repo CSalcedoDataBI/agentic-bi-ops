@@ -1,0 +1,11 @@
+{
+  "name": "agentic-bi-ops",
+  "owner": { "name": "CSalcedoDataBI", "url": "https://github.com/CSalcedoDataBI" },
+  "plugins": [
+    {
+      "name": "agentic-bi-ops",
+      "source": "./",
+      "description": "Cross-account GitHub Projects & issues governance, plus future BI GitOps modules."
+    }
+  ]
+}

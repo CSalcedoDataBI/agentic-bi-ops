@@ -1,0 +1,7 @@
+# editor / os
+.DS_Store
+Thumbs.db
+*.log
+# local scratch
+/tmp/
+/.local/

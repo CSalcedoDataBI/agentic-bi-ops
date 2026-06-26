@@ -1,0 +1,8 @@
+{
+  "name": "agentic-bi-ops",
+  "version": "0.1.0",
+  "description": "GitOps for BI with AI agents. Module 1: cross-account GitHub Projects & issues governance.",
+  "author": { "name": "CSalcedoDataBI" },
+  "license": "MIT",
+  "homepage": "https://github.com/CSalcedoDataBI/agentic-bi-ops"
+}
