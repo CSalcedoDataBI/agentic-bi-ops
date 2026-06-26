@@ -113,6 +113,20 @@ All four flags are required. `--project-id` is the node ID (`PVT_…`) from Step
 
 ---
 
+## Delete a board (teardown)
+
+```bash
+# gh project delete has NO --yes / -y flag — it prompts interactively.
+# To run it non-interactively, pipe a confirmation to stdin:
+echo "yes" | gh project delete <num> --owner <owner>
+```
+
+> ⚠️ This is a destructive op. Per the skill's safety rule, print which board (number + title) is about
+> to be deleted and get explicit user confirmation BEFORE running it. Verified 2026-06-26: the only
+> flags `gh project delete` accepts are `--owner/--format/--jq/--template` — there is no skip-confirm flag.
+
+---
+
 ## Notes
 
 - The project number (`<num>`) is the short integer shown in the board URL and returned by `gh project create`. It is NOT the node ID.
