@@ -17,6 +17,9 @@ Then enable the `agentic-bi-ops` plugin in your Claude Code settings.
 
 ## Prerequisites
 
+- **Platform: Windows.** Token resolution reads the Windows USER registry via PowerShell
+  (`[System.Environment]::GetEnvironmentVariable(..., 'User')`). On macOS/Linux, export `GH_TOKEN`
+  yourself before running board ops; the `gh project`/`gh issue` recipes themselves are cross-platform.
 - `gh` CLI installed and authenticated.
 - Windows user environment variables:
   - `GITHUB_TOKEN_PERSONAL` (**required**) — PAT for `CSalcedoDataBI`, scopes: `project` + `repo`.
