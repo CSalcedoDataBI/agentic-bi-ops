@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0] - 2026-06-26
+### Added
+- **Field presets** (`presets/fields.{en,es}.json` + `scripts/Apply-FieldPreset.ps1` +
+  `references/field-presets.md`): one-step, idempotent, localized governance fields
+  (Status/Priority/Type/Area/Estimate/Target). `/board field apply en|es`.
+- **`project-scan` skill + `/scan` command**: scans the CURRENT project for untracked work
+  (code TODO/FIXME, doc checklists & "pending" sections, plan/spec docs) and converts chosen items
+  into issues + a board plan. Targets the current repo (not the tool's), propose-then-confirm.
+### Notes
+- Documented that view visibility/layout and renaming the built-in Status field are UI/GraphQL-only.
+
 ## [0.3.1] - 2026-06-26
 ### Changed
 - `abios-feedback` hardened with explicit anti-confusion rules: capture is a sanitized issue on the

@@ -1,0 +1,12 @@
+{
+  "lang": "es",
+  "description": "Campos estándar de governance de ingeniería para un board de GitHub Projects (en español). Nota: el campo 'Status' por defecto de GitHub no se puede renombrar por CLI; este preset crea 'Estado' como campo nuevo.",
+  "fields": [
+    { "name": "Estado",    "type": "SINGLE_SELECT", "options": ["Por hacer", "En progreso", "Bloqueado", "En revisión", "Hecho"] },
+    { "name": "Prioridad", "type": "SINGLE_SELECT", "options": ["P0", "P1", "P2", "P3"] },
+    { "name": "Tipo",      "type": "SINGLE_SELECT", "options": ["Bug", "Funcionalidad", "Mejora", "Tarea", "Docs", "Spike"] },
+    { "name": "Área",      "type": "TEXT" },
+    { "name": "Estimado",  "type": "NUMBER" },
+    { "name": "Objetivo",  "type": "TEXT" }
+  ]
+}

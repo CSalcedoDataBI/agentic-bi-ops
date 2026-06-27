@@ -1,0 +1,12 @@
+{
+  "lang": "en",
+  "description": "Standard engineering governance fields for a GitHub Projects board.",
+  "fields": [
+    { "name": "Status",   "type": "SINGLE_SELECT", "options": ["Todo", "In Progress", "Blocked", "In Review", "Done"] },
+    { "name": "Priority", "type": "SINGLE_SELECT", "options": ["P0", "P1", "P2", "P3"] },
+    { "name": "Type",     "type": "SINGLE_SELECT", "options": ["Bug", "Feature", "Improvement", "Chore", "Docs", "Spike"] },
+    { "name": "Area",     "type": "TEXT" },
+    { "name": "Estimate", "type": "NUMBER" },
+    { "name": "Target",   "type": "TEXT" }
+  ]
+}

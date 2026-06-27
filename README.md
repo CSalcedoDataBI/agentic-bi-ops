@@ -78,7 +78,9 @@ are cross-platform.
 | `gh-account` skill | Resolves the active account and injects its token per-operation. The shared foundation for every module. |
 | `projects-admin` skill | Board + issue governance: fields, item moves, bulk ops, CI auto-add — with dry-run safety on destructive actions. |
 | `abios-feedback` skill | Capture tool improvements found while working in any project, sanitized so private data never leaks back here. |
-| `/board` command | Natural-language entry point for the above. |
+| `project-scan` skill | Scan the CURRENT project for untracked work (code TODOs, doc checklists/pending, plans/specs) and turn chosen items into issues + a board plan. |
+| Field presets | One-step localized governance fields (Status/Priority/Type/Area/Estimate/Target) in EN or ES. |
+| `/board`, `/scan` commands | Natural-language entry points for the above. |
 
 ---
 
