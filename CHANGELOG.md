@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.1] - 2026-06-29
+### Fixed
+- Board visibility guidance: a board linked from a public repo's docs/showcase must be Public
+  (`gh project edit --visibility PUBLIC`). Documented in board-ops + best-practices; applied to the
+  showcase board so its links work for everyone.
+
 ## [0.6.0] - 2026-06-29
 ### Added
 - `scripts/Export-BoardSnapshot.ps1` — render any board as a Markdown table (a publishable snapshot).

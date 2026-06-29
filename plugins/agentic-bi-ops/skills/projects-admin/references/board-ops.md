@@ -157,6 +157,16 @@ echo "yes" | gh project delete <num> --owner <owner>
 > needs explicit user confirmation. Verified: the only flags `gh project delete` accepts are
 > `--owner/--format/--jq/--template` — there is no skip-confirm flag.
 
+## Visibility (match the repo / showcase)
+GitHub Projects are **Private by default**. A board that backs a **public** repo's published
+showcase (README/SHOWCASE links to it) must be **Public**, or external visitors hit a wall:
+```bash
+gh project edit <num> --owner <owner> --visibility PUBLIC    # or PRIVATE
+# check: gh project view <num> --owner <owner> --format json --jq .public
+```
+Rule: never silently flip visibility for a private repo's board; but when a board is linked from a
+public repo's docs, set it Public (its items are already public-safe by the same content discipline).
+
 ## Get-or-create the board (never duplicate)
 Always resolve the existing board before creating one:
 ```powershell

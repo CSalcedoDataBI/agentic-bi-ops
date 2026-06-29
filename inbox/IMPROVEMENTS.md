@@ -11,6 +11,13 @@ describes a change to the **public** tool with **no** private project context. S
 - **Fix:** <concrete public change>
 -->
 
+## 2026-06-29 — board visibility must match repo exposure (public showcase needs public board)
+- **Where:** `references/board-ops.md`, `references/best-practices.md`.
+- **Problem:** boards are Private by default; the public README/SHOWCASE linked to a Private board,
+  so external visitors couldn't see it.
+- **Fix (0.6.1):** documented `gh project edit --visibility PUBLIC` and the rule "a board linked from
+  a public repo's docs must be Public". Applied to the tool's own board #13.
+
 ## 2026-06-29 — project-scan: exclude doc-noise dirs by default
 - **Where:** `skills/project-scan/SKILL.md` Step 1.
 - **Problem:** scanning `*.md` for `- [ ]` returned ~600 hits, ~99% of them content inside skill/agent

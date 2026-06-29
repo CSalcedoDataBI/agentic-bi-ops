@@ -33,6 +33,9 @@ See sources at the bottom.
 3. **One board ⇄ one repo** (anchoring): `gh project link`. Issues go only to the resolved origin repo.
 4. **Dry-run + confirm** for any bulk/destructive change; show exactly what will change first.
 5. **Idempotency:** labels/fields use `--force`/skip-if-exists; re-running a command must not duplicate.
+6. **Visibility matches exposure:** boards are Private by default; a board linked from a **public**
+   repo's docs/showcase must be set **Public** (`gh project edit --visibility PUBLIC`) so the links
+   work for everyone. Never silently make a private repo's board public.
 
 ## Standard field set (preset)
 `Status · Priority · Type · Area · Estimate · Target` (EN) — the Scrumban-minimal governance set.
