@@ -18,21 +18,32 @@ targets the tool's own repo). Do not confuse them.
 3. Never invent issues in another repo or the tool's repo.
 
 ## Step 1 — Scan (default sources)
-Run these read-only scans (ripgrep / the Grep tool), excluding vendored/build dirs:
+Run these read-only scans (ripgrep / the Grep tool). Two defaults matter a lot in practice:
+**(i) exclude doc-noise dirs** (skill/agent definitions and templates contain hundreds of `- [ ]`
+that are content, not project work), and **(ii) require the debt marker to follow the `TAG:` /
+`TAG(` convention** so a Spanish word like "todo" ("everything") is not a false positive.
 
 ```bash
-# a) code debt markers
-rg -n --no-heading -e '\b(TODO|FIXME|HACK|XXX|BUG)\b' \
-   -g '!**/{node_modules,dist,build,.git,vendor,Tables,outputs}/**'
+# shared excludes (build/data + the doc-noise dirs that otherwise dominate results)
+EXC="-g !**/{node_modules,dist,build,.git,vendor,Tables,outputs}/** \
+     -g !**/.claude/skills/** -g !**/.specify/** -g !**/templates/**"
 
-# b) unchecked checklist items + pending sections in docs
-rg -n --no-heading -e '^\s*[-*] \[ \] ' -g '*.md'
-rg -n --no-heading -i -e '^\s*#{1,6}\s*(pendiente|pendientes|todo|next steps|por hacer)\b' -g '*.md'
+# a) code debt markers — case-sensitive, must be a TAG (followed by : ( or a TAG-id:) — NOT bare 'todo'
+rg -n --no-heading --case-sensitive $EXC \
+   -e '\b(TODO|FIXME|HACK|XXX|BUG)\b(\s*[:(]|\s+[A-Z0-9][\w-]*\s*:)'
+
+# b) unchecked checklist items + pending sections in REAL docs (noise dirs excluded by $EXC)
+rg -n --no-heading $EXC -e '^\s*[-*] \[ \] ' -g '*.md'
+rg -n --no-heading -i $EXC -e '^\s*#{1,6}\s*(pendiente|pendientes|todo|next steps|por hacer)\b' -g '*.md'
 
 # c) plan/spec docs (candidates that may not be tracked yet)
 rg -l --files -g 'docs/**/plans/**.md' -g 'specs/**.md' -g '.claude/plans/**.md' 2>/dev/null
 ```
-Optional extras when asked: `CHANGELOG` "Unreleased" sections, tests marked `skip`/`todo`/`xfail`.
+Notes:
+- The tag regex catches `TODO:`, `TODO (F5):`, `TODO SM-107:` but rejects `"... TODO es string"`.
+  If a repo uses bare `TODO` without `:`/`(`, widen the pattern for that run and judge in Step 2.
+- `--case-sensitive` keeps lowercase `todo`/`bug` words out.
+- Optional extras when asked: `CHANGELOG` "Unreleased" sections, tests marked `skip`/`todo`/`xfail`.
 
 For (c), a plan is "already tracked" if an open issue references its path/title. Check with
 `gh issue list --repo <owner>/<repo> --search "<plan title>"` before proposing it.

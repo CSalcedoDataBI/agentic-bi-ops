@@ -11,6 +11,21 @@ describes a change to the **public** tool with **no** private project context. S
 - **Fix:** <concrete public change>
 -->
 
+## 2026-06-29 — project-scan: exclude doc-noise dirs by default
+- **Where:** `skills/project-scan/SKILL.md` Step 1.
+- **Problem:** scanning `*.md` for `- [ ]` returned ~600 hits, ~99% of them content inside skill/agent
+  definitions and templates — not real project work.
+- **Fix (0.5.1):** default excludes `**/.claude/skills/**`, `**/.specify/**`, `**/templates/**`
+  (plus build/data dirs) via a shared `$EXC`.
+
+## 2026-06-29 — project-scan: code-marker regex matched the Spanish word "todo"
+- **Where:** `skills/project-scan/SKILL.md` Step 1.
+- **Problem:** `\b(TODO|...)\b` flagged "...TODO es string" (Spanish "todo" = everything) and lowercase
+  words.
+- **Fix (0.5.1):** case-sensitive + require the `TAG:` / `TAG(` / `TAG id:` convention:
+  `\b(TODO|FIXME|HACK|XXX|BUG)\b(\s*[:(]|\s+[A-Z0-9][\w-]*\s*:)`. Verified it catches real tags
+  (`TODO:`, `TODO (F5):`, `TODO SM-107:`) and rejects bare-word "TODO es".
+
 ## 2026-06-26 — `init` should fill the board settings coherently
 - **Where:** `skills/projects-admin/references/board-ops.md`, `commands/board.md` (init).
 - **Problem:** a freshly created board left Short description / README / linked repository empty,

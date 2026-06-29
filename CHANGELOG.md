@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - 2026-06-29
+### Fixed
+- `project-scan` defaults: exclude doc-noise dirs (`.claude/skills`, `.specify`, `templates`) that
+  drowned checklist results, and tighten the code-marker regex (case-sensitive + `TAG:`/`TAG(`
+  convention) so the Spanish word "todo" and lowercase words are no longer false positives.
+
 ## [0.5.0] - 2026-06-26
 ### Added
 - **Safe by design.** `scripts/Backup-Board.ps1` — a COMPLETE backup (JSON snapshot of
