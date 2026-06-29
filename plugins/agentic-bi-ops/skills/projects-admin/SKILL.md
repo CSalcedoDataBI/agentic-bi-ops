@@ -61,7 +61,9 @@ For the exact commands to create these fields and set their values on items, see
 
 | Intent | Reference file | Command family |
 |--------|---------------|----------------|
-| Create a new project board | `references/board-ops.md` | `gh project create` |
+| Get the repo's board (reuse, don't duplicate) | `references/best-practices.md` | `Resolve-Board.ps1` (use BEFORE create) |
+| Create a new project board (only if none) | `references/board-ops.md` | via `Resolve-Board.ps1` → `gh project create` |
+| Delete a board (backup first, always) | `references/best-practices.md` | `Backup-Board.ps1` → `gh project delete` |
 | Link board to a repo | `references/board-ops.md` | `gh project link` |
 | Create / list fields (Status, Priority, Target) | `references/board-ops.md` | `gh project field-create`, `gh project field-list` |
 | Apply a whole field preset (EN/ES, custom values) | `references/field-presets.md` | `Apply-FieldPreset.ps1 -Lang en\|es` |
@@ -80,12 +82,33 @@ For the exact commands to create these fields and set their values on items, see
 
 ---
 
+## Safe operations — MANDATORY (see `references/best-practices.md`)
+
+These two rules are not optional and must be followed every time:
+
+### 1. Resolve-or-reuse before creating a board (never duplicate)
+Before `init`, `add`, or registering a plan, **resolve the existing board** instead of blindly
+creating one — duplicate boards are the most common mistake:
+```powershell
+$num = & "${CLAUDE_PLUGIN_ROOT}/scripts/Resolve-Board.ps1" -Owner <owner> -Repo <owner>/<repo>
+# reuses the repo's board (canonical title "<repo> — Roadmap" or one containing the repo name),
+# creating + linking + describing only if none exists. NEVER call `gh project create` directly.
+```
+
+### 2. Always back up before deleting (unconditional, do NOT ask)
+Any `gh project delete` MUST be preceded by a full backup — automatically, without asking:
+```powershell
+& "${CLAUDE_PLUGIN_ROOT}/scripts/Backup-Board.ps1" -Number <num> -Owner <owner>
+# writes a JSON snapshot (project+fields+items) AND a restorable live clone, THEN you may delete.
+```
+The backup happens unconditionally; the **delete** itself still needs explicit user confirmation.
+
 ## Safety — destructive operations require dry-run + confirmation
 
 Before running any operation that mutates more than one item (bulk move, bulk close, bulk label, project delete), you MUST:
 
 1. **Print the plan**: list every item that would be affected (title, number, current state).
-2. **Pause and ask the user** to confirm before proceeding.
+2. **Pause and ask the user** to confirm before proceeding (the backup in rule 2 above already ran).
 3. Only after explicit confirmation, run the mutation.
 
 Example pattern for bulk close:
@@ -123,3 +146,5 @@ Before reporting a board operation as complete, confirm:
 - Any links placed in issue bodies or project descriptions are full `https://github.com/<owner>/<repo>/blob/<branch>/...` URLs (never relative paths)?
 - Added items are visible on the board after `gh project item-add` (spot-check with `gh project item-list`)?
 - Dry-run was shown to the user and confirmed before any destructive op?
+- **Resolve-or-reuse was used (no new duplicate board created)?**
+- **A backup ran (JSON + live clone) BEFORE any `gh project delete`?**

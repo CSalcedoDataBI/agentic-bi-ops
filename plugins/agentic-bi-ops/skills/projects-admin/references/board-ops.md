@@ -142,17 +142,28 @@ All four flags are required. `--project-id` is the node ID (`PVT_…`) from Step
 
 ---
 
-## Delete a board (teardown)
+## Delete a board (BACKUP FIRST — always)
 
 ```bash
-# gh project delete has NO --yes / -y flag — it prompts interactively.
-# To run it non-interactively, pipe a confirmation to stdin:
+# 1) MANDATORY, unconditional backup (do NOT ask) — JSON snapshot + restorable live clone:
+powershell -File "${CLAUDE_PLUGIN_ROOT}/scripts/Backup-Board.ps1" -Number <num> -Owner <owner>
+
+# 2) Then confirm with the user (destructive), then delete.
+#    gh project delete has NO --yes/-y flag — pipe a confirmation to stdin:
 echo "yes" | gh project delete <num> --owner <owner>
 ```
 
-> ⚠️ This is a destructive op. Per the skill's safety rule, print which board (number + title) is about
-> to be deleted and get explicit user confirmation BEFORE running it. Verified 2026-06-26: the only
-> flags `gh project delete` accepts are `--owner/--format/--jq/--template` — there is no skip-confirm flag.
+> ⚠️ Destructive. The backup in step 1 runs **automatically and is never skipped**; only the delete
+> needs explicit user confirmation. Verified: the only flags `gh project delete` accepts are
+> `--owner/--format/--jq/--template` — there is no skip-confirm flag.
+
+## Get-or-create the board (never duplicate)
+Always resolve the existing board before creating one:
+```powershell
+$num = & "${CLAUDE_PLUGIN_ROOT}/scripts/Resolve-Board.ps1" -Owner <owner> -Repo <owner>/<repo>
+```
+It reuses the repo's board if it exists (canonical title `<repo> — Roadmap`, or any non-backup board
+whose title contains the repo name) and only creates+links+describes a new one if none is found.
 
 ---
 

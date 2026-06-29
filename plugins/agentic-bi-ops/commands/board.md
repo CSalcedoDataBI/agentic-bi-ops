@@ -19,7 +19,12 @@ matching recipe from the projects-admin references:
 - **bulk** — batch move/close/label across many items (references/issue-ops.md)
 - **automate** — install the actions/add-to-project CI workflow (references/automation.md)
 
-For any destructive action (project delete, bulk close/move), print a dry-run of exactly what
-would change and ask the user to confirm BEFORE mutating.
+SAFETY (mandatory, see references/best-practices.md):
+- Before init/add/plan, **resolve-or-reuse** the repo's board with `scripts/Resolve-Board.ps1` —
+  never create a duplicate board with a blind `gh project create`.
+- Before ANY board delete, **always run `scripts/Backup-Board.ps1` first** (JSON snapshot + live
+  clone) — unconditionally, without asking. The delete itself still needs explicit confirmation.
+- For any destructive action (delete, bulk close/move), print a dry-run of exactly what would
+  change and confirm BEFORE mutating.
 
 Arguments: $ARGUMENTS

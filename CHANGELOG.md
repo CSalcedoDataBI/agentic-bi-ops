@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0] - 2026-06-26
+### Added
+- **Safe by design.** `scripts/Backup-Board.ps1` — a COMPLETE backup (JSON snapshot of
+  project+fields+items + a restorable live clone) that runs **unconditionally before any board
+  delete** (not asked).
+- `scripts/Resolve-Board.ps1` — **find-or-reuse** the repo's board so `init`/`add`/plan never create
+  a duplicate (fixes the "new board every time" bug). Creates+links+describes only if none exists.
+- `references/best-practices.md` — methodology (Kanban base + Scrum-lite fields = Scrumban) and the
+  enforced safe-operation rules, with sources.
+### Changed
+- `projects-admin` SKILL, board-ops, and `/board` now mandate resolve-before-create and
+  backup-before-delete; verification checklist updated.
+
 ## [0.4.0] - 2026-06-26
 ### Added
 - **Field presets** (`presets/fields.{en,es}.json` + `scripts/Apply-FieldPreset.ps1` +

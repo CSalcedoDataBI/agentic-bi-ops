@@ -9,3 +9,9 @@ Thumbs.db
 .abios/private-denylist.txt
 # internal dev scaffolding (kept local, not shipped in the public plugin)
 /docs/
+# board backups (may contain private board data) — never commit
+.agentic-bi-ops/
+**/.backups/
+*.items.json
+*.project.json
+*.fields.json
