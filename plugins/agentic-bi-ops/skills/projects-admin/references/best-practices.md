@@ -31,6 +31,9 @@ See sources at the bottom.
    backup is **unconditional and not asked for** — it just happens. The delete itself still needs the
    user's explicit confirmation (destructive).
 3. **One board ⇄ one repo** (anchoring): `gh project link`. Issues go only to the resolved origin repo.
+   Before `item-add`, the item's source repo MUST equal the board's anchored repo — refuse to add an
+   issue from a different (e.g. private) project. A public tool's board stays 100% about that tool;
+   private-project work belongs on that project's OWN board.
 4. **Dry-run + confirm** for any bulk/destructive change; show exactly what will change first.
 5. **Idempotency:** labels/fields use `--force`/skip-if-exists; re-running a command must not duplicate.
 6. **Visibility matches exposure:** boards are Private by default; a board linked from a **public**

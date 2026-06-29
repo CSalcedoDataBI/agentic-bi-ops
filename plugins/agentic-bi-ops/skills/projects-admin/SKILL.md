@@ -41,6 +41,19 @@ gh project link <num> --owner <owner> --repo $origin
 
 **Hard rule:** create issues ONLY in the `origin` owner/repo resolved above. Never write issues to a random shared board or unrelated repo.
 
+**Hard rule — a board only holds items from its own repo.** Before `item-add`, the item's source
+repo MUST equal the board's anchored repo. A board is about ONE project; never mix in issues from a
+different (e.g. private) project. Verify and refuse otherwise:
+```powershell
+# the URL you are about to add must belong to the board's anchored repo
+$anchored = "<owner>/<repo>"                      # the repo this board is linked to
+if ($url -notmatch [regex]::Escape("github.com/$anchored/")) {
+  throw "Refusing: $url is not from $anchored. Add it to that project's OWN board instead."
+}
+gh project item-add <num> --owner <owner> --url $url
+```
+This keeps a public tool's board free of any private-project content (and vice versa).
+
 ---
 
 ## Field conventions

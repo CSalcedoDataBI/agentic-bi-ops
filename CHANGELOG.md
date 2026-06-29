@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.2] - 2026-06-29
+### Added
+- Hard rule + pre-`item-add` check: a board only accepts items from its own anchored repo — a public
+  tool's board can never be contaminated with private-project issues (and vice versa).
+
 ## [0.6.1] - 2026-06-29
 ### Fixed
 - Board visibility guidance: a board linked from a public repo's docs/showcase must be Public

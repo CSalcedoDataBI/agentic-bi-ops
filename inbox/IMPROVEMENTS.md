@@ -11,6 +11,14 @@ describes a change to the **public** tool with **no** private project context. S
 - **Fix:** <concrete public change>
 -->
 
+## 2026-06-29 — a board must only hold items from its own repo (no cross-project mixing)
+- **Where:** `references/best-practices.md`, `projects-admin/SKILL.md` (Anchoring).
+- **Problem:** nothing technically stopped adding an issue from a different (private) project onto a
+  public tool's board.
+- **Fix (0.6.2):** hard rule + check before `item-add` — the item's source repo must equal the
+  board's anchored repo; refuse otherwise. Keeps the public board 100% about the tool. Verified the
+  tool's board #13 contains only `CSalcedoDataBI/agentic-bi-ops` items.
+
 ## 2026-06-29 — board visibility must match repo exposure (public showcase needs public board)
 - **Where:** `references/board-ops.md`, `references/best-practices.md`.
 - **Problem:** boards are Private by default; the public README/SHOWCASE linked to a Private board,
