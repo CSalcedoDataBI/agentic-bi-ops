@@ -9,6 +9,9 @@ anything destructive. It works across multiple GitHub accounts from one machine.
 
 This is **Module 1** of a growing "GitOps for BI" suite (see [roadmap](#module-roadmap)).
 
+> **See it run on itself → [SHOWCASE.md](SHOWCASE.md)** — the tool governs its own roadmap board;
+> every fix was found while using it and tracked in the open (the dogfooding loop).
+
 ---
 
 ## Why

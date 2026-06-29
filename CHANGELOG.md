@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0] - 2026-06-29
+### Added
+- `scripts/Export-BoardSnapshot.ps1` — render any board as a Markdown table (a publishable snapshot).
+- `SHOWCASE.md` — a self-contained, publishable example: the tool governing its own roadmap board,
+  with the dogfooding loop and version evolution. No other repository referenced.
+
 ## [0.5.1] - 2026-06-29
 ### Fixed
 - `project-scan` defaults: exclude doc-noise dirs (`.claude/skills`, `.specify`, `templates`) that
