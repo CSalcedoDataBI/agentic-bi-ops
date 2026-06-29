@@ -20,7 +20,7 @@ use the tool  →  hit a rough edge  →  abios-feedback captures it (public-onl
 _Snapshot of [agentic-bi-ops — Roadmap](https://github.com/users/CSalcedoDataBI/projects/13).
 Regenerate with `scripts/Export-BoardSnapshot.ps1 -Number 13 -Owner CSalcedoDataBI`._
 
-**5 of 8 tracked items done.**
+**7 of 10 tracked items done.**
 
 | Status | Item | Issue |
 |--------|------|-------|
@@ -32,9 +32,11 @@ Regenerate with `scripts/Export-BoardSnapshot.ps1 -Number 13 -Owner CSalcedoData
 | Done | init: fill board description/README/linked-repo coherently | [#6](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/6) |
 | Done | project-scan: exclude noise dirs from scan | [#7](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/7) |
 | Done | project-scan: code-marker regex must follow the `TAG:` convention | [#8](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/8) |
+| Done | showcase: self-referential example + board snapshot export | [#9](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/9) |
+| Done | visibility: public-repo board must be Public | [#10](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/10) |
 
-The three `Todo` items are the forward roadmap; the five `Done` items are self-found improvements —
-each one a real bug the tool surfaced about itself and then fixed.
+The three `Todo` items are the forward roadmap; the `Done` items are self-found improvements —
+each one a real rough edge the tool surfaced about itself and then fixed.
 
 ## How it evolved
 
