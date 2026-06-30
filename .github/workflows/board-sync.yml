@@ -1,0 +1,29 @@
+name: Board Sync
+
+on:
+  issues:
+    types: [opened, closed, reopened, assigned]
+  pull_request:
+    types: [opened, closed]
+  schedule:
+    - cron: '0 9 * * 1'   # lunes 9am UTC — health check semanal
+  workflow_dispatch:        # disparo manual desde la UI
+
+permissions:
+  issues: write
+  pull-requests: read
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync board items
+        env:
+          GH_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
+          REPO_OWNER: CSalcedoDataBI
+          REPO_NAME: agentic-bi-ops
+          PROJECT_NUMBER: 13
+        run: bash scripts/board-sync.sh
