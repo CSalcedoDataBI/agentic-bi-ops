@@ -82,3 +82,4 @@
 - `projects-admin` skill + references (board-ops, issue-ops, automation).
 - `/board` command.
 - Plugin manifest + marketplace entry.
+- feat(M3): scaffold semantic-model review agents module (#3)
