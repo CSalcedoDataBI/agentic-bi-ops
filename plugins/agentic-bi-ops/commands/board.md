@@ -14,7 +14,9 @@ matching recipe from the projects-admin references:
   name/layout) need one click in settings — do not claim they were set.
 - **add** — add an issue/PR to the board (references/issue-ops.md)
 - **move** — set an item's Status (references/board-ops.md single-select recipe)
-- **field** — create fields / apply a field preset (`apply en|es`) / set Status/Priority/Type values
+- **field** — create fields / apply a field preset (`apply en|es`) / set Status/Priority/Type values /
+  **bulk-fill any custom field across EVERY item by rule** (`scripts/Set-BoardField.ps1` — single-select
+  by title-prefix map, or text by `{title}` template — idempotent, retries 502s)
   (references/field-presets.md + board-ops.md). Visibility-per-view and group-by are UI-only — say so.
 - **bulk** — batch move/close/label across many items (references/issue-ops.md)
 - **automate** — install the actions/add-to-project CI workflow (references/automation.md)

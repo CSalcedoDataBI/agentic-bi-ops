@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0] - 2026-06-30
+### Added
+- **Bulk-fill a custom field across every board item by rule** — new `scripts/Set-BoardField.ps1`
+  + `/board field` recipe. Single-select by title-prefix map (e.g. `Categoria`) or text by `{title}`
+  template (e.g. `Ruta`), idempotent, retries transient 502s. Documents the gotchas that bite a manual
+  loop (the `cat`=Get-Content alias shadowing, single-select-id vs `--text`, lowercased field keys in
+  `item-list`, GraphQL-batch quoting). Turns the "fill all the columns" chore into one command.
+
 ## [0.6.2] - 2026-06-29
 ### Added
 - Hard rule + pre-`item-add` check: a board only accepts items from its own anchored repo — a public

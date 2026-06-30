@@ -142,6 +142,45 @@ All four flags are required. `--project-id` is the node ID (`PVT_…`) from Step
 
 ---
 
+## Bulk-fill a custom field across EVERY item (by rule)
+
+The "fill all the columns" chore: set one field on every item from a per-item rule — a single-select
+by title prefix (e.g. `Categoria`), or a text field by template (e.g. `Ruta` =
+`.claude/skills/{name}/SKILL.md`). Use the helper script — it is idempotent, retries transient 502s,
+and picks single-select vs text automatically:
+
+```powershell
+# single-select by title-prefix map ("*" = fallback):
+& "<plugin>/scripts/Set-BoardField.ps1" -Number 6 -Owner PAL-Devs -Field Categoria `
+  -PrefixMap '{"apps-":"apps","model-":"model","agent-":"agent","etl-":"etl","viz-":"viz","shared-":"shared","speckit-":"framework","*":"vendored"}'
+
+# text field by template ({title} -> the item's title):
+& "<plugin>/scripts/Set-BoardField.ps1" -Number 6 -Owner PAL-Devs -Field Ruta -TextTemplate ".claude/skills/{title}/SKILL.md"
+
+# constant for all matching items:
+& "<plugin>/scripts/Set-BoardField.ps1" -Number 6 -Owner PAL-Devs -Field Status -Value Done
+```
+
+`-Filter` (regex on the item title) defaults to the skill-name shape `^[a-z0-9]+(-[a-z0-9]+)*$`, so
+long-titled tracking issues are skipped; pass your own to widen/narrow the set.
+
+### Gotchas (why a manual loop bites)
+- **`cat` is an alias for `Get-Content`** (also `gc`, `sl`, `gi`, …). Naming a helper `Cat`/`function Cat`
+  silently runs the alias instead — aliases outrank functions in PowerShell command resolution. Use
+  verb-prefixed names (`Resolve-FieldValue`).
+- **single-select vs text:** single-select needs `--single-select-option-id <id>`; a text/number field
+  needs `--text`/`--number`. Sending `--text` to a single-select (or vice-versa) silently no-ops.
+- **Idempotency:** `gh project item-list --format json` surfaces each custom field under a *lowercased,
+  stripped* key (`Categoria`→`.categoria`, `Up to Date`→`.uptodate`). Compare against it to skip
+  already-set items.
+- **Transient 502 Bad Gateway** is common when editing 100+ items back-to-back — retry with backoff
+  (the script does 4 tries). Don't treat one 502 as failure.
+- **Don't batch via GraphQL in PowerShell** unless you must: escaping the inner `"` of
+  `updateProjectV2ItemFieldValue(input:{… value:{singleSelectOptionId:"…"}})` is error-prone
+  (`\"` ≠ ``` `" ```). A per-item `item-edit` loop is slower but reliable.
+
+---
+
 ## Delete a board (BACKUP FIRST — always)
 
 ```bash
