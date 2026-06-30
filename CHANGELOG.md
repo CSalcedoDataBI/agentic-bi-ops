@@ -82,3 +82,4 @@
 - `projects-admin` skill + references (board-ops, issue-ops, automation).
 - `/board` command.
 - Plugin manifest + marketplace entry.
+- feat(M2): scaffold PBIP / Fabric git ops module (#2)
