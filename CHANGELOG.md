@@ -82,3 +82,4 @@
 - `projects-admin` skill + references (board-ops, issue-ops, automation).
 - `/board` command.
 - Plugin manifest + marketplace entry.
+- fix: exclude self-matching lines from secret guard pattern (#1)
