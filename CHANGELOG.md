@@ -82,3 +82,4 @@
 - `projects-admin` skill + references (board-ops, issue-ops, automation).
 - `/board` command.
 - Plugin manifest + marketplace entry.
+- fix: exclude .claude/skills + templates from project-scan (#7)
