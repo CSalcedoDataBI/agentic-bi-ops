@@ -316,7 +316,7 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
     projectId:$proj, itemId:$item, fieldId:$field,
     value:{singleSelectOptionId:$opt}
   }) { projectV2Item { id } }
-}' -F "proj=$projectId" -F "item=$itemId" -F "field=$fieldId" -F "opt=$optId" | Out-Null
+}' -f "proj=$projectId" -f "item=$itemId" -f "field=$fieldId" -f "opt=$optId" | Out-Null
                 Write-Host "  OK  #$($entry.IssueNum) $($ch.Display)" -ForegroundColor Green
                 $ok++
             }

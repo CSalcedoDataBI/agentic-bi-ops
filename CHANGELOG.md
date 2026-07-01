@@ -10,6 +10,11 @@
   context (body, labels, sub-issues) so the agent starts working it in-session. `-DryRun`
   previews the start without mutating; a CLOSED issue is refused with a reopen hint. Respects an
   already-set `GH_TOKEN` (gh-account / `-TokenVar GITHUB_TOKEN_BUSINESS` for the second account).
+### Fixed
+- Single-select mutations in `Board-Fill.ps1`/`Board-Work.ps1` now pass the option id with
+  `gh -f` (raw string) instead of `-F`: option ids are 8-hex-digit strings, and when one happens
+  to be all-numeric (e.g. `98236657`) `-F` auto-types it as Int and GraphQL rejects the
+  `String!` variable. Found dogfooding `/board work` on the tool's own board.
 
 ## [0.7.3] - 2026-06-30
 ### Added

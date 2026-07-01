@@ -260,7 +260,7 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
     projectId:$proj, itemId:$item, fieldId:$field,
     value:{singleSelectOptionId:$opt}
   }) { projectV2Item { id } }
-}' -F "proj=$projectId" -F "item=$($item.id)" -F "field=$($statusNode.id)" -F "opt=$inProgId" | Out-Null
+}' -f "proj=$projectId" -f "item=$($item.id)" -f "field=$($statusNode.id)" -f "opt=$inProgId" | Out-Null
 Write-Host "  OK  Status -> In Progress" -ForegroundColor Green
 
 # -- Execute: assign owner ------------------------------------------------------
