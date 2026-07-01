@@ -55,6 +55,7 @@ query($proj:ID!) {
               timelineItems(first:20 itemTypes:[CROSS_REFERENCED_EVENT]) {
                 nodes {
                   ... on CrossReferencedEvent {
+                    willCloseTarget
                     source {
                       ... on PullRequest { number state merged }
                     }
@@ -104,9 +105,11 @@ echo "$ITEMS" | jq -c '.data.node.items.nodes[]' | while read -r item; do
     select(.field.name == "Status") |
     .optionId // empty' | head -1)
 
-  # Count linked PRs by state
-  MERGED_PRS=$(echo "$item" | jq '[.content.timelineItems.nodes[].source | select(.merged == true)] | length')
-  OPEN_PRS=$(echo "$item"   | jq '[.content.timelineItems.nodes[].source | select(.state == "OPEN")] | length')
+  # Count linked PRs by state — CLOSING references only (willCloseTarget). A textual "#<n>"
+  # mention in a PR body is also a cross-reference; counting it falsely marks issues Done and
+  # the board's "Done -> close issue" workflow then closes them for real (issue #48).
+  MERGED_PRS=$(echo "$item" | jq '[.content.timelineItems.nodes[] | select(.willCloseTarget == true) | .source | select(.merged == true)] | length')
+  OPEN_PRS=$(echo "$item"   | jq '[.content.timelineItems.nodes[] | select(.willCloseTarget == true) | .source | select(.state == "OPEN")] | length')
 
   echo "--- Issue #$ISSUE_NUM  state=$ISSUE_STATE  assignees=$ASSIGNEE_COUNT  merged_prs=$MERGED_PRS  open_prs=$OPEN_PRS  status=$CURRENT_STATUS"
 
