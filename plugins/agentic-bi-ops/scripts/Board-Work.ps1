@@ -5,10 +5,12 @@
 .DESCRIPTION
     Three modes, designed for the /board work flow:
 
-      1. -ListBoards
-         Lists every GitHub Projects v2 board of the owner (backups excluded)
-         with its pending count (items in Todo or with no Status), so the user
-         can pick which board to work from.
+      1. -ListBoards [-Repo <owner/name>]
+         Lists boards with their pending count (items in Todo or no Status),
+         so the user can pick which board to work from. Without -Repo it
+         lists EVERY board of the owner (backups excluded); with -Repo it
+         lists only the boards LINKED to that repository (repository.projectsV2),
+         which is the "current repo" scope of the /board work flow.
 
       2. -ProjectNum <n>
          Lists the PENDING items of that board (Status = Todo or empty),
@@ -30,7 +32,12 @@
     GitHub username that owns the boards. Defaults to CSalcedoDataBI.
 
 .PARAMETER ListBoards
-    Mode 1: list all boards with pending counts.
+    Mode 1: list boards with pending counts (all of the owner, or only the
+    ones linked to -Repo when given).
+
+.PARAMETER Repo
+    owner/name. With -ListBoards: restrict the listing to boards linked to
+    this repository (the current-repo scope).
 
 .PARAMETER ProjectNum
     GitHub Projects v2 number. Mode 2 alone, mode 3 with -Start.
@@ -53,6 +60,7 @@
 
 .EXAMPLE
     .\Board-Work.ps1 -ListBoards
+    .\Board-Work.ps1 -ListBoards -Repo CSalcedoDataBI/agentic-bi-ops
     .\Board-Work.ps1 -ProjectNum 13
     .\Board-Work.ps1 -ProjectNum 13 -Start 12 -DryRun
     .\Board-Work.ps1 -ProjectNum 13 -Start 12
@@ -61,6 +69,7 @@
 param(
     [string]$Owner    = "CSalcedoDataBI",
     [switch]$ListBoards,
+    [string]$Repo     = "",
     [int]   $ProjectNum = 0,
     [int]   $Start      = 0,
     [switch]$DryRun,
@@ -87,18 +96,43 @@ function Test-Pending($item) {
 # MODE 1: -ListBoards  -> every board with its pending count
 # ==============================================================================
 if ($ListBoards) {
-    Write-Host "=== Boards de $Owner (contando pendientes, puede tardar unos segundos) ===" -ForegroundColor Cyan
-    Write-Host ""
-
-    $projects = (gh project list --owner $Owner --format json --limit 30 | ConvertFrom-Json).projects
-    $boards   = @($projects | Where-Object { $_.title -notmatch '(?i)backup' })
-
-    if ($boards.Count -eq 0) { Write-Host "No hay boards para $Owner."; exit 0 }
+    if ($Repo) {
+        # Current-repo scope: only boards LINKED to this repository
+        Write-Host "=== Boards vinculados a $Repo (contando pendientes) ===" -ForegroundColor Cyan
+        Write-Host ""
+        $rp = $Repo -split "/"
+        $linked = gh api graphql -f query='
+query($o:String!, $r:String!) {
+  repository(owner:$o, name:$r) {
+    projectsV2(first:20) {
+      nodes {
+        number title closed
+        owner { ... on User { login } ... on Organization { login } }
+      }
+    }
+  }
+}' -f "o=$($rp[0])" -f "r=$($rp[1])" | ConvertFrom-Json
+        $boards = @($linked.data.repository.projectsV2.nodes |
+                    Where-Object { -not $_.closed -and $_.title -notmatch '(?i)backup' } |
+                    ForEach-Object { [PSCustomObject]@{ number = $_.number; title = $_.title; ownerLogin = $_.owner.login } })
+        if ($boards.Count -eq 0) {
+            Write-Host "El repo $Repo no tiene boards vinculados. Crea/vincula uno con /board init." -ForegroundColor Yellow
+            exit 0
+        }
+    } else {
+        # Account scope: every board of the owner
+        Write-Host "=== Boards de $Owner (contando pendientes, puede tardar unos segundos) ===" -ForegroundColor Cyan
+        Write-Host ""
+        $projects = (gh project list --owner $Owner --format json --limit 30 | ConvertFrom-Json).projects
+        $boards   = @($projects | Where-Object { $_.title -notmatch '(?i)backup' } |
+                      ForEach-Object { [PSCustomObject]@{ number = $_.number; title = $_.title; ownerLogin = $Owner } })
+        if ($boards.Count -eq 0) { Write-Host "No hay boards para $Owner."; exit 0 }
+    }
 
     $rows = @()
     foreach ($b in $boards) {
         try {
-            $items   = (gh project item-list $b.number --owner $Owner --format json --limit 200 | ConvertFrom-Json).items
+            $items   = (gh project item-list $b.number --owner $b.ownerLogin --format json --limit 200 | ConvertFrom-Json).items
             $pending = @($items | Where-Object { Test-Pending $_ }).Count
             $total   = @($items).Count
         } catch {
@@ -109,7 +143,7 @@ if ($ListBoards) {
             Titulo    = $b.title
             Pendientes = $pending
             Items     = $total
-            Url       = Get-BoardUrl $b.number
+            Url       = "https://github.com/users/$($b.ownerLogin)/projects/$($b.number)"
         }
     }
 
@@ -201,7 +235,11 @@ $inProgId   = ($statusNode.options | Where-Object { $_.name -eq "In Progress" })
 if (-not $inProgId) { throw "El board #$ProjectNum no tiene la opcion 'In Progress' en Status." }
 
 # -- Find the board item for that issue number ---------------------------------
-$itemsData = gh api graphql -f query='
+# One retry with a short wait: an item added seconds ago may not be visible yet
+# in the items query (GitHub eventual consistency).
+$item = $null
+foreach ($attempt in 1..2) {
+    $itemsData = gh api graphql -f query='
 query($proj:ID!) {
   node(id:$proj) {
     ... on ProjectV2 {
@@ -229,9 +267,15 @@ query($proj:ID!) {
   }
 }' -F "proj=$projectId" | ConvertFrom-Json
 
-$item = $itemsData.data.node.items.nodes |
-        Where-Object { $_.content.__typename -eq "Issue" -and $_.content.number -eq $Start } |
-        Select-Object -First 1
+    $item = $itemsData.data.node.items.nodes |
+            Where-Object { $_.content.__typename -eq "Issue" -and $_.content.number -eq $Start } |
+            Select-Object -First 1
+    if ($item) { break }
+    if ($attempt -eq 1) {
+        Write-Host "  (issue #$Start aun no visible en el board - reintentando en 4s...)" -ForegroundColor DarkGray
+        Start-Sleep -Seconds 4
+    }
+}
 if (-not $item) { throw "Issue #$Start no esta en el board #$ProjectNum. Agregalo primero con /board add." }
 
 $repo          = $item.content.repository.nameWithOwner
