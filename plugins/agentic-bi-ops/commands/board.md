@@ -53,6 +53,10 @@ matching recipe from the projects-admin references:
     tell the user to click `+` at the right of the view header and enable Priority/Size/Type.
 - **automate** — install the actions/add-to-project CI workflow (references/automation.md)
 
+ALWAYS END WITH THE BOARD LINK (mandatory): every response about a board operation — plan,
+result, or error — must end with the board URL so the user can open it in one click:
+`https://github.com/users/<owner>/projects/<num>` (or `/orgs/<org>/projects/<num>` for org boards).
+
 SAFETY (mandatory, see references/best-practices.md):
 - Before init/add/plan, **resolve-or-reuse** the repo's board with `scripts/Resolve-Board.ps1` —
   never create a duplicate board with a blind `gh project create`.

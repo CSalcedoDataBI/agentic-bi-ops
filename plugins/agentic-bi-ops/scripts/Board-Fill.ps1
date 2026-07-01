@@ -58,7 +58,9 @@ if (-not $env:GH_TOKEN) { throw "GITHUB_TOKEN_PERSONAL not set in Windows USER e
 if (-not $Repo) { $Repo = "$Owner/agentic-bi-ops" }
 
 $mode = if ($DryRun) { "DRY-RUN" } elseif ($Auto) { "AUTO" } else { "INTERACTIVE" }
+$boardUrl = "https://github.com/users/$Owner/projects/$ProjectNum"
 Write-Host "=== Board-Fill  Owner=$Owner  Project=#$ProjectNum  Mode=$mode ===" -ForegroundColor Cyan
+Write-Host "Board: $boardUrl" -ForegroundColor Cyan
 Write-Host ""
 
 # ── 1. Resolve project + field IDs ────────────────────────────────────────────
@@ -262,6 +264,8 @@ foreach ($item in $items) {
 if ($plan.Count -eq 0) {
     Write-Host "Board completo. Sin gaps detectados." -ForegroundColor Green
     Write-Host "NOTA: Linked PRs y Sub-issues progress son columnas del sistema, no escribibles via API."
+    Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
     exit 0
 }
 
@@ -278,6 +282,8 @@ if ($DryRun) {
     Write-Host ""
     Write-Host "Modo DRY-RUN — ningun cambio ejecutado." -ForegroundColor Gray
     Write-Host "NOTA: Linked PRs y Sub-issues progress son columnas del sistema, no escribibles via API."
+    Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
     exit 0
 }
 
@@ -324,3 +330,5 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
 Write-Host ""
 Write-Host "=== Completado: $ok OK  $fail fallos ===" -ForegroundColor Cyan
 Write-Host "NOTA: Linked PRs y Sub-issues progress son columnas del sistema, no escribibles via API."
+Write-Host ""
+Write-Host "Board: $boardUrl" -ForegroundColor Cyan
