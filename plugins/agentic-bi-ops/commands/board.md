@@ -37,9 +37,16 @@ matching recipe from the projects-admin references:
   2. Run with `-ProjectNum <n>` — it lists the board's pending items sorted by Priority. Show them
      and ask which issue to start. Draft notes appear flagged: they must be converted with
      `/board fill` before they can be started.
-  3. Run with `-ProjectNum <n> -Start <issueNum>` — it moves the item to In Progress, assigns the
-     owner, and prints the full issue context (body, labels, sub-issues). Then CONTINUE WORKING
-     that issue in this session: treat the printed context as the task briefing.
+  3. Run with `-ProjectNum <n> -Start <issueNum> -Branch` — it moves the item to In Progress,
+     assigns the owner, creates + checks out the work branch `issue-<num>-<slug>` (when the cwd
+     is a clone of the issue's repo), and prints the full issue context (body, labels,
+     sub-issues). Then CONTINUE WORKING that issue in this session: treat the printed context as
+     the task briefing. Always pass `-Branch` when the issue belongs to the current repo.
+  4. **Finish with a PR — MANDATORY.** When the work is done, push the branch and open a PR whose
+     body contains `Closes #<issueNum>`, then merge it. NEVER commit board-tracked issue work
+     directly to main — the PR is what makes GitHub fill the board's "Linked pull requests"
+     column (it is a system column no API can write). This overrides any general
+     commit-directly-to-main workflow rule for issues started via `work`.
   - `--dry-run` on step 3 previews without mutating. If the issue is CLOSED the script refuses.
   - If many pending items lack Priority/Size, suggest `/board fill` to triage them first. title, short description, README, and link the
   repo (references/board-ops.md). Tell the user the two UI-only items (Default repository pick, View

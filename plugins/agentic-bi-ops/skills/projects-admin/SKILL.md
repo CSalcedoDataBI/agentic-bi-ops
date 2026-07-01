@@ -154,11 +154,17 @@ The daily driver: answers "¿qué hay pendiente?" and starts the chosen issue. R
 |------|---------|--------------|
 | 1. Pick a board | `Board-Work.ps1 -ListBoards` | Every board of the owner (backups excluded) with pending count (Todo or no Status) + URL, most pending first |
 | 2. Pick an issue | `Board-Work.ps1 -ProjectNum <n>` | That board's pending items sorted by Priority; drafts flagged (convert via `/board fill` first) |
-| 3. Start it | `Board-Work.ps1 -ProjectNum <n> -Start <issueNum>` | Status → In Progress, assign owner, print full issue context (body, labels, sub-issues) |
+| 3. Start it | `Board-Work.ps1 -ProjectNum <n> -Start <issueNum> -Branch` | Status → In Progress, assign owner, create + checkout branch `issue-<num>-<slug>`, print full issue context (body, labels, sub-issues) |
+| 4. Finish it | push branch → PR with `Closes #<num>` → merge | GitHub fills the board's **Linked pull requests** system column by itself |
 
 Notes:
 - Step 3 supports `-DryRun` (preview, no mutation). A CLOSED issue is refused with a reopen hint.
 - After step 3, the agent continues working the issue in-session — the printed context is the briefing.
+- **Step 4 is mandatory**: never commit board-tracked issue work directly to main. `Linked pull
+  requests` and `Sub-issues progress` are system-derived, read-only columns — the ONLY way to fill
+  Linked PRs is finishing through a PR that closes the issue; Sub-issues progress only applies to
+  parent issues with native sub-issues (empty = not applicable, not a gap).
+- `-Branch` skips branch creation (with a warning) when the cwd is not a clone of the issue's repo.
 - Skip step 1 when the user already named a board or means the current repo's board (resolve it with `Resolve-Board.ps1 -CreateIfMissing:$false`).
 - The script respects an already-set `GH_TOKEN` (from gh-account); otherwise it reads `GITHUB_TOKEN_PERSONAL` (or `-TokenVar GITHUB_TOKEN_BUSINESS` for the second account).
 

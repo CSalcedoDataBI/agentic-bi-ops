@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.5] - 2026-07-01
+### Added
+- **Branch + PR finish flow in `/board work`** so the board's *Linked pull requests* system
+  column always fills itself: `-Start` now accepts `-Branch` (creates + checks out
+  `issue-<num>-<slug>` when the cwd is a clone of the issue's repo), and the flow mandates
+  finishing through a PR whose body contains `Closes #<num>` — never a direct commit to main for
+  board-tracked issues. Documented that *Linked pull requests* / *Sub-issues progress* are
+  system-derived read-only columns: empty Sub-issues progress on a childless issue means "not
+  applicable", not a gap.
+
 ## [0.7.4] - 2026-07-01
 ### Added
 - **`/board work` — the daily driver** (menu option 1) + `scripts/Board-Work.ps1`: see what's
