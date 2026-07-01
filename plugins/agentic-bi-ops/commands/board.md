@@ -1,5 +1,5 @@
 ---
-description: Administer/automate a GitHub Projects board (init/add/move/field/bulk/automate). Defaults to the CSalcedoDataBI account.
+description: Administer/automate a GitHub Projects board (init/add/move/field/bulk/fill/automate). Defaults to the CSalcedoDataBI account.
 ---
 You are running the agentic-bi-ops /board command.
 
@@ -19,6 +19,15 @@ matching recipe from the projects-admin references:
   by title-prefix map, or text by `{title}` template — idempotent, retries 502s)
   (references/field-presets.md + board-ops.md). Visibility-per-view and group-by are UI-only — say so.
 - **bulk** — batch move/close/label across many items (references/issue-ops.md)
+- **fill** — detect and fill column gaps across all board items (projects-admin skill — /board fill section):
+  - No flags: read all items via GraphQL, print a plan of every gap found (missing assignee, wrong
+    Status), then ask the user for confirmation before making any change.
+  - `--dry-run`: print the plan only, execute nothing.
+  - `--auto`: fill without asking — assign owner if empty, sync Status from issue/PR state — same
+    logic as `bash scripts/board-sync.sh`. Use for CI or when the user has already approved.
+  - NOTE: Linked PRs and Sub-issues progress are system-derived columns — GitHub sets them
+    automatically from PR mentions and sub-issue state. They are NOT writable via API; do not
+    attempt to fill them and explain this to the user if asked.
 - **automate** — install the actions/add-to-project CI workflow (references/automation.md)
 
 SAFETY (mandatory, see references/best-practices.md):
