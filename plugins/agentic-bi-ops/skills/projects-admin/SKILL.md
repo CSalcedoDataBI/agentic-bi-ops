@@ -81,6 +81,7 @@ For the exact commands to create these fields and set their values on items, see
 | Create / list fields (Status, Priority, Target) | `references/board-ops.md` | `gh project field-create`, `gh project field-list` |
 | Apply a whole field preset (EN/ES, custom values) | `references/field-presets.md` | `Apply-FieldPreset.ps1 -Lang en\|es` |
 | Set a field value on an item | `references/board-ops.md` | `gh project item-edit` |
+| Bulk-fill a custom field across ALL items (by rule) | `references/board-ops.md` | `scripts/Set-BoardField.ps1` |
 | Manage views / inspect board | `references/board-ops.md` | `gh project view`, `gh project item-list` |
 | Create an issue with a label | `references/issue-ops.md` | `gh issue create` |
 | Create / ensure a label exists | `references/issue-ops.md` | `gh label create --force` |

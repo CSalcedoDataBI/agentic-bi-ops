@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0] - 2026-06-30
+### Added
+- **Bulk-fill a custom field across every board item by rule** — new `scripts/Set-BoardField.ps1`
+  + `/board field` recipe. Single-select by title-prefix map (e.g. `Categoria`) or text by `{title}`
+  template (e.g. `Ruta`), idempotent, retries transient 502s. Documents the gotchas that bite a manual
+  loop (the `cat`=Get-Content alias shadowing, single-select-id vs `--text`, lowercased field keys in
+  `item-list`, GraphQL-batch quoting). Turns the "fill all the columns" chore into one command.
+- **Post-fill view-visibility warning** in `Set-BoardField.ps1`: after filling, it checks whether the
+  field is shown in ANY board view and warns if not — the top "the tool didn't work" false alarm is a
+  filled field that the current view simply doesn't display (view columns are UI-only; no API can add
+  them). Also documents that `Assignees`/`Linked PRs`/`Sub-issues progress` are auto-derived system
+  columns that stay blank on draft cards and cannot be filled by any tool.
+
 ## [0.6.2] - 2026-06-29
 ### Added
 - Hard rule + pre-`item-add` check: a board only accepts items from its own anchored repo — a public
