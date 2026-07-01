@@ -1,6 +1,6 @@
 ---
 name: projects-admin
-description: Use to administer or automate a GitHub Projects (v2) board or its issues — create/configure a project, set Status/Priority/Target fields, add/move/bulk-edit items, link a board to a repo, install CI auto-add, or run /board fill to detect and fix gaps. Always resolves identity via gh-account (default CSalcedoDataBI). Triggers — "administra el board", "mueve a Done", "crea el project", "add to board", "bulk close", "automatiza el board", "llena el board", /board.
+description: Use to administer or automate a GitHub Projects (v2) board or its issues — create/configure a project, set Status/Priority/Target fields, add/move/bulk-edit items, link a board to a repo, install CI auto-add, run /board fill to detect and fix gaps, or /board work to see pending issues across boards and start one. Always resolves identity via gh-account (default CSalcedoDataBI). Triggers — "administra el board", "mueve a Done", "crea el project", "add to board", "bulk close", "automatiza el board", "llena el board", "qué hay pendiente", "qué issue trabajo", "empecemos un issue", /board.
 ---
 
 # projects-admin — GitHub Projects (v2) Board & Issue Admin
@@ -145,6 +145,25 @@ on:
 
 ---
 
+## /board work — See pending work and start an issue
+
+The daily driver: answers "¿qué hay pendiente?" and starts the chosen issue. Runs
+`scripts/Board-Work.ps1` in a three-step conversational flow (pause for the user's pick between steps):
+
+| Step | Command | What it does |
+|------|---------|--------------|
+| 1. Pick a board | `Board-Work.ps1 -ListBoards` | Every board of the owner (backups excluded) with pending count (Todo or no Status) + URL, most pending first |
+| 2. Pick an issue | `Board-Work.ps1 -ProjectNum <n>` | That board's pending items sorted by Priority; drafts flagged (convert via `/board fill` first) |
+| 3. Start it | `Board-Work.ps1 -ProjectNum <n> -Start <issueNum>` | Status → In Progress, assign owner, print full issue context (body, labels, sub-issues) |
+
+Notes:
+- Step 3 supports `-DryRun` (preview, no mutation). A CLOSED issue is refused with a reopen hint.
+- After step 3, the agent continues working the issue in-session — the printed context is the briefing.
+- Skip step 1 when the user already named a board or means the current repo's board (resolve it with `Resolve-Board.ps1 -CreateIfMissing:$false`).
+- The script respects an already-set `GH_TOKEN` (from gh-account); otherwise it reads `GITHUB_TOKEN_PERSONAL` (or `-TokenVar GITHUB_TOKEN_BUSINESS` for the second account).
+
+---
+
 ## Routing table
 
 | Intent | Reference file | Command family |
@@ -158,6 +177,7 @@ on:
 | Set a field value on an item | `references/board-ops.md` | `gh project item-edit` |
 | Bulk-fill a custom field across ALL items (by rule) | `references/board-ops.md` | `scripts/Set-BoardField.ps1` |
 | **Detect and fill board gaps** | **this file — `/board fill` section** | **`/board fill` / `--dry-run` / `--auto`** |
+| **See pending work / start an issue** | **this file — `/board work` section** | **`Board-Work.ps1 -ListBoards` / `-ProjectNum` / `-Start`** |
 | Manage views / inspect board | `references/board-ops.md` | `gh project view`, `gh project item-list` |
 | Create an issue with a label | `references/issue-ops.md` | `gh issue create` |
 | Create / ensure a label exists | `references/issue-ops.md` | `gh label create --force` |

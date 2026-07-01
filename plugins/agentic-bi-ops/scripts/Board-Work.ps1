@@ -1,0 +1,311 @@
+<#
+.SYNOPSIS
+    Show pending work across boards and start working an issue.
+
+.DESCRIPTION
+    Three modes, designed for the /board work flow:
+
+      1. -ListBoards
+         Lists every GitHub Projects v2 board of the owner (backups excluded)
+         with its pending count (items in Todo or with no Status), so the user
+         can pick which board to work from.
+
+      2. -ProjectNum <n>
+         Lists the PENDING items of that board (Status = Todo or empty),
+         sorted by Priority (P0 first, empty last), with issue number, title,
+         Priority, Size and Type. Draft notes are flagged (convert them with
+         /board fill before starting them).
+
+      3. -ProjectNum <n> -Start <issueNum>
+         Starts working that issue: moves the board item to "In Progress",
+         assigns the owner, and prints the full issue context (labels,
+         body, sub-issues) so the agent can begin working it in-session.
+         Supports -DryRun to preview without mutating.
+
+    Same conventions as Board-Fill.ps1: token from the Windows USER registry
+    (unless GH_TOKEN is already set by gh-account), pure-ASCII source, and
+    the board URL always printed at the end.
+
+.PARAMETER Owner
+    GitHub username that owns the boards. Defaults to CSalcedoDataBI.
+
+.PARAMETER ListBoards
+    Mode 1: list all boards with pending counts.
+
+.PARAMETER ProjectNum
+    GitHub Projects v2 number. Mode 2 alone, mode 3 with -Start.
+
+.PARAMETER Start
+    Issue number to start working (requires -ProjectNum).
+
+.PARAMETER DryRun
+    With -Start: print what would change without executing.
+
+.PARAMETER TokenVar
+    Windows USER env var holding the PAT. Defaults to GITHUB_TOKEN_PERSONAL;
+    use GITHUB_TOKEN_BUSINESS for the PAL-Devs account.
+
+.EXAMPLE
+    .\Board-Work.ps1 -ListBoards
+    .\Board-Work.ps1 -ProjectNum 13
+    .\Board-Work.ps1 -ProjectNum 13 -Start 12 -DryRun
+    .\Board-Work.ps1 -ProjectNum 13 -Start 12
+#>
+[CmdletBinding()]
+param(
+    [string]$Owner    = "CSalcedoDataBI",
+    [switch]$ListBoards,
+    [int]   $ProjectNum = 0,
+    [int]   $Start      = 0,
+    [switch]$DryRun,
+    [string]$TokenVar   = "GITHUB_TOKEN_PERSONAL"
+)
+
+$ErrorActionPreference = "Stop"
+
+# -- 0. Token (respect GH_TOKEN if gh-account already set it) ------------------
+if (-not $env:GH_TOKEN) {
+    $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
+}
+if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
+
+function Get-BoardUrl([int]$num) { "https://github.com/users/$Owner/projects/$num" }
+
+# An item is PENDING when its Status is Todo or it has no Status yet.
+function Test-Pending($item) {
+    (-not $item.status) -or ($item.status -eq "Todo")
+}
+
+# ==============================================================================
+# MODE 1: -ListBoards  -> every board with its pending count
+# ==============================================================================
+if ($ListBoards) {
+    Write-Host "=== Boards de $Owner (contando pendientes, puede tardar unos segundos) ===" -ForegroundColor Cyan
+    Write-Host ""
+
+    $projects = (gh project list --owner $Owner --format json --limit 30 | ConvertFrom-Json).projects
+    $boards   = @($projects | Where-Object { $_.title -notmatch '(?i)backup' })
+
+    if ($boards.Count -eq 0) { Write-Host "No hay boards para $Owner."; exit 0 }
+
+    $rows = @()
+    foreach ($b in $boards) {
+        try {
+            $items   = (gh project item-list $b.number --owner $Owner --format json --limit 200 | ConvertFrom-Json).items
+            $pending = @($items | Where-Object { Test-Pending $_ }).Count
+            $total   = @($items).Count
+        } catch {
+            $pending = "?"; $total = "?"
+        }
+        $rows += [PSCustomObject]@{
+            Num       = $b.number
+            Titulo    = $b.title
+            Pendientes = $pending
+            Items     = $total
+            Url       = Get-BoardUrl $b.number
+        }
+    }
+
+    # Boards with pending work first, most pending on top
+    $rows = $rows | Sort-Object -Property @{Expression={ if ($_.Pendientes -is [int]) { -$_.Pendientes } else { 1 } }}
+
+    foreach ($r in $rows) {
+        $color = if ($r.Pendientes -is [int] -and $r.Pendientes -gt 0) { "Yellow" } else { "DarkGray" }
+        Write-Host ("  #{0,-3} {1,-45} pendientes: {2,-4} items: {3}" -f $r.Num, $r.Titulo, $r.Pendientes, $r.Items) -ForegroundColor $color
+        Write-Host ("        {0}" -f $r.Url) -ForegroundColor DarkCyan
+    }
+    Write-Host ""
+    Write-Host "Siguiente paso: Board-Work.ps1 -ProjectNum <num> para ver los pendientes de un board." -ForegroundColor Cyan
+    exit 0
+}
+
+if ($ProjectNum -le 0) {
+    throw "Usa -ListBoards, o -ProjectNum <n> (opcionalmente con -Start <issueNum>)."
+}
+
+$boardUrl = Get-BoardUrl $ProjectNum
+
+# ==============================================================================
+# MODE 2: -ProjectNum  -> pending items of one board
+# ==============================================================================
+if ($Start -le 0) {
+    Write-Host "=== Pendientes del board #$ProjectNum de $Owner ===" -ForegroundColor Cyan
+    Write-Host ""
+
+    $items   = (gh project item-list $ProjectNum --owner $Owner --format json --limit 200 | ConvertFrom-Json).items
+    $pending = @($items | Where-Object { Test-Pending $_ })
+
+    if ($pending.Count -eq 0) {
+        Write-Host "Sin pendientes. Todo el board esta en progreso o terminado." -ForegroundColor Green
+        Write-Host ""
+        Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+        exit 0
+    }
+
+    # Sort: priority name ascending (P0 < P1 < P2), empty priority last
+    $pending = $pending | Sort-Object -Property @{Expression={ if ($_.priority) { $_.priority } else { "zz" } }}
+
+    foreach ($p in $pending) {
+        $prio = if ($p.priority) { $p.priority } else { "(sin prio)" }
+        $size = if ($p.size)     { $p.size }     else { "-" }
+        $type = if ($p.type)     { $p.type }     else { "-" }
+        if ($p.content.type -eq "DraftIssue") {
+            Write-Host ("  [draft]  {0}" -f $p.title) -ForegroundColor DarkYellow
+            Write-Host  "           (nota draft - conviertela a issue real con /board fill antes de trabajarla)" -ForegroundColor DarkGray
+        } else {
+            $repo = $p.content.repository
+            Write-Host ("  #{0,-4} {1}" -f $p.content.number, $p.title) -ForegroundColor Yellow
+            Write-Host ("        {0} | Size {1} | {2} | {3}" -f $prio, $size, $type, $repo) -ForegroundColor DarkGray
+        }
+    }
+    Write-Host ""
+    Write-Host ("Total: {0} pendiente(s)." -f $pending.Count) -ForegroundColor Yellow
+    Write-Host "Siguiente paso: Board-Work.ps1 -ProjectNum $ProjectNum -Start <issueNum> para empezar uno." -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+    exit 0
+}
+
+# ==============================================================================
+# MODE 3: -ProjectNum -Start <issueNum>  -> move to In Progress + assign + context
+# ==============================================================================
+Write-Host "=== Empezando issue #$Start (board #$ProjectNum de $Owner) ===" -ForegroundColor Cyan
+Write-Host ""
+
+# -- Resolve project + Status field via GraphQL (same pattern as Board-Fill) ---
+$projData = gh api graphql -f query='
+query($owner:String!, $num:Int!) {
+  user(login:$owner) {
+    projectV2(number:$num) {
+      id
+      fields(first:30) {
+        nodes {
+          ... on ProjectV2SingleSelectField { id name options { id name } }
+        }
+      }
+    }
+  }
+}' -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
+
+$projectId  = $projData.data.user.projectV2.id
+if (-not $projectId) { throw "Board #$ProjectNum no encontrado para $Owner." }
+$statusNode = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name -eq "Status" }
+$inProgId   = ($statusNode.options | Where-Object { $_.name -eq "In Progress" }).id
+if (-not $inProgId) { throw "El board #$ProjectNum no tiene la opcion 'In Progress' en Status." }
+
+# -- Find the board item for that issue number ---------------------------------
+$itemsData = gh api graphql -f query='
+query($proj:ID!) {
+  node(id:$proj) {
+    ... on ProjectV2 {
+      items(first:100) {
+        nodes {
+          id
+          fieldValues(first:20) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                field { ... on ProjectV2SingleSelectField { name } }
+                name
+              }
+            }
+          }
+          content {
+            __typename
+            ... on Issue {
+              number title state url
+              repository { nameWithOwner }
+            }
+          }
+        }
+      }
+    }
+  }
+}' -F "proj=$projectId" | ConvertFrom-Json
+
+$item = $itemsData.data.node.items.nodes |
+        Where-Object { $_.content.__typename -eq "Issue" -and $_.content.number -eq $Start } |
+        Select-Object -First 1
+if (-not $item) { throw "Issue #$Start no esta en el board #$ProjectNum. Agregalo primero con /board add." }
+
+$repo          = $item.content.repository.nameWithOwner
+$currentStatus = ($item.fieldValues.nodes | Where-Object { $_.field.name -eq "Status" }).name
+if (-not $currentStatus) { $currentStatus = "(vacio)" }
+
+if ($item.content.state -eq "CLOSED") {
+    Write-Host "AVISO: el issue #$Start esta CERRADO. Reabrelo antes de trabajarlo (gh issue reopen $Start --repo $repo)." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+    exit 1
+}
+
+Write-Host ("  #{0} {1}" -f $Start, $item.content.title) -ForegroundColor Yellow
+Write-Host ("  Repo: {0} | Status actual: {1}" -f $repo, $currentStatus) -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  Plan:" -ForegroundColor Cyan
+Write-Host "    -> Status [$currentStatus] -> In Progress"
+Write-Host "    -> Assignee -> $Owner"
+Write-Host ""
+
+if ($DryRun) {
+    Write-Host "Modo DRY-RUN - ningun cambio ejecutado." -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+    exit 0
+}
+
+# -- Execute: Status -> In Progress ---------------------------------------------
+gh api graphql -f query='
+mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
+  updateProjectV2ItemFieldValue(input:{
+    projectId:$proj, itemId:$item, fieldId:$field,
+    value:{singleSelectOptionId:$opt}
+  }) { projectV2Item { id } }
+}' -F "proj=$projectId" -F "item=$($item.id)" -F "field=$($statusNode.id)" -F "opt=$inProgId" | Out-Null
+Write-Host "  OK  Status -> In Progress" -ForegroundColor Green
+
+# -- Execute: assign owner ------------------------------------------------------
+try {
+    gh api "repos/$repo/issues/$Start/assignees" -X POST -F "assignees[]=$Owner" | Out-Null
+    Write-Host "  OK  Assignee -> $Owner" -ForegroundColor Green
+} catch {
+    Write-Host "  WARN no se pudo asignar: $_" -ForegroundColor DarkYellow
+}
+Write-Host ""
+
+# -- Print full issue context so the agent can start working --------------------
+$issue = gh issue view $Start --repo $repo --json title,body,labels,milestone,url,state | ConvertFrom-Json
+
+Write-Host "----- CONTEXTO DEL ISSUE -----" -ForegroundColor Cyan
+Write-Host ("Titulo : {0}" -f $issue.title)
+Write-Host ("URL    : {0}" -f $issue.url)
+$labelNames = @($issue.labels | ForEach-Object { $_.name })
+if ($labelNames.Count -gt 0) { Write-Host ("Labels : {0}" -f ($labelNames -join ", ")) }
+if ($issue.milestone)        { Write-Host ("Hito   : {0}" -f $issue.milestone.title) }
+Write-Host ""
+if ($issue.body) { Write-Host $issue.body } else { Write-Host "(sin descripcion)" -ForegroundColor DarkGray }
+Write-Host ""
+
+# Sub-issues (optional API - ignore failures silently)
+try {
+    $repoParts = $repo -split "/"
+    $subData = gh api graphql -f query='
+query($o:String!, $r:String!, $n:Int!) {
+  repository(owner:$o, name:$r) {
+    issue(number:$n) {
+      subIssues(first:30) { nodes { number title state } }
+    }
+  }
+}' -F "o=$($repoParts[0])" -F "r=$($repoParts[1])" -F "n=$Start" 2>$null | ConvertFrom-Json
+    $subs = @($subData.data.repository.issue.subIssues.nodes)
+    if ($subs.Count -gt 0) {
+        Write-Host "Sub-issues:" -ForegroundColor Cyan
+        foreach ($s in $subs) { Write-Host ("  #{0} [{1}] {2}" -f $s.number, $s.state, $s.title) }
+        Write-Host ""
+    }
+} catch { }
+
+Write-Host "------------------------------" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Issue #$Start listo para trabajar (In Progress, asignado a $Owner)." -ForegroundColor Green
+Write-Host ""
+Write-Host "Board: $boardUrl" -ForegroundColor Cyan

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.4] - 2026-07-01
+### Added
+- **`/board work` — the daily driver** (menu option 1) + `scripts/Board-Work.ps1`: see what's
+  pending and start working it. Three modes: `-ListBoards` shows EVERY board of the account with
+  its pending count (Todo or no Status) and URL; `-ProjectNum <n>` lists that board's pending
+  items sorted by Priority (drafts flagged — convert with `/board fill` first); `-ProjectNum <n>
+  -Start <issueNum>` moves the item to In Progress, assigns the owner, and prints the full issue
+  context (body, labels, sub-issues) so the agent starts working it in-session. `-DryRun`
+  previews the start without mutating; a CLOSED issue is refused with a reopen hint. Respects an
+  already-set `GH_TOKEN` (gh-account / `-TokenVar GITHUB_TOKEN_BUSINESS` for the second account).
+
+## [0.7.3] - 2026-06-30
+### Added
+- `Board-Fill.ps1` now fills **Priority** (P2 Medium), **Size** (M), and **Type** (from labels,
+  else Feature) besides assignees/Status; local vars prevent PSObject expansion in `gh -F` args.
+
+## [0.7.2] - 2026-06-30
+### Added
+- `scripts/Board-Fill.ps1` — interactive gap detection and fill for a whole board, with
+  `-DryRun` / `-Auto` modes; converts draft notes to real issues before filling.
+
+## [0.7.1] - 2026-06-30
+### Added
+- `/board fill` subcommand wired into `projects-admin` + the numbered menu shown when `/board`
+  runs without arguments; the board URL is always printed in script output and responses.
+
 ## [0.7.0] - 2026-06-30
 ### Added
 - **Bulk-fill a custom field across every board item by rule** — new `scripts/Set-BoardField.ps1`

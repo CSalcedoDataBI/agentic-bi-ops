@@ -40,6 +40,7 @@ Then enable **agentic-bi-ops** in your Claude Code plugins.
 After installing, use the `/board` command or just ask:
 
 ```
+/board work                      # see pending issues across ALL your boards and start one
 /board init                      # create a Projects board and link it to this repo
 /board add #42                   # add issue #42 to the board
 /board move #42 to Done          # set an item's Status

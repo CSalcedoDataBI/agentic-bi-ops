@@ -1,5 +1,5 @@
 ---
-description: Administer/automate a GitHub Projects board (init/add/move/field/bulk/fill/automate). Defaults to the CSalcedoDataBI account.
+description: Administer/automate a GitHub Projects board (work/init/add/move/field/bulk/fill/automate). Defaults to the CSalcedoDataBI account.
 ---
 You are running the agentic-bi-ops /board command.
 
@@ -9,15 +9,16 @@ for the user to pick (they can answer with just the number):
 ```
 ¿Qué quieres hacer con el board?
 
-1. fill --dry-run   → ver qué gaps hay (assignees, Status, Priority, Size, Type) SIN cambiar nada
-2. fill --auto      → llenar todos los gaps automáticamente (convierte drafts a issues reales)
-3. fill             → llenar gaps pidiendo confirmación antes de ejecutar
-4. init             → crear/configurar el board de este repo
-5. add <url>        → añadir un issue/PR al board
-6. move             → cambiar el Status de un item
-7. field            → crear campos o llenar un campo en todos los items por regla
-8. bulk             → mover/cerrar/etiquetar muchos items a la vez
-9. automate         → instalar CI que sincroniza el board solo
+1. work             → ver qué issues están pendientes (en todos los boards) y empezar a trabajar uno
+2. fill --dry-run   → ver qué gaps hay (assignees, Status, Priority, Size, Type) SIN cambiar nada
+3. fill --auto      → llenar todos los gaps automáticamente (convierte drafts a issues reales)
+4. fill             → llenar gaps pidiendo confirmación antes de ejecutar
+5. init             → crear/configurar el board de este repo
+6. add <url>        → añadir un issue/PR al board
+7. move             → cambiar el Status de un item
+8. field            → crear campos o llenar un campo en todos los items por regla
+9. bulk             → mover/cerrar/etiquetar muchos items a la vez
+10. automate        → instalar CI que sincroniza el board solo
 ```
 
 When they answer (number or name), execute that sub-action following the instructions below.
@@ -28,7 +29,19 @@ CSalcedoDataBI; honor an explicit `--account pal-devs` in the arguments). Never 
 Then apply the `projects-admin` skill. Parse the request into ONE of these sub-actions and run the
 matching recipe from the projects-admin references:
 
-- **init** — create a board and fill it coherently: title, short description, README, and link the
+- **work** — the daily driver: show pending work and start an issue, via `scripts/Board-Work.ps1`.
+  Conversational flow (pause and wait for the user's pick at each step):
+  1. If the user did not name a board, run the script with `-ListBoards` — it prints EVERY board
+     of the account with its pending count (Todo or no Status) and URL. Show that and ask which
+     board (suggest the current repo's board as default if it's in the list).
+  2. Run with `-ProjectNum <n>` — it lists the board's pending items sorted by Priority. Show them
+     and ask which issue to start. Draft notes appear flagged: they must be converted with
+     `/board fill` before they can be started.
+  3. Run with `-ProjectNum <n> -Start <issueNum>` — it moves the item to In Progress, assigns the
+     owner, and prints the full issue context (body, labels, sub-issues). Then CONTINUE WORKING
+     that issue in this session: treat the printed context as the task briefing.
+  - `--dry-run` on step 3 previews without mutating. If the issue is CLOSED the script refuses.
+  - If many pending items lack Priority/Size, suggest `/board fill` to triage them first. title, short description, README, and link the
   repo (references/board-ops.md). Tell the user the two UI-only items (Default repository pick, View
   name/layout) need one click in settings — do not claim they were set.
 - **add** — add an issue/PR to the board (references/issue-ops.md)
