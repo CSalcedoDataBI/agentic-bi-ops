@@ -139,6 +139,7 @@ query($proj:ID!) {
               timelineItems(first:20 itemTypes:[CROSS_REFERENCED_EVENT]) {
                 nodes {
                   ... on CrossReferencedEvent {
+                    willCloseTarget
                     source { ... on PullRequest { number state merged } }
                   }
                 }
@@ -210,8 +211,12 @@ foreach ($item in $items) {
     $currentType    = ($fv | Where-Object { $_.field.name -eq "Type"     }).optionId
     $currentStatusN = ($fv | Where-Object { $_.field.name -eq "Status"   }).name
 
-    $mergedPRs = @($c.timelineItems.nodes.source | Where-Object { $_.merged -eq $true })
-    $openPRs   = @($c.timelineItems.nodes.source | Where-Object { $_.state  -eq "OPEN"  })
+    # Only CLOSING references count (willCloseTarget). A textual "#<n>" mention in a PR body is
+    # also a CROSS_REFERENCED_EVENT — counting those falsely moved untouched issues to Done, and
+    # the board's built-in "Done -> close issue" workflow then closed them for real (issue #48).
+    $closingRefs = @($c.timelineItems.nodes | Where-Object { $_.willCloseTarget -eq $true })
+    $mergedPRs = @($closingRefs.source | Where-Object { $_.merged -eq $true })
+    $openPRs   = @($closingRefs.source | Where-Object { $_.state  -eq "OPEN"  })
     $labels    = @($c.labels.nodes.name | Where-Object { $_ } | ForEach-Object { $_.ToLower() })
 
     $changes = @()

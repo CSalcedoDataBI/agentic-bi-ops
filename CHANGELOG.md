@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.7] - 2026-07-01
+### Fixed
+- **Destructive false positive in the Status heuristic** (Board-Fill.ps1 AND the board-sync.sh
+  CI variant): any merged PR that merely MENTIONED an issue number in its text (e.g. the words
+  "board #13" in a PR body) counted as a linked PR and moved that untouched issue to Done — and
+  the board's built-in "Done -> close issue" workflow then closed the real issue. Both scripts
+  now count only CLOSING references (`willCloseTarget` on the cross-referenced event), for the
+  merged->Done rule and the open-PR->In Progress rule alike. Found dogfooding the M5 plan.
+
 ## [0.7.6] - 2026-07-01
 ### Added
 - **`/board work` is now interactive about account and scope** (feedback from real use — it
