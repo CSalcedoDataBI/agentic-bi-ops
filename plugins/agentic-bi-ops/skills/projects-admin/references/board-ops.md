@@ -178,6 +178,14 @@ long-titled tracking issues are skipped; pass your own to widen/narrow the set.
 - **Don't batch via GraphQL in PowerShell** unless you must: escaping the inner `"` of
   `updateProjectV2ItemFieldValue(input:{… value:{singleSelectOptionId:"…"}})` is error-prone
   (`\"` ≠ ``` `" ```). A per-item `item-edit` loop is slower but reliable.
+- **Filled ≠ visible (the #1 "the tool failed" false alarm).** A field you fill only appears if the
+  board's **view** includes that column — and **view columns are UI-only** (there is NO GraphQL
+  mutation to add/remove a view's columns, so no tool can do it). If a just-filled column still looks
+  blank, the value is there — add the column in the UI: board → the `+` at the right of the column
+  headers → check the field. `Set-BoardField.ps1` detects this and warns when the field is in no view.
+- **Auto-derived system columns can't be filled at all.** `Assignees`, `Linked pull requests`,
+  `Sub-issues progress`, `Milestone`, `Repository`, `Labels` come from real issues/PRs; on **draft
+  items** they are permanently blank. A blank there is not a fill failure — it's not a data field.
 
 ---
 

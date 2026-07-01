@@ -86,4 +86,25 @@ foreach ($it in $items) {
   if ($ok) { $set++ } else { $fail++; Write-Warning "failed: $($it.title)" }
 }
 Write-Host "Field '$Field' -> set=$set  skipped=$skip  failed=$fail  (of $($items.Count) items)"
+
+# Post-fill visibility check — the #1 "the tool didn't work" false alarm: the field IS filled but
+# the board's VIEW doesn't display that column, so the user sees blanks. GitHub Projects view
+# columns are UI-only (no GraphQL mutation exists), so no tool can add them — we can only warn.
+try {
+  $vq = 'query{ node(id:"' + $proj + '"){ ... on ProjectV2 { views(first:20){ nodes{ name fields(first:50){ nodes{ ... on ProjectV2FieldCommon { name } } } } } } } }'
+  $views = (gh api graphql -f query=$vq 2>$null | ConvertFrom-Json).data.node.views.nodes
+  $visibleIn = @($views | Where-Object { $_.fields.nodes.name -contains $Field } | ForEach-Object { $_.name })
+  if ($views -and $visibleIn.Count -eq 0) {
+    Write-Warning "'$Field' is FILLED but NOT shown in ANY view ($((@($views).Count)) view(s) checked)."
+    Write-Host   "   -> To SEE it: open the board, click the '+' at the right of the column headers, check '$Field'."
+    Write-Host   "      (GitHub view columns are UI-only — no API/tool can add a column to a view.)"
+  } elseif ($visibleIn.Count) {
+    Write-Host "Visible in view(s): $($visibleIn -join ', ')"
+  }
+} catch { }
+
+# Reminder about un-fillable system columns, so a blank Assignees/Linked PRs/Sub-issues column on
+# DRAFT items is never mistaken for a tool failure.
+Write-Host "Note: GitHub system columns (Assignees, Linked pull requests, Sub-issues progress, Milestone, Repository, Labels) are auto-derived from real issues/PRs — they stay blank for draft cards and cannot be filled by any tool."
+
 if ($fail -gt 0) { exit 1 }
