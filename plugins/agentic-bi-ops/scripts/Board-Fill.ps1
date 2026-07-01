@@ -3,10 +3,12 @@
     Detect and fill gaps in a GitHub Projects v2 board.
 
 .DESCRIPTION
-    Reads all items from a GitHub Projects v2 board and detects gaps:
-    missing assignees, Status, Priority, Size, and Type. Then fills them.
+    Reads all items from a GitHub Projects v2 board, converts any draft notes
+    to real GitHub issues automatically, then detects and fills gaps:
+    missing assignees, Status, Priority, Size, and Type.
 
     Fill rules:
+      Drafts    : converted to real issues in $Repo before any other step
       Assignees : if empty, assign the board owner
       Status    : issue CLOSED -> Done
                   issue OPEN + merged PR -> Done
@@ -23,7 +25,7 @@
     GitHub username that owns the project board. Defaults to CSalcedoDataBI.
 
 .PARAMETER Repo
-    owner/repo string. Used for issue assignment calls.
+    owner/repo string. Issues are created here when converting drafts.
 
 .PARAMETER ProjectNum
     GitHub Projects v2 number (e.g. 1).
@@ -72,7 +74,7 @@ query($owner:String!, $num:Int!) {
       }
     }
   }
-}' -F owner=$Owner -F num=$ProjectNum | ConvertFrom-Json
+}' -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
 
 $projectId = $projData.data.user.projectV2.id
 $allFields = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name }
@@ -97,8 +99,20 @@ $sizeMId    = Get-Opt $sizeNode "M"
 $typeNode   = Get-Field "Type"
 $typeId     = $typeNode.id
 
-# ── 2. Load all board items ────────────────────────────────────────────────────
-$itemData = gh api graphql -f query='
+# ── 1.5. Resolve repo ID (needed for draft conversion) ────────────────────────
+$repoParts = $Repo -split "/"
+$repoOwner = $repoParts[0]
+$repoName  = $repoParts[1]
+
+$repoData = gh api graphql -f query='
+query($owner:String!, $name:String!) {
+  repository(owner:$owner, name:$name) { id }
+}' -F "owner=$repoOwner" -F "name=$repoName" | ConvertFrom-Json
+$repoId = $repoData.data.repository.id
+
+# ── 2. Helper: load all board items ───────────────────────────────────────────
+function Get-BoardItems($projId) {
+    $data = gh api graphql -f query='
 query($proj:ID!) {
   node(id:$proj) {
     ... on ProjectV2 {
@@ -109,12 +123,13 @@ query($proj:ID!) {
             nodes {
               ... on ProjectV2ItemFieldSingleSelectValue {
                 field { ... on ProjectV2SingleSelectField { name } }
-                optionId
-                name
+                optionId name
               }
             }
           }
           content {
+            __typename
+            ... on DraftIssue { title }
             ... on Issue {
               number title state
               labels(first:10) { nodes { name } }
@@ -132,24 +147,66 @@ query($proj:ID!) {
       }
     }
   }
-}' -F proj=$projectId | ConvertFrom-Json
+}' -F "proj=$projId" | ConvertFrom-Json
+    return $data.data.node.items.nodes
+}
 
-$items = $itemData.data.node.items.nodes
+# ── 3. Convert any drafts to real issues ──────────────────────────────────────
+$items  = Get-BoardItems $projectId
+$drafts = @($items | Where-Object { $_.content.__typename -eq "DraftIssue" })
 
-# ── 3. Detect gaps ─────────────────────────────────────────────────────────────
+if ($drafts.Count -gt 0) {
+    Write-Host "$($drafts.Count) draft(s) encontrado(s) — convirtiendo a issues reales en $Repo..." -ForegroundColor Cyan
+
+    if ($DryRun) {
+        Write-Host "(DRY-RUN: conversion omitida)" -ForegroundColor Gray
+        $drafts | ForEach-Object { Write-Host "  [draft] $($_.content.title)" }
+        Write-Host ""
+    } else {
+        $convOk = 0; $convFail = 0
+        foreach ($draft in $drafts) {
+            $draftId = $draft.id
+            $title   = $draft.content.title
+            try {
+                $result = gh api graphql -f query='
+mutation($itemId:ID!, $repoId:ID!) {
+  convertProjectV2DraftIssueItemToIssue(input:{
+    itemId: $itemId
+    repositoryId: $repoId
+  }) {
+    item { content { ... on Issue { number } } }
+  }
+}' -F "itemId=$draftId" -F "repoId=$repoId" 2>&1 | ConvertFrom-Json
+                $num = $result.data.convertProjectV2DraftIssueItemToIssue.item.content.number
+                Write-Host "  -> #$num $title" -ForegroundColor DarkCyan
+                $convOk++
+            } catch {
+                Write-Host "  FAIL converting '$title': $_" -ForegroundColor Red
+                $convFail++
+            }
+        }
+        Write-Host "Conversion: $convOk OK  $convFail fallos" -ForegroundColor Cyan
+        Write-Host ""
+
+        # Re-load items so the converted issues appear with their numbers
+        $items = Get-BoardItems $projectId
+    }
+}
+
+# ── 4. Detect gaps ────────────────────────────────────────────────────────────
 $plan = @()
 
 foreach ($item in $items) {
     $c = $item.content
-    if (-not $c.number) { continue }
+    if ($c.__typename -ne "Issue") { continue }
 
     $fv = $item.fieldValues.nodes
     $assigneeCount  = $c.assignees.nodes.Count
-    $currentStatus  = ($fv | Where-Object { $_.field.name -eq "Status" }).optionId
+    $currentStatus  = ($fv | Where-Object { $_.field.name -eq "Status"   }).optionId
     $currentPrio    = ($fv | Where-Object { $_.field.name -eq "Priority" }).optionId
-    $currentSize    = ($fv | Where-Object { $_.field.name -eq "Size" }).optionId
-    $currentType    = ($fv | Where-Object { $_.field.name -eq "Type" }).optionId
-    $currentStatusN = ($fv | Where-Object { $_.field.name -eq "Status" }).name
+    $currentSize    = ($fv | Where-Object { $_.field.name -eq "Size"     }).optionId
+    $currentType    = ($fv | Where-Object { $_.field.name -eq "Type"     }).optionId
+    $currentStatusN = ($fv | Where-Object { $_.field.name -eq "Status"   }).name
 
     $mergedPRs = @($c.timelineItems.nodes.source | Where-Object { $_.merged -eq $true })
     $openPRs   = @($c.timelineItems.nodes.source | Where-Object { $_.state  -eq "OPEN"  })
@@ -157,12 +214,10 @@ foreach ($item in $items) {
 
     $changes = @()
 
-    # Assignee
     if ($assigneeCount -eq 0) {
         $changes += [PSCustomObject]@{ Type="assignee"; Display="Assignee vacio -> $Owner" }
     }
 
-    # Status
     $targetStatus = $null; $targetStatusN = $null
     if     ($c.state -eq "CLOSED"  -and $currentStatus -ne $doneId)  { $targetStatus=$doneId;   $targetStatusN="Done (issue cerrado)" }
     elseif ($mergedPRs.Count -gt 0 -and $currentStatus -ne $doneId)  { $targetStatus=$doneId;   $targetStatusN="Done (PR mergeado)" }
@@ -172,17 +227,14 @@ foreach ($item in $items) {
         $changes += [PSCustomObject]@{ Type="single"; FieldId=$statusId; TargetId=$targetStatus; Display="Status [$currentStatusN] -> $targetStatusN" }
     }
 
-    # Priority
     if (-not $currentPrio -and $prioMedId) {
         $changes += [PSCustomObject]@{ Type="single"; FieldId=$prioId; TargetId=$prioMedId; Display="Priority vacio -> P2 Medium" }
     }
 
-    # Size
     if (-not $currentSize -and $sizeMId) {
         $changes += [PSCustomObject]@{ Type="single"; FieldId=$sizeId; TargetId=$sizeMId; Display="Size vacio -> M" }
     }
 
-    # Type — detect from labels, fallback to Feature
     if (-not $currentType -and $typeId) {
         $detectedType = "Feature"
         if     ($labels -contains "bug")      { $detectedType = "Bug" }
@@ -206,7 +258,7 @@ foreach ($item in $items) {
     }
 }
 
-# ── 4. Print plan ──────────────────────────────────────────────────────────────
+# ── 5. Print plan ─────────────────────────────────────────────────────────────
 if ($plan.Count -eq 0) {
     Write-Host "Board completo. Sin gaps detectados." -ForegroundColor Green
     Write-Host "NOTA: Linked PRs y Sub-issues progress son columnas del sistema, no escribibles via API."
@@ -229,14 +281,14 @@ if ($DryRun) {
     exit 0
 }
 
-# ── 5. Confirm (interactive) ───────────────────────────────────────────────────
+# ── 6. Confirm (interactive) ──────────────────────────────────────────────────
 if (-not $Auto) {
     Write-Host ""
     $confirm = Read-Host "Aplicar estos cambios? (s/n)"
     if ($confirm -notmatch '^[sySY]') { Write-Host "Cancelado." -ForegroundColor Gray; exit 0 }
 }
 
-# ── 6. Execute ─────────────────────────────────────────────────────────────────
+# ── 7. Execute ────────────────────────────────────────────────────────────────
 $ok = 0; $fail = 0
 
 foreach ($entry in $plan) {
