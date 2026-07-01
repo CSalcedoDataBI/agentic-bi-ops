@@ -41,6 +41,12 @@
 .PARAMETER DryRun
     With -Start: print what would change without executing.
 
+.PARAMETER Branch
+    With -Start: also create and checkout a work branch issue-<num>-<slug>
+    (only when the current directory is a clone of the issue's repo).
+    Finishing the work MUST then go through a PR with "Closes #<num>" so
+    GitHub fills the Linked pull requests column on the board by itself.
+
 .PARAMETER TokenVar
     Windows USER env var holding the PAT. Defaults to GITHUB_TOKEN_PERSONAL;
     use GITHUB_TOKEN_BUSINESS for the PAL-Devs account.
@@ -58,6 +64,7 @@ param(
     [int]   $ProjectNum = 0,
     [int]   $Start      = 0,
     [switch]$DryRun,
+    [switch]$Branch,
     [string]$TokenVar   = "GITHUB_TOKEN_PERSONAL"
 )
 
@@ -241,9 +248,19 @@ if ($item.content.state -eq "CLOSED") {
 Write-Host ("  #{0} {1}" -f $Start, $item.content.title) -ForegroundColor Yellow
 Write-Host ("  Repo: {0} | Status actual: {1}" -f $repo, $currentStatus) -ForegroundColor DarkGray
 Write-Host ""
+# Work branch name: issue-<num>-<slug-from-title>
+$slug = ($item.content.title.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+if ($slug.Length -gt 40) {
+    $slug = $slug.Substring(0, 40)
+    if ($slug.Contains('-')) { $slug = $slug.Substring(0, $slug.LastIndexOf('-')) }  # no cortar palabras
+    $slug = $slug.Trim('-')
+}
+$branchName = "issue-$Start-$slug"
+
 Write-Host "  Plan:" -ForegroundColor Cyan
 Write-Host "    -> Status [$currentStatus] -> In Progress"
 Write-Host "    -> Assignee -> $Owner"
+if ($Branch) { Write-Host "    -> Rama de trabajo: $branchName" }
 Write-Host ""
 
 if ($DryRun) {
@@ -269,6 +286,25 @@ try {
     Write-Host "  OK  Assignee -> $Owner" -ForegroundColor Green
 } catch {
     Write-Host "  WARN no se pudo asignar: $_" -ForegroundColor DarkYellow
+}
+
+# -- Execute: work branch (only if cwd is a clone of the issue's repo) ----------
+if ($Branch) {
+    $originUrl = ""
+    try { $originUrl = (git remote get-url origin 2>$null) } catch { }
+    if ($originUrl -notmatch [regex]::Escape($repo)) {
+        Write-Host "  WARN el directorio actual no es un clon de $repo - rama NO creada." -ForegroundColor DarkYellow
+        Write-Host "       Crea la rama en ese repo con: git checkout -b $branchName" -ForegroundColor DarkYellow
+    } else {
+        git rev-parse --verify --quiet $branchName 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            git checkout $branchName 2>&1 | Out-Null
+            Write-Host "  OK  Rama $branchName ya existia - checkout hecho" -ForegroundColor Green
+        } else {
+            git checkout -b $branchName 2>&1 | Out-Null
+            Write-Host "  OK  Rama $branchName creada y activa" -ForegroundColor Green
+        }
+    }
 }
 Write-Host ""
 
@@ -307,5 +343,7 @@ query($o:String!, $r:String!, $n:Int!) {
 Write-Host "------------------------------" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Issue #$Start listo para trabajar (In Progress, asignado a $Owner)." -ForegroundColor Green
+Write-Host "AL TERMINAR: push de la rama y PR con 'Closes #$Start' en el cuerpo - NO commit directo a main." -ForegroundColor Yellow
+Write-Host "(asi GitHub llena solo la columna 'Linked pull requests' del board)" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "Board: $boardUrl" -ForegroundColor Cyan
