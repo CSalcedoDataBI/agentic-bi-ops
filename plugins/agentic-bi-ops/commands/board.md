@@ -3,6 +3,25 @@ description: Administer/automate a GitHub Projects board (init/add/move/field/bu
 ---
 You are running the agentic-bi-ops /board command.
 
+**If $ARGUMENTS is empty or only whitespace, do NOT run anything yet.** Show this menu and wait
+for the user to pick (they can answer with just the number):
+
+```
+¿Qué quieres hacer con el board?
+
+1. fill --dry-run   → ver qué gaps hay (assignees, Status, Priority, Size, Type) SIN cambiar nada
+2. fill --auto      → llenar todos los gaps automáticamente (convierte drafts a issues reales)
+3. fill             → llenar gaps pidiendo confirmación antes de ejecutar
+4. init             → crear/configurar el board de este repo
+5. add <url>        → añadir un issue/PR al board
+6. move             → cambiar el Status de un item
+7. field            → crear campos o llenar un campo en todos los items por regla
+8. bulk             → mover/cerrar/etiquetar muchos items a la vez
+9. automate         → instalar CI que sincroniza el board solo
+```
+
+When they answer (number or name), execute that sub-action following the instructions below.
+
 First apply the `gh-account` skill to set `$env:GH_TOKEN` for the right account (default
 CSalcedoDataBI; honor an explicit `--account pal-devs` in the arguments). Never run `gh auth switch`.
 
@@ -19,15 +38,19 @@ matching recipe from the projects-admin references:
   by title-prefix map, or text by `{title}` template — idempotent, retries 502s)
   (references/field-presets.md + board-ops.md). Visibility-per-view and group-by are UI-only — say so.
 - **bulk** — batch move/close/label across many items (references/issue-ops.md)
-- **fill** — detect and fill column gaps across all board items (projects-admin skill — /board fill section):
-  - No flags: read all items via GraphQL, print a plan of every gap found (missing assignee, wrong
-    Status), then ask the user for confirmation before making any change.
-  - `--dry-run`: print the plan only, execute nothing.
-  - `--auto`: fill without asking — assign owner if empty, sync Status from issue/PR state — same
-    logic as `bash scripts/board-sync.sh`. Use for CI or when the user has already approved.
+- **fill** — detect and fill ALL gaps across the board by running `scripts/Board-Fill.ps1`
+  (pass -Owner, -Repo, -ProjectNum for the current repo's board):
+  - The script converts any draft notes to REAL issues in the repo first, then fills gaps:
+    Assignees (owner), Status (from issue/PR state), Priority (P2 Medium), Size (M),
+    Type (from labels, else Feature).
+  - No flags: run with neither -DryRun nor -Auto — the script prints the plan and asks (s/n).
+  - `--dry-run`: run with -DryRun — plan only, executes nothing.
+  - `--auto`: run with -Auto — fills everything without asking. Use for CI or when already approved.
   - NOTE: Linked PRs and Sub-issues progress are system-derived columns — GitHub sets them
     automatically from PR mentions and sub-issue state. They are NOT writable via API; do not
     attempt to fill them and explain this to the user if asked.
+  - NOTE: which columns a VIEW displays is UI-only — if fields look "empty" on the board page,
+    tell the user to click `+` at the right of the view header and enable Priority/Size/Type.
 - **automate** — install the actions/add-to-project CI workflow (references/automation.md)
 
 SAFETY (mandatory, see references/best-practices.md):
