@@ -4,41 +4,40 @@
 
 .DESCRIPTION
     Reads all items from a GitHub Projects v2 board and detects gaps:
-    missing assignees and wrong/missing Status fields. Then fills them
-    according to the rules below.
+    missing assignees, Status, Priority, Size, and Type. Then fills them.
 
     Fill rules:
-      Assignees  : if empty, assign the board owner
-      Status     : issue CLOSED -> Done
-                   issue OPEN + merged PR -> Done
-                   issue OPEN + open PR   -> In Progress
-                   issue OPEN + no PR     -> Todo
+      Assignees : if empty, assign the board owner
+      Status    : issue CLOSED -> Done
+                  issue OPEN + merged PR -> Done
+                  issue OPEN + open PR   -> In Progress
+                  issue OPEN + no PR     -> Todo
+      Priority  : if empty -> P2 Medium
+      Size      : if empty -> M
+      Type      : if empty -> detect from labels (bug->Bug, docs->Docs,
+                  refactor->Refactor, chore->Chore), else Feature
 
-    Linked PRs and Sub-issues progress are system-derived columns.
-    GitHub sets them automatically. They are not writable via API.
+    Linked PRs and Sub-issues progress are system-derived — not writable via API.
 
 .PARAMETER Owner
-    GitHub username or org that owns the project board.
-    Defaults to CSalcedoDataBI.
+    GitHub username that owns the project board. Defaults to CSalcedoDataBI.
 
 .PARAMETER Repo
-    owner/repo string (e.g. "CSalcedoDataBI/agentic-bi-ops").
-    Used for issue assignment calls.
+    owner/repo string. Used for issue assignment calls.
 
 .PARAMETER ProjectNum
-    GitHub Projects v2 number (e.g. 13).
+    GitHub Projects v2 number (e.g. 1).
 
 .PARAMETER DryRun
     Print the plan without executing any changes.
 
 .PARAMETER Auto
     Execute changes without asking for confirmation.
-    Equivalent to the CI board-sync.sh behaviour.
 
 .EXAMPLE
-    .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/agentic-bi-ops -ProjectNum 13 -DryRun
-    .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/agentic-bi-ops -ProjectNum 13
-    .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/agentic-bi-ops -ProjectNum 13 -Auto
+    .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/csalcedodatabi.com -ProjectNum 1 -DryRun
+    .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/csalcedodatabi.com -ProjectNum 1
+    .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/csalcedodatabi.com -ProjectNum 1 -Auto
 #>
 [CmdletBinding()]
 param(
@@ -75,12 +74,28 @@ query($owner:String!, $num:Int!) {
   }
 }' -F owner=$Owner -F num=$ProjectNum | ConvertFrom-Json
 
-$projectId  = $projData.data.user.projectV2.id
-$statusNode = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name -eq "Status" }
+$projectId = $projData.data.user.projectV2.id
+$allFields = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name }
+
+function Get-Field($name) { $allFields | Where-Object { $_.name -eq $name } }
+function Get-Opt($field, $optName) { ($field.options | Where-Object { $_.name -eq $optName }).id }
+
+$statusNode = Get-Field "Status"
 $statusId   = $statusNode.id
-$doneId     = ($statusNode.options | Where-Object { $_.name -eq "Done" }).id
-$inProgId   = ($statusNode.options | Where-Object { $_.name -eq "In Progress" }).id
-$todoId     = ($statusNode.options | Where-Object { $_.name -eq "Todo" }).id
+$doneId     = Get-Opt $statusNode "Done"
+$inProgId   = Get-Opt $statusNode "In Progress"
+$todoId     = Get-Opt $statusNode "Todo"
+
+$prioNode   = Get-Field "Priority"
+$prioId     = $prioNode.id
+$prioMedId  = Get-Opt $prioNode "P2 Medium"
+
+$sizeNode   = Get-Field "Size"
+$sizeId     = $sizeNode.id
+$sizeMId    = Get-Opt $sizeNode "M"
+
+$typeNode   = Get-Field "Type"
+$typeId     = $typeNode.id
 
 # ── 2. Load all board items ────────────────────────────────────────────────────
 $itemData = gh api graphql -f query='
@@ -102,6 +117,7 @@ query($proj:ID!) {
           content {
             ... on Issue {
               number title state
+              labels(first:10) { nodes { name } }
               assignees(first:5) { nodes { login } }
               timelineItems(first:20 itemTypes:[CROSS_REFERENCED_EVENT]) {
                 nodes {
@@ -127,27 +143,56 @@ foreach ($item in $items) {
     $c = $item.content
     if (-not $c.number) { continue }
 
-    $assigneeCount = $c.assignees.nodes.Count
-    $currentOptId  = ($item.fieldValues.nodes | Where-Object { $_.field.name -eq "Status" }).optionId
-    $currentName   = ($item.fieldValues.nodes | Where-Object { $_.field.name -eq "Status" }).name
+    $fv = $item.fieldValues.nodes
+    $assigneeCount  = $c.assignees.nodes.Count
+    $currentStatus  = ($fv | Where-Object { $_.field.name -eq "Status" }).optionId
+    $currentPrio    = ($fv | Where-Object { $_.field.name -eq "Priority" }).optionId
+    $currentSize    = ($fv | Where-Object { $_.field.name -eq "Size" }).optionId
+    $currentType    = ($fv | Where-Object { $_.field.name -eq "Type" }).optionId
+    $currentStatusN = ($fv | Where-Object { $_.field.name -eq "Status" }).name
 
     $mergedPRs = @($c.timelineItems.nodes.source | Where-Object { $_.merged -eq $true })
     $openPRs   = @($c.timelineItems.nodes.source | Where-Object { $_.state  -eq "OPEN"  })
+    $labels    = @($c.labels.nodes.name | Where-Object { $_ } | ForEach-Object { $_.ToLower() })
 
     $changes = @()
 
+    # Assignee
     if ($assigneeCount -eq 0) {
-        $changes += [PSCustomObject]@{ Type="assignee"; Display="Assignee vacio -> asignar $Owner" }
+        $changes += [PSCustomObject]@{ Type="assignee"; Display="Assignee vacio -> $Owner" }
     }
 
-    $targetOptId = $null; $targetName = $null
-    if     ($c.state -eq "CLOSED"     -and $currentOptId -ne $doneId)  { $targetOptId=$doneId;   $targetName="Done (issue cerrado)" }
-    elseif ($mergedPRs.Count -gt 0    -and $currentOptId -ne $doneId)  { $targetOptId=$doneId;   $targetName="Done (PR mergeado)" }
-    elseif ($openPRs.Count   -gt 0    -and $currentOptId -eq $todoId)  { $targetOptId=$inProgId; $targetName="In Progress (PR abierto)" }
-    elseif (-not $currentOptId)                                          { $targetOptId=$todoId;   $targetName="Todo (sin PR ni cierre)" }
+    # Status
+    $targetStatus = $null; $targetStatusN = $null
+    if     ($c.state -eq "CLOSED"  -and $currentStatus -ne $doneId)  { $targetStatus=$doneId;   $targetStatusN="Done (issue cerrado)" }
+    elseif ($mergedPRs.Count -gt 0 -and $currentStatus -ne $doneId)  { $targetStatus=$doneId;   $targetStatusN="Done (PR mergeado)" }
+    elseif ($openPRs.Count   -gt 0 -and $currentStatus -eq $todoId)  { $targetStatus=$inProgId; $targetStatusN="In Progress (PR abierto)" }
+    elseif (-not $currentStatus)                                       { $targetStatus=$todoId;   $targetStatusN="Todo (sin PR)" }
+    if ($targetStatus) {
+        $changes += [PSCustomObject]@{ Type="single"; FieldId=$statusId; TargetId=$targetStatus; Display="Status [$currentStatusN] -> $targetStatusN" }
+    }
 
-    if ($targetOptId) {
-        $changes += [PSCustomObject]@{ Type="status"; TargetId=$targetOptId; Display="Status [$currentName] -> $targetName" }
+    # Priority
+    if (-not $currentPrio -and $prioMedId) {
+        $changes += [PSCustomObject]@{ Type="single"; FieldId=$prioId; TargetId=$prioMedId; Display="Priority vacio -> P2 Medium" }
+    }
+
+    # Size
+    if (-not $currentSize -and $sizeMId) {
+        $changes += [PSCustomObject]@{ Type="single"; FieldId=$sizeId; TargetId=$sizeMId; Display="Size vacio -> M" }
+    }
+
+    # Type — detect from labels, fallback to Feature
+    if (-not $currentType -and $typeId) {
+        $detectedType = "Feature"
+        if     ($labels -contains "bug")      { $detectedType = "Bug" }
+        elseif ($labels -contains "docs")     { $detectedType = "Docs" }
+        elseif ($labels -contains "refactor") { $detectedType = "Refactor" }
+        elseif ($labels -contains "chore")    { $detectedType = "Chore" }
+        $typeOptId = Get-Opt $typeNode $detectedType
+        if ($typeOptId) {
+            $changes += [PSCustomObject]@{ Type="single"; FieldId=$typeId; TargetId=$typeOptId; Display="Type vacio -> $detectedType" }
+        }
     }
 
     if ($changes.Count -gt 0) {
@@ -164,7 +209,6 @@ foreach ($item in $items) {
 # ── 4. Print plan ──────────────────────────────────────────────────────────────
 if ($plan.Count -eq 0) {
     Write-Host "Board completo. Sin gaps detectados." -ForegroundColor Green
-    Write-Host ""
     Write-Host "NOTA: Linked PRs y Sub-issues progress son columnas del sistema, no escribibles via API."
     exit 0
 }
@@ -204,14 +248,14 @@ foreach ($entry in $plan) {
                 Write-Host "  OK  #$($entry.IssueNum) assignee -> $Owner" -ForegroundColor Green
                 $ok++
             }
-            elseif ($ch.Type -eq "status") {
+            elseif ($ch.Type -eq "single") {
                 gh api graphql -f query='
 mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
   updateProjectV2ItemFieldValue(input:{
     projectId:$proj, itemId:$item, fieldId:$field,
     value:{singleSelectOptionId:$opt}
   }) { projectV2Item { id } }
-}' -F proj=$projectId -F item=$entry.ItemId -F field=$statusId -F opt=$ch.TargetId | Out-Null
+}' -F proj=$projectId -F item=$entry.ItemId -F field=$ch.FieldId -F opt=$ch.TargetId | Out-Null
                 Write-Host "  OK  #$($entry.IssueNum) $($ch.Display)" -ForegroundColor Green
                 $ok++
             }
