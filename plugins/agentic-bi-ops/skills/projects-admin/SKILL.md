@@ -148,25 +148,29 @@ on:
 ## /board work — See pending work and start an issue
 
 The daily driver: answers "¿qué hay pendiente?" and starts the chosen issue. Runs
-`scripts/Board-Work.ps1` in a three-step conversational flow (pause for the user's pick between steps):
+`scripts/Board-Work.ps1` in a conversational flow — steps 0–1 are questions the agent must ASK
+and wait for; never assume the account or the scope:
 
 | Step | Command | What it does |
 |------|---------|--------------|
-| 1. Pick a board | `Board-Work.ps1 -ListBoards` | Every board of the owner (backups excluded) with pending count (Todo or no Status) + URL, most pending first |
-| 2. Pick an issue | `Board-Work.ps1 -ProjectNum <n>` | That board's pending items sorted by Priority; drafts flagged (convert via `/board fill` first) |
-| 3. Start it | `Board-Work.ps1 -ProjectNum <n> -Start <issueNum> -Branch` | Status → In Progress, assign owner, create + checkout branch `issue-<num>-<slug>`, print full issue context (body, labels, sub-issues) |
-| 4. Finish it | push branch → PR with `Closes #<num>` → merge | GitHub fills the board's **Linked pull requests** system column by itself |
+| 0. Ask account | (registry check, no script) | If BOTH `GITHUB_TOKEN_PERSONAL` and `GITHUB_TOKEN_BUSINESS` exist in the Windows USER registry, ask which account (personal = default); only one → use it silently. Business → pass `-TokenVar GITHUB_TOKEN_BUSINESS -Owner PAL-Devs` everywhere |
+| 1. Ask scope | `git remote get-url origin` | Inside a GitHub repo clone, ask: boards of THIS repo or ALL boards of the account? Outside a repo, skip the question (= all) |
+| 2. Pick a board | `Board-Work.ps1 -ListBoards [-Repo <owner/name>]` | With `-Repo`: only boards LINKED to that repo (`repository.projectsV2`) — exactly one result skips this pick. Without: every board of the owner (backups excluded). Both show pending count (Todo or no Status) + URL, most pending first |
+| 3. Pick an issue | `Board-Work.ps1 -ProjectNum <n>` | That board's pending items sorted by Priority; drafts flagged (convert via `/board fill` first) |
+| 4. Start it | `Board-Work.ps1 -ProjectNum <n> -Start <issueNum> -Branch` | Status → In Progress, assign owner, create + checkout branch `issue-<num>-<slug>`, print full issue context (body, labels, sub-issues) |
+| 5. Finish it | push branch → PR with `Closes #<num>` → merge | GitHub fills the board's **Linked pull requests** system column by itself |
 
 Notes:
-- Step 3 supports `-DryRun` (preview, no mutation). A CLOSED issue is refused with a reopen hint.
-- After step 3, the agent continues working the issue in-session — the printed context is the briefing.
-- **Step 4 is mandatory**: never commit board-tracked issue work directly to main. `Linked pull
+- Step 4 supports `-DryRun` (preview, no mutation). A CLOSED issue is refused with a reopen hint.
+  It retries once (4s) if the issue was added to the board seconds ago (eventual consistency).
+- After step 4, the agent continues working the issue in-session — the printed context is the briefing.
+- **Step 5 is mandatory**: never commit board-tracked issue work directly to main. `Linked pull
   requests` and `Sub-issues progress` are system-derived, read-only columns — the ONLY way to fill
   Linked PRs is finishing through a PR that closes the issue; Sub-issues progress only applies to
   parent issues with native sub-issues (empty = not applicable, not a gap).
 - `-Branch` skips branch creation (with a warning) when the cwd is not a clone of the issue's repo.
-- Skip step 1 when the user already named a board or means the current repo's board (resolve it with `Resolve-Board.ps1 -CreateIfMissing:$false`).
-- The script respects an already-set `GH_TOKEN` (from gh-account); otherwise it reads `GITHUB_TOKEN_PERSONAL` (or `-TokenVar GITHUB_TOKEN_BUSINESS` for the second account).
+- Skip steps 1–2 when the user already named a board.
+- The script respects an already-set `GH_TOKEN` (from gh-account); otherwise it reads `GITHUB_TOKEN_PERSONAL` (or the var given in `-TokenVar`).
 
 ---
 

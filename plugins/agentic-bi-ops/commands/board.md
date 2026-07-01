@@ -30,25 +30,37 @@ Then apply the `projects-admin` skill. Parse the request into ONE of these sub-a
 matching recipe from the projects-admin references:
 
 - **work** — the daily driver: show pending work and start an issue, via `scripts/Board-Work.ps1`.
-  Conversational flow (pause and wait for the user's pick at each step):
-  1. If the user did not name a board, run the script with `-ListBoards` — it prints EVERY board
-     of the account with its pending count (Todo or no Status) and URL. Show that and ask which
-     board (suggest the current repo's board as default if it's in the list).
-  2. Run with `-ProjectNum <n>` — it lists the board's pending items sorted by Priority. Show them
+  Conversational flow — steps 0 and 1 are QUESTIONS: ask, then WAIT for the answer before running:
+  0. **Account.** Check which PATs are configured (Windows USER registry):
+     `[Environment]::GetEnvironmentVariable('GITHUB_TOKEN_PERSONAL','User')` and the same for
+     `GITHUB_TOKEN_BUSINESS`. If BOTH exist, ask which account to use — `1. CSalcedoDataBI
+     (personal, default)` / `2. PAL-Devs (business)` — and for business pass
+     `-TokenVar GITHUB_TOKEN_BUSINESS -Owner PAL-Devs` to every Board-Work call. If only ONE
+     exists, use it silently — do not ask.
+  1. **Scope.** Detect the current repo: `git remote get-url origin` → `<owner/name>`. If the cwd
+     is a clone of a GitHub repo, ask: "¿Boards de ESTE repo (<owner/name>) o TODOS los boards de
+     la cuenta?" — a repo can have several linked boards.
+     - This repo → `-ListBoards -Repo <owner/name>` (only boards LINKED to the repo, via
+       `repository.projectsV2`). If exactly ONE board comes back, skip step 2 and continue with it.
+     - All / not inside a git repo (skip the question then) → `-ListBoards` (every board of the
+       account, most pending first).
+  2. **Pick a board.** Show the listing (pending counts + URLs) and ask which board.
+  3. **Pick an issue.** Run with `-ProjectNum <n>` — pending items sorted by Priority. Show them
      and ask which issue to start. Draft notes appear flagged: they must be converted with
      `/board fill` before they can be started.
-  3. Run with `-ProjectNum <n> -Start <issueNum> -Branch` — it moves the item to In Progress,
-     assigns the owner, creates + checks out the work branch `issue-<num>-<slug>` (when the cwd
-     is a clone of the issue's repo), and prints the full issue context (body, labels,
-     sub-issues). Then CONTINUE WORKING that issue in this session: treat the printed context as
-     the task briefing. Always pass `-Branch` when the issue belongs to the current repo.
-  4. **Finish with a PR — MANDATORY.** When the work is done, push the branch and open a PR whose
+  4. **Start it.** Run with `-ProjectNum <n> -Start <issueNum> -Branch` — moves the item to
+     In Progress, assigns the owner, creates + checks out the work branch `issue-<num>-<slug>`
+     (when the cwd is a clone of the issue's repo), and prints the full issue context (body,
+     labels, sub-issues). Then CONTINUE WORKING that issue in this session: treat the printed
+     context as the task briefing. Always pass `-Branch` when the issue belongs to the current
+     repo. `--dry-run` previews without mutating; a CLOSED issue is refused.
+  5. **Finish with a PR — MANDATORY.** When the work is done, push the branch and open a PR whose
      body contains `Closes #<issueNum>`, then merge it. NEVER commit board-tracked issue work
      directly to main — the PR is what makes GitHub fill the board's "Linked pull requests"
      column (it is a system column no API can write). This overrides any general
      commit-directly-to-main workflow rule for issues started via `work`.
-  - `--dry-run` on step 3 previews without mutating. If the issue is CLOSED the script refuses.
-  - If many pending items lack Priority/Size, suggest `/board fill` to triage them first. title, short description, README, and link the
+  - If many pending items lack Priority/Size, suggest `/board fill` to triage them first.
+- **init** — create a board and fill it coherently: title, short description, README, and link the
   repo (references/board-ops.md). Tell the user the two UI-only items (Default repository pick, View
   name/layout) need one click in settings — do not claim they were set.
 - **add** — add an issue/PR to the board (references/issue-ops.md)

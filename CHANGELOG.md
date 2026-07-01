@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.6] - 2026-07-01
+### Added
+- **`/board work` is now interactive about account and scope** (feedback from real use — it
+  listed all account boards without asking anything):
+  - **Step 0 — account**: if both `GITHUB_TOKEN_PERSONAL` and `GITHUB_TOKEN_BUSINESS` are
+    configured, the agent asks which account to use (personal = default); with a single
+    configured account there is no question.
+  - **Step 1 — scope**: inside a repo clone the agent asks "boards of THIS repo or ALL boards
+    of the account?". New `Board-Work.ps1 -ListBoards -Repo <owner/name>` lists only the boards
+    LINKED to that repository (`repository.projectsV2`, per-board owner aware); exactly one
+    linked board skips the board pick entirely.
+- `-Start` now retries once (4s) when the issue was added to the board seconds earlier and is
+  not yet visible in the items query (GitHub eventual consistency).
+### Fixed
+- Restored the `/board init` bullet in `board.md` — it had been mangled into the `work` section
+  when 0.7.4 inserted it.
+
 ## [0.7.5] - 2026-07-01
 ### Added
 - **Branch + PR finish flow in `/board work`** so the board's *Linked pull requests* system
