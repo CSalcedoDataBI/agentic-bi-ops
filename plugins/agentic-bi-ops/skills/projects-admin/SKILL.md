@@ -1,11 +1,11 @@
 ---
 name: projects-admin
-description: Use to administer or automate a GitHub Projects (v2) board or its issues — create/configure a project, set Status/Priority/Target fields, add/move/bulk-edit items, link a board to a repo, or install CI auto-add. Always resolves identity via gh-account (default CSalcedoDataBI). Triggers — "administra el board", "mueve a Done", "crea el project", "add to board", "bulk close", "automatiza el board", /board.
+description: Use to administer or automate a GitHub Projects (v2) board or its issues — create/configure a project, set Status/Priority/Target fields, add/move/bulk-edit items, link a board to a repo, install CI auto-add, or run /board fill to detect and fix gaps. Always resolves identity via gh-account (default CSalcedoDataBI). Triggers — "administra el board", "mueve a Done", "crea el project", "add to board", "bulk close", "automatiza el board", "llena el board", /board.
 ---
 
 # projects-admin — GitHub Projects (v2) Board & Issue Admin
 
-This skill covers the full lifecycle of a GitHub Projects v2 board and its items: creation, field setup, issue management, bulk operations, and CI automation. It does NOT reimplement the `plan-tracking` skill's plan→epic behavior (see "Relation to plan-tracking" below).
+This skill covers the full lifecycle of a GitHub Projects v2 board and its items: creation, field setup, issue management, bulk operations, CI automation, and gap detection/fill via `/board fill`.
 
 ---
 
@@ -70,6 +70,81 @@ For the exact commands to create these fields and set their values on items, see
 
 ---
 
+## /board fill — Detect and fill column gaps
+
+Scans the board for missing values (assignees, Status) and fills them. In CI it runs `scripts/board-sync.sh`; in interactive sessions it runs the PowerShell sequence below.
+
+| Variant | Behavior |
+|---------|----------|
+| `/board fill` | Shows a full plan and asks for confirmation before acting |
+| `/board fill --dry-run` | Prints what would change, executes nothing |
+| `/board fill --auto` | Fills without asking — for CI or when the user has already approved |
+
+### What gets filled
+
+| Column | Fill rule |
+|--------|-----------|
+| **Assignees** | If empty, assign the board owner (`$OWNER`) |
+| **Status** | Issue closed → `Done`; PR merged → `Done`; open PR + Status=Todo → `In Progress` |
+| **Linked PRs** | System-derived by GitHub from PR mentions — not writable via API |
+| **Sub-issues progress** | System-derived from closed sub-issues — not writable via API |
+
+### Interactive mode (Claude Code session)
+
+```powershell
+# 1. Load token
+$t = [System.Environment]::GetEnvironmentVariable('GITHUB_TOKEN_PERSONAL', 'User'); $env:GH_TOKEN = $t
+
+# 2. Read all board items via GraphQL
+$proj = gh api graphql -f query='
+query($owner:String!, $num:Int!) {
+  user(login:$owner) {
+    projectV2(number:$num) {
+      id
+      items(first:100) {
+        nodes {
+          id
+          fieldValues(first:20) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue { field { ... on ProjectV2SingleSelectField { name } } optionId }
+            }
+          }
+          content {
+            ... on Issue { number state title assignees(first:5) { nodes { login } } }
+          }
+        }
+      }
+      fields(first:30) {
+        nodes { ... on ProjectV2SingleSelectField { id name options { id name } } }
+      }
+    }
+  }
+}' -F owner=<owner> -F num=<project-num>
+
+# 3. Detect gaps — items missing assignee or Status
+# 4. --dry-run: print plan
+# 5. --auto or after confirmation: execute
+#    a) Empty assignee
+gh issue edit <issue-num> --repo <owner>/<repo> --add-assignee <owner>
+#    b) Wrong / missing Status
+gh api graphql -f query='mutation(...) { updateProjectV2ItemFieldValue(...) { projectV2Item { id } } }' ...
+```
+
+### CI mode (GitHub Actions)
+
+The workflow `.github/workflows/board-sync.yml` runs `bash scripts/board-sync.sh` automatically on every issue or PR event. This is equivalent to `/board fill --auto` with no manual intervention.
+
+Triggers already configured:
+```yaml
+on:
+  issues:    [opened, closed, reopened, assigned]
+  pull_request: [opened, closed]
+  schedule:  # Monday 9am UTC — weekly health check
+  workflow_dispatch:
+```
+
+---
+
 ## Routing table
 
 | Intent | Reference file | Command family |
@@ -82,6 +157,7 @@ For the exact commands to create these fields and set their values on items, see
 | Apply a whole field preset (EN/ES, custom values) | `references/field-presets.md` | `Apply-FieldPreset.ps1 -Lang en\|es` |
 | Set a field value on an item | `references/board-ops.md` | `gh project item-edit` |
 | Bulk-fill a custom field across ALL items (by rule) | `references/board-ops.md` | `scripts/Set-BoardField.ps1` |
+| **Detect and fill board gaps** | **this file — `/board fill` section** | **`/board fill` / `--dry-run` / `--auto`** |
 | Manage views / inspect board | `references/board-ops.md` | `gh project view`, `gh project item-list` |
 | Create an issue with a label | `references/issue-ops.md` | `gh issue create` |
 | Create / ensure a label exists | `references/issue-ops.md` | `gh label create --force` |
