@@ -249,13 +249,16 @@ foreach ($entry in $plan) {
                 $ok++
             }
             elseif ($ch.Type -eq "single") {
+                $itemId  = $entry.ItemId
+                $fieldId = $ch.FieldId
+                $optId   = $ch.TargetId
                 gh api graphql -f query='
 mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
   updateProjectV2ItemFieldValue(input:{
     projectId:$proj, itemId:$item, fieldId:$field,
     value:{singleSelectOptionId:$opt}
   }) { projectV2Item { id } }
-}' -F proj=$projectId -F item=$entry.ItemId -F field=$ch.FieldId -F opt=$ch.TargetId | Out-Null
+}' -F "proj=$projectId" -F "item=$itemId" -F "field=$fieldId" -F "opt=$optId" | Out-Null
                 Write-Host "  OK  #$($entry.IssueNum) $($ch.Display)" -ForegroundColor Green
                 $ok++
             }
