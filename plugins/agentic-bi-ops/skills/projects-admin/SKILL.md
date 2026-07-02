@@ -171,6 +171,8 @@ Notes:
 - **Review gate fallbacks** (in order): Copilot code review (auto-requested) → `second-opinion`
   skill as extra reviewer → explicit self-review of `gh pr diff` (must be stated honestly in the
   report). "No checks configured" counts as pass with a hint to run `/board automate`.
+- **Small-PR guard** (in the gate): warns over 600 changed lines / 20 files (tunable via
+  `-MaxLines`/`-MaxFiles`) and suggests `Board-Breakdown.ps1`. Warning, never a block.
 - `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset` (optional, once per repo) installs a
   ruleset requiring PRs into the default branch; repo admins keep bypass — never claim it blocks
   admins.

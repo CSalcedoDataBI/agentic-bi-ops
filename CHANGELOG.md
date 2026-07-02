@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.4] - 2026-07-01
+### Added
+- **M5.5 — Small-PR guard** inside the review gate: measures the PR (files, +/- lines) and
+  warns over 600 lines / 20 files (tunable `-MaxLines`/`-MaxFiles`), suggesting a
+  `Board-Breakdown.ps1` split. A warning, never a block — GitHub PR BP: small focused PRs
+  review better and introduce fewer bugs.
+
 ## [0.8.3] - 2026-07-01
 ### Added
 - **M5.4 — Sub-issue breakdown** (`scripts/Board-Breakdown.ps1`, wired into work step 4): break

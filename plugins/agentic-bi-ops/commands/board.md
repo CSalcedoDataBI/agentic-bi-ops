@@ -66,8 +66,10 @@ matching recipe from the projects-admin references:
         board's "Linked pull requests" column (a system column no API can write). This
         overrides any general commit-directly-to-main workflow rule for issues started via `work`.
      b. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
-        code review when available, waits for CI checks, waits for the review, and prints
-        decision + feedback + unresolved threads. Exit 0 = gate passed; exit 1 = blocked.
+        code review when available, measures PR size (warns over 600 lines / 20 files and
+        suggests `Board-Breakdown.ps1` — small PRs review better), waits for CI checks, waits
+        for the review, and prints decision + feedback + unresolved threads. Exit 0 = gate
+        passed; exit 1 = blocked.
         Address the printed feedback with new commits, push, and RE-RUN the gate until it
         passes. If the `second-opinion` skill is available, use it as an extra reviewer.
         If no reviewer is available at all, an explicit self-review of `gh pr diff <n>` is
