@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.5] - 2026-07-01
+### Added
+- **M5.6 — `/board update`** (`scripts/Post-BoardStatusUpdate.ps1`): posts a ProjectV2 status
+  update (`createProjectV2StatusUpdate`). With no `-Body` it generates one from the live board:
+  counts per Status + the next pending items by Priority. `-Status` supports
+  ON_TRACK/AT_RISK/OFF_TRACK/COMPLETE/INACTIVE. First update posted on the tool's own board.
+
 ## [0.8.4] - 2026-07-01
 ### Added
 - **M5.5 — Small-PR guard** inside the review gate: measures the PR (files, +/- lines) and

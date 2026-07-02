@@ -21,6 +21,7 @@ for the user to pick (they can answer with just the number):
 10. automate        → instalar CI que sincroniza el board solo
 11. templates       → instalar issue forms (bug/feature/task) + PR template en el repo actual
 12. labels          → aplicar la taxonomia de labels (bug/docs/refactor/chore/blocked/...) al repo
+13. update          → publicar un status update del board (progreso de alto nivel)
 ```
 
 When they answer (number or name), execute that sub-action following the instructions below.
@@ -111,6 +112,9 @@ matching recipe from the projects-admin references:
   - Existing files are SKIPPED (never overwrite a repo's customized templates); `--force`
     overwrites. The script only touches the working copy — commit through the normal flow
     (PR when the work is board-tracked).
+- **update** — post a board status update (Projects BP: share high-level progress) by running
+  `scripts/Post-BoardStatusUpdate.ps1 -ProjectNum <n>` (auto-generates the body from live counts
+  + next pending by Priority; `-Status AT_RISK|OFF_TRACK|COMPLETE` and `-Body` override it).
 - **labels** — apply the label taxonomy preset by running `scripts/Apply-LabelPreset.ps1`
   (repo derived from origin, or `-Repo owner/name`). Idempotent `gh label create --force` from
   `presets/labels.json`: `bug`/`docs`/`refactor`/`chore` feed Board-Fill Type detection,
