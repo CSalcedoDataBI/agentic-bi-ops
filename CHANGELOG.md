@@ -11,6 +11,8 @@
   pushes new commits to the already-open PR (the review-gate iteration loop). `-DryRun`
   previews everything. `/board work` step 5a, the `gh-account` skill, and the `-Start` closing
   message now point here.
+
+## [0.9.1] - 2026-07-01
 ### Added
 - **MS2.2 — Local session registry** (`.agentic-bi-ops/sessions.json`, gitignored, shared
   across worktrees next to the MAIN clone): every successful `-Start` records issue, branch,
