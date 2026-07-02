@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.7] - 2026-07-01
+### Added
+- **`/board plan`** (`scripts/Board-Plan.ps1`): turn a plan into a tracked epic + NATIVE
+  sub-issues on the repo board — a plan is done when its tasks are issues, not when a markdown
+  exists. Two entry modes: plan interactively now, or parse an existing plan doc/plan-mode
+  output. Ensures `plan`/`plan-task` labels, reuses `Board-Breakdown` for children,
+  `Resolve-Board` for the board (never duplicates), registers epic + children, and hands off to
+  `/board fill` + `/board work`. Absorbs the lessons of the personal plan-tracking skill
+  (pushed-ref blob URLs only, substantial-tasks-only, current-repo-only) so the flow ships with
+  the plugin.
+
 ## [0.8.6] - 2026-07-01
 ### Added
 - **M5.7 — Dependency-aware `work`**: pending items labeled `blocked` show as `[BLOCKED]` and
