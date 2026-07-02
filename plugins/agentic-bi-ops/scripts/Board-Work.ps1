@@ -74,6 +74,7 @@ param(
     [int]   $Start      = 0,
     [switch]$DryRun,
     [switch]$Branch,
+    [switch]$IgnoreBlocked,
     [string]$TokenVar   = "GITHUB_TOKEN_PERSONAL"
 )
 
@@ -193,6 +194,9 @@ if ($Start -le 0) {
         if ($p.content.type -eq "DraftIssue") {
             Write-Host ("  [draft]  {0}" -f $p.title) -ForegroundColor DarkYellow
             Write-Host  "           (nota draft - conviertela a issue real con /board fill antes de trabajarla)" -ForegroundColor DarkGray
+        } elseif (@($p.labels) -contains "blocked") {
+            Write-Host ("  #{0,-4} [BLOCKED] {1}" -f $p.content.number, $p.title) -ForegroundColor Red
+            Write-Host  "        bloqueado por una dependencia - no se puede empezar (quita el label 'blocked' al desbloquearse)" -ForegroundColor DarkGray
         } else {
             $repo = $p.content.repository
             Write-Host ("  #{0,-4} {1}" -f $p.content.number, $p.title) -ForegroundColor Yellow
@@ -287,6 +291,28 @@ if ($item.content.state -eq "CLOSED") {
     Write-Host ""
     Write-Host "Board: $boardUrl" -ForegroundColor Cyan
     exit 1
+}
+
+# -- Dependency check (Issues BP): refuse to start a blocked issue --------------
+if (-not $IgnoreBlocked) {
+    $blockers = @()
+    $issueLabels = @((gh issue view $Start --repo $repo --json labels | ConvertFrom-Json).labels.name)
+    if ($issueLabels -contains "blocked") { $blockers += "label 'blocked' presente" }
+    # Native blocked-by dependencies (best-effort: API may not exist for the account)
+    try {
+        $deps = gh api "repos/$repo/issues/$Start/dependencies/blocked_by" 2>$null | ConvertFrom-Json
+        foreach ($d in @($deps | Where-Object { $_.state -eq "open" })) {
+            $blockers += "bloqueado por #$($d.number) '$($d.title)' (abierto)"
+        }
+    } catch { }
+    if ($blockers.Count -gt 0) {
+        Write-Host "BLOQUEADO - no se empieza #${Start}:" -ForegroundColor Red
+        $blockers | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+        Write-Host "Resuelve la dependencia (o usa -IgnoreBlocked si es un falso positivo)." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+        exit 1
+    }
 }
 
 Write-Host ("  #{0} {1}" -f $Start, $item.content.title) -ForegroundColor Yellow

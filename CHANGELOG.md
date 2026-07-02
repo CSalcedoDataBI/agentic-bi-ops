@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.6] - 2026-07-01
+### Added
+- **M5.7 — Dependency-aware `work`**: pending items labeled `blocked` show as `[BLOCKED]` and
+  cannot be started; `-Start` refuses them and also checks native blocked-by dependencies
+  (best-effort API), listing the open blocker. `-IgnoreBlocked` overrides a false positive.
+  Closes the last M5 gap: every automatable GitHub best practice is now enforced by the tool.
+
 ## [0.8.5] - 2026-07-01
 ### Added
 - **M5.6 — `/board update`** (`scripts/Post-BoardStatusUpdate.ps1`): posts a ProjectV2 status
