@@ -148,7 +148,7 @@ Honestly out of scope (GitHub exposes no API): view layouts, charts/insights, pr
 | **M1** (current) | Cross-account GitHub Projects & issues governance | `gh-account` |
 | **M2** (in progress) | PBIP / Fabric git ops — branch-per-report, **TMDL diff review** (breaking schema-change detection, wired into the review gate) | `gh-account`, `tmdl-review` |
 | **M3** | Semantic-model review agents wired to the board | `gh-account` |
-| **M4** | BI release automation | `gh-account` |
+| **M4** (in progress) | BI release automation — **changelog generation** from board Done issues (`/board changelog`) | `gh-account` |
 
 ---
 

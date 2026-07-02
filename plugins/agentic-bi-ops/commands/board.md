@@ -23,6 +23,7 @@ for the user to pick (they can answer with just the number):
 12. templates       → instalar issue forms (bug/feature/task) + PR template en el repo actual
 13. labels          → aplicar la taxonomia de labels (bug/docs/refactor/chore/blocked/...) al repo
 14. update          → publicar un status update del board (progreso de alto nivel)
+15. changelog       → generar un bloque de CHANGELOG (Added/Changed/Fixed) desde los issues Done
 ```
 
 When they answer (number or name), execute that sub-action following the instructions below.
@@ -152,6 +153,14 @@ matching recipe from the projects-admin references:
 - **update** — post a board status update (Projects BP: share high-level progress) by running
   `scripts/Post-BoardStatusUpdate.ps1 -ProjectNum <n>` (auto-generates the body from live counts
   + next pending by Priority; `-Status AT_RISK|OFF_TRACK|COMPLETE` and `-Body` override it).
+- **changelog** — generate a Keep-a-Changelog version block from the board's Done issues by
+  running `scripts/Board-Changelog.ps1 -ProjectNum <n>`. Groups issues into Added/Changed/Fixed
+  by the board Type field (Feature→Added, Bug→Fixed, Docs/Refactor/Chore→Changed; label fallback).
+  Includes only issues closed since the last CHANGELOG entry AND not already cited as `(#n)` —
+  so shipped work is never double-listed. Prints the block; `-Write` inserts it at the top of
+  CHANGELOG.md; `-Version`/`-Date`/`-Since` override the defaults (version read from plugin.json).
+  NOTE: the dedup keys on `(#n)` citations, which this tool always emits — pre-existing prose
+  entries without a number are not recognized, so review the first generated block before `-Write`.
 - **labels** — apply the label taxonomy preset by running `scripts/Apply-LabelPreset.ps1`
   (repo derived from origin, or `-Repo owner/name`). Idempotent `gh label create --force` from
   `presets/labels.json`: `bug`/`docs`/`refactor`/`chore` feed Board-Fill Type detection,

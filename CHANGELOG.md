@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.0] - 2026-07-02
+### Added
+- **M4.2 — Changelog generation from board items** (`scripts/Board-Changelog.ps1`, `/board
+  changelog`): turns the board's Done issues into a Keep-a-Changelog version block, grouping
+  them into Added / Changed / Fixed by the board Type field (Feature→Added, Bug→Fixed,
+  Docs/Refactor/Chore→Changed; label fallback when Type is empty). Includes only issues closed
+  since the most recent CHANGELOG entry AND not already cited as `(#n)`, so shipped work is
+  never double-listed. Prints the block; `-Write` inserts it at the top of the CHANGELOG;
+  `-Version` / `-Date` / `-Since` override the defaults (version read from `plugin.json`).
+
 ## [0.10.1] - 2026-07-02
 ### Fixed
 - **Board-Fill.ps1 cross-account** (#75): the script pinned `GITHUB_TOKEN_PERSONAL`
