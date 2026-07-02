@@ -36,6 +36,11 @@
 .PARAMETER Auto
     Execute changes without asking for confirmation.
 
+.PARAMETER TokenVar
+    Windows USER env var holding the PAT. Defaults to GITHUB_TOKEN_PERSONAL.
+    A pre-set $env:GH_TOKEN is respected and NOT overwritten - so a business
+    board works with GITHUB_TOKEN_BUSINESS (same contract as Board-Work.ps1).
+
 .EXAMPLE
     .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/csalcedodatabi.com -ProjectNum 1 -DryRun
     .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/csalcedodatabi.com -ProjectNum 1
@@ -47,14 +52,19 @@ param(
     [string]$Repo       = "",
     [int]   $ProjectNum = 13,
     [switch]$DryRun,
-    [switch]$Auto
+    [switch]$Auto,
+    [string]$TokenVar   = "GITHUB_TOKEN_PERSONAL"
 )
 
 $ErrorActionPreference = "Stop"
 
 # ── 0. Token ──────────────────────────────────────────────────────────────────
-$env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable("GITHUB_TOKEN_PERSONAL", "User")
-if (-not $env:GH_TOKEN) { throw "GITHUB_TOKEN_PERSONAL not set in Windows USER environment." }
+# Respect a pre-set $env:GH_TOKEN (a business board is reached by exporting
+# GITHUB_TOKEN_BUSINESS first) instead of clobbering it with the personal PAT.
+if (-not $env:GH_TOKEN) {
+    $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
+}
+if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
 if (-not $Repo) { $Repo = "$Owner/agentic-bi-ops" }
 
 $mode = if ($DryRun) { "DRY-RUN" } elseif ($Auto) { "AUTO" } else { "INTERACTIVE" }
@@ -79,6 +89,12 @@ query($owner:String!, $num:Int!) {
 }' -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
 
 $projectId = $projData.data.user.projectV2.id
+# A non-existent project (or a token for the wrong account / missing 'project'
+# scope) resolves projectV2 to null WITHOUT a GraphQL error, so gh exits 0.
+# Abort loudly instead of sailing on to report a healthy, empty board.
+if (-not $projectId) {
+    throw "No pude resolver el board: user '$Owner' projectV2 #$ProjectNum no existe o el token ($TokenVar) no tiene acceso (revisa cuenta y scope 'project'). Aborto en vez de reportar un board sano."
+}
 $allFields = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name }
 
 function Get-Field($name) { $allFields | Where-Object { $_.name -eq $name } }
@@ -111,6 +127,9 @@ query($owner:String!, $name:String!) {
   repository(owner:$owner, name:$name) { id }
 }' -F "owner=$repoOwner" -F "name=$repoName" | ConvertFrom-Json
 $repoId = $repoData.data.repository.id
+if (-not $repoId) {
+    throw "No pude resolver el repo '$Repo' (no existe o el token ($TokenVar) no tiene acceso). Aborto."
+}
 
 # ── 2. Helper: load all board items ───────────────────────────────────────────
 function Get-BoardItems($projId) {
