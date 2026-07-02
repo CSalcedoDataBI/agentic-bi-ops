@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.9] - 2026-07-01
+### Added
+- **MS1.2 — Dirty-tree guard** in `Board-Work.ps1 -Branch`: never switches branches under
+  another session's feet. If the working copy has uncommitted changes or sits on another
+  `issue-*` branch, the switch is refused with the exact `git worktree add` command to work
+  the issue in an isolated worktree instead. Re-entry on the SAME issue branch stays allowed.
+
 ## [0.8.8] - 2026-07-01
 ### Added
 - **MS1.1 — Multi-session issue lock** in `Board-Work.ps1 -Start`: refuses an issue already

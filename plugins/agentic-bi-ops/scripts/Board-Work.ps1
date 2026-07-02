@@ -394,13 +394,28 @@ if ($Branch) {
         Write-Host "  WARN el directorio actual no es un clon de $repo - rama NO creada." -ForegroundColor DarkYellow
         Write-Host "       Crea la rama en ese repo con: git checkout -b $branchName" -ForegroundColor DarkYellow
     } else {
-        git rev-parse --verify --quiet $branchName 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            git checkout $branchName 2>&1 | Out-Null
-            Write-Host "  OK  Rama $branchName ya existia - checkout hecho" -ForegroundColor Green
+        # Dirty-tree guard (multi-session): NEVER switch branches under another session's feet.
+        $dirty     = @(git status --porcelain 2>$null)
+        $curBranch = git branch --show-current 2>$null
+        if ($dirty.Count -gt 0 -and $curBranch -ne $branchName) {
+            Write-Host "  OCUPADO: el working tree tiene $($dirty.Count) cambio(s) sin commitear (rama actual: $curBranch)." -ForegroundColor Red
+            Write-Host "       Otra sesion puede estar trabajando en esta carpeta - NO cambio de rama." -ForegroundColor Yellow
+            Write-Host "       Opciones: commitea/stashea esos cambios, o trabaja #$Start en un worktree:" -ForegroundColor Yellow
+            Write-Host "         git worktree add ../$(($repo -split '/')[1])--issue-$Start -b $branchName" -ForegroundColor Yellow
+        } elseif ($curBranch -and $curBranch -match '^issue-\d+' -and $curBranch -ne $branchName) {
+            Write-Host "  OCUPADO: esta carpeta esta en la rama '$curBranch' (otro issue en curso)." -ForegroundColor Red
+            Write-Host "       Otra sesion parece activa aqui - NO cambio de rama." -ForegroundColor Yellow
+            Write-Host "       Trabaja #$Start en un worktree:" -ForegroundColor Yellow
+            Write-Host "         git worktree add ../$(($repo -split '/')[1])--issue-$Start -b $branchName" -ForegroundColor Yellow
         } else {
-            git checkout -b $branchName 2>&1 | Out-Null
-            Write-Host "  OK  Rama $branchName creada y activa" -ForegroundColor Green
+            git rev-parse --verify --quiet $branchName 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                git checkout $branchName 2>&1 | Out-Null
+                Write-Host "  OK  Rama $branchName ya existia - checkout hecho" -ForegroundColor Green
+            } else {
+                git checkout -b $branchName 2>&1 | Out-Null
+                Write-Host "  OK  Rama $branchName creada y activa" -ForegroundColor Green
+            }
         }
     }
 }
