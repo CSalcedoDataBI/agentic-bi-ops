@@ -59,7 +59,7 @@ if (-not $Body) {
     $items = (gh project item-list $ProjectNum --owner $Owner --format json --limit 200 | ConvertFrom-Json).items
     $done    = @($items | Where-Object { $_.status -eq "Done" }).Count
     $inProg  = @($items | Where-Object { $_.status -eq "In Progress" }).Count
-    $pending = @($items | Where-Object { (-not $_.status) -or ($_.status -eq "Todo") })
+    $pending = @($items | Where-Object { (-not $_.status) -or ($_.status -eq "Backlog") })
     $total   = @($items).Count
 
     $next = ($pending | Sort-Object -Property @{Expression={ if ($_.priority) { $_.priority } else { "zz" } }} |
@@ -67,7 +67,7 @@ if (-not $Body) {
                  if ($_.content.number) { "#$($_.content.number) $($_.title)" } else { $_.title }
              }) -join "; "
 
-    $Body = "**Progreso:** $done Done / $inProg In Progress / $($pending.Count) Todo ($total items)."
+    $Body = "**Progreso:** $done Done / $inProg In Progress / $($pending.Count) Backlog ($total items)."
     if ($next) { $Body += "`n**Siguiente:** $next" }
 }
 

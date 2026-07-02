@@ -4,7 +4,7 @@ The conventions this tool enforces, and the methodology they come from. Grounded
 Projects guidance and standard agile practice (not invented here).
 
 ## Methodology: is this Scrum?
-No — GitHub Projects is fundamentally a **Kanban** tool: the `Status` field (Todo / In Progress /
+No — GitHub Projects is fundamentally a **Kanban** tool: the `Status` field (Backlog / In Progress /
 In Review / Done) is a Kanban flow. GitHub has **no first-class backlog or story points**; Scrum
 elements are layered on with custom fields/labels. The pragmatic, widely-recommended model is a
 **hybrid Kanban + Scrum ("Scrumban")**:

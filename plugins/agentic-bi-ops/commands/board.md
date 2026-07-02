@@ -90,7 +90,7 @@ matching recipe from the projects-admin references:
      b. Move the board item into **In Review** (the review/testing stage) now that the PR is
         open: `scripts/Board-Work.ps1 -ProjectNum <n> -ToReview <issueNum>`. If the board has no
         In Review column yet, apply the field preset (`/board field apply en`) — it creates the
-        canonical Status (Todo·In Progress·In Review·Blocked·Done) with colors. On boards without
+        canonical Status (Backlog·In Progress·In Review·Blocked·Done) with colors. On boards without
         it, `Board-Fill` keeps mapping open PRs to In Progress, so this step is a no-op — skip it.
      c. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
         code review when available, measures PR size (warns over 600 lines / 20 files and

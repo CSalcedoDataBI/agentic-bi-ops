@@ -6,14 +6,14 @@
     Three modes, designed for the /board work flow:
 
       1. -ListBoards [-Repo <owner/name>]
-         Lists boards with their pending count (items in Todo or no Status),
+         Lists boards with their pending count (items in Backlog or no Status),
          so the user can pick which board to work from. Without -Repo it
          lists EVERY board of the owner (backups excluded); with -Repo it
          lists only the boards LINKED to that repository (repository.projectsV2),
          which is the "current repo" scope of the /board work flow.
 
       2. -ProjectNum <n>
-         Lists the PENDING items of that board (Status = Todo or empty),
+         Lists the PENDING items of that board (Status = Backlog or empty),
          sorted by Priority (P0 first, empty last), with issue number, title,
          Priority, Size and Type. Draft notes are flagged (convert them with
          /board fill before starting them).
@@ -97,9 +97,9 @@ if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (
 
 function Get-BoardUrl([int]$num) { "https://github.com/users/$Owner/projects/$num" }
 
-# An item is PENDING when its Status is Todo or it has no Status yet.
+# An item is PENDING when its Status is Backlog or it has no Status yet.
 function Test-Pending($item) {
-    (-not $item.status) -or ($item.status -eq "Todo")
+    (-not $item.status) -or ($item.status -eq "Backlog")
 }
 
 # -- Local session registry (multi-session awareness) ---------------------------

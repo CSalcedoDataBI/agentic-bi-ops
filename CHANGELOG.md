@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.1] - 2026-07-02
+### Changed
+- **Rename Status `Todo` → `Backlog`** (#84): "Todo" (English "to-do") is a false friend with the
+  Spanish "todo" (= all/everything) and read as "all" to Spanish-speaking users. `Backlog` is the
+  unambiguous standard Kanban term. Canonical Status is now `Backlog · In Progress · In Review ·
+  Blocked · Done`. Updated the preset, the name-keyed detection in `Board-Work.ps1` /
+  `Board-Fill.ps1` / `Post-BoardStatusUpdate.ps1`, the sort rank in `Export-BoardSnapshot.ps1`,
+  and the docs. The `es` preset keeps `Por hacer` (Spanish is already unambiguous).
+
 ## [0.13.0] - 2026-07-02
 ### Changed
 - **Canonical field taxonomy + colors** (#82): established one standard so boards stay coherent
