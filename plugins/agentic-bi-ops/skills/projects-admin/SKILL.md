@@ -210,6 +210,7 @@ Notes:
 | Install issue forms + PR template | `Install-RepoTemplates.ps1` | copies `presets/templates/` into `.github/`, ensures form labels exist, never overwrites without `-Force` |
 | Apply the label taxonomy | `Apply-LabelPreset.ps1` | idempotent `gh label create --force` from `presets/labels.json`; type labels feed Board-Fill, `blocked` feeds work; never deletes |
 | Break a big issue into sub-issues | `Board-Breakdown.ps1 -Parent <n> -Tasks ...` | native sub-issues via `addSubIssue`; refuses a CLOSED parent; task-list checkboxes are the fallback for tiny pieces |
+| Post a board status update | `Post-BoardStatusUpdate.ps1 -ProjectNum <n>` | `createProjectV2StatusUpdate`; body auto-generated from live counts + next pending, or `-Body`/`-Status` override |
 
 ---
 
