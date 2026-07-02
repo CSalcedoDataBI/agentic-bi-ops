@@ -9,12 +9,15 @@
       1. Requests a GitHub Copilot code review (best-effort: if the account
          has no Copilot code review, it warns and continues - the agent must
          then do an explicit self-review of `gh pr diff`).
-      2. Waits for CI checks on the PR (gh pr checks --watch). "No checks
+      2. If the PR touches any *.tmdl (a PBIP semantic model), runs the TMDL
+         diff review (Tmdl-DiffReview.ps1) and prints a breaking-change report.
+         Warn-only: it never changes the gate verdict (M3.3 adds hard blocking).
+      3. Waits for CI checks on the PR (gh pr checks --watch). "No checks
          configured" counts as pass, with a note.
-      3. Waits (up to -TimeoutMinutes) for the requested review to arrive,
+      4. Waits (up to -TimeoutMinutes) for the requested review to arrive,
          then reports: review decision, every review with author/state/body,
          and unresolved review-thread count.
-      4. Verdict via exit code:
+      5. Verdict via exit code:
            0 -> gate PASSED (checks ok, no CHANGES_REQUESTED, no unresolved threads)
            1 -> gate BLOCKED (address the printed feedback, push, re-run)
 
@@ -137,6 +140,21 @@ if ($totalLines -gt $MaxLines -or $size.changedFiles -gt $MaxFiles) {
     Write-Host "       Un PR chico se revisa mejor y mete menos bugs. Considera dividir el issue con:" -ForegroundColor DarkYellow
     Write-Host "       Board-Breakdown.ps1 -Parent <issueNum> -Tasks `"parte A`", `"parte B`"" -ForegroundColor DarkYellow
     Write-Host "       (advertencia, no bloqueo - los umbrales se ajustan con -MaxLines/-MaxFiles)" -ForegroundColor DarkGray
+}
+
+# ── 1.7. TMDL diff review (M2.2): breaking schema changes in PBIP models ──────
+# Warn-only: this step never changes the gate verdict. It surfaces breaking
+# semantic-model changes so the reviewer acknowledges them before merging.
+$tmdlChanged = gh api "repos/$Repo/pulls/$PR/files" --paginate --jq '.[] | select(.filename | endswith(".tmdl")) | .filename' 2>$null
+if ($tmdlChanged) {
+    Write-Host ""
+    Write-Host "  Cambios en modelo TMDL detectados - corriendo review de esquema..." -ForegroundColor Cyan
+    $tmdlScript = Join-Path $PSScriptRoot "Tmdl-DiffReview.ps1"
+    if (Test-Path $tmdlScript) {
+        & $tmdlScript -Repo $Repo -PR $PR
+    } else {
+        Write-Host "  WARN Tmdl-DiffReview.ps1 no encontrado junto al gate - salteando review TMDL." -ForegroundColor DarkYellow
+    }
 }
 
 # ── 2. CI checks ───────────────────────────────────────────────────────────────

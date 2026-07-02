@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0] - 2026-07-02
+### Added
+- **M2.2 — TMDL diff review** (`scripts/Tmdl-DiffReview.ps1` + `tmdl-review` skill): parses a
+  PBIP semantic model's `*.tmdl` before/after a change and classifies every schema change as
+  **BREAKING** (table/column/measure/hierarchy/relationship/role deleted, column `dataType` or
+  `sourceColumn` changed, column/measure renamed), **WARNING** (measure/partition expression
+  changed, `summarizeBy` changed, object hidden, relationship `crossFilteringBehavior` changed)
+  or **INFO** (additions, `formatString`/`displayFolder`/`lineageTag`). Two modes: PR mode
+  (`-Repo -PR`, reads changed `*.tmdl` via the GitHub API — no clone) and local mode
+  (`-Base -Head`, git diff). `-FailOnBreaking` exits 1 on breaking (M3.3 will use it);
+  `-Json` emits the findings object.
+- **Review-gate integration**: `Board-ReviewGate.ps1` runs the TMDL review automatically when a
+  PR touches `*.tmdl` (warn-only — surfaces breaking changes without changing the gate verdict).
+
 ## [0.9.2] - 2026-07-02
 ### Added
 - **M2.3 — Cross-account PR workflow** (`scripts/New-BoardPR.ps1`): one command closes the

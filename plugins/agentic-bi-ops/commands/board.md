@@ -88,7 +88,9 @@ matching recipe from the projects-admin references:
         commit-directly-to-main workflow rule for issues started via `work`.
      b. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
         code review when available, measures PR size (warns over 600 lines / 20 files and
-        suggests `Board-Breakdown.ps1` — small PRs review better), waits for CI checks, waits
+        suggests `Board-Breakdown.ps1` — small PRs review better), runs the **TMDL diff review**
+        when the PR touches `*.tmdl` (a PBIP semantic model — warn-only report of BREAKING /
+        WARNING / INFO schema changes, does not change the verdict), waits for CI checks, waits
         for the review, and prints decision + feedback + unresolved threads. Exit 0 = gate
         passed; exit 1 = blocked.
         Address the printed feedback with new commits, push, and RE-RUN the gate until it
