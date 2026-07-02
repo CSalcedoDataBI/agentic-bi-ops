@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.0] - 2026-07-01
+### Added
+- **MS2.1 — Automatic worktree mode**: when the working copy is busy (dirty tree or another
+  `issue-*` branch — another Claude session active), `Board-Work.ps1 -Branch` no longer just
+  refuses: it creates (or reuses) an isolated git worktree `../<repo>--issue-<n>` — the
+  official parallel-sessions pattern — and prints where to continue the work, plus the
+  `git worktree remove` cleanup for after the merge. Two/three sessions can now work different
+  issues of the same repo without touching each other.
+
 ## [0.8.9] - 2026-07-01
 ### Added
 - **MS1.2 — Dirty-tree guard** in `Board-Work.ps1 -Branch`: never switches branches under
