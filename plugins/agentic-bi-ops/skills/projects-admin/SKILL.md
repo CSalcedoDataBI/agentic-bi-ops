@@ -158,7 +158,7 @@ and wait for; never assume the account or the scope:
 | 2. Pick a board | `Board-Work.ps1 -ListBoards [-Repo <owner/name>]` | With `-Repo`: only boards LINKED to that repo (`repository.projectsV2`) — exactly one result skips this pick. Without: every board of the owner (backups excluded). Both show pending count (Todo or no Status) + URL, most pending first |
 | 3. Pick an issue | `Board-Work.ps1 -ProjectNum <n>` | That board's pending items sorted by Priority; drafts flagged (convert via `/board fill` first) |
 | 4. Start it | `Board-Work.ps1 -ProjectNum <n> -Start <issueNum> -Branch` | Status → In Progress, assign owner, create + checkout branch `issue-<num>-<slug>`, print full issue context (body, labels, sub-issues) |
-| 5. Finish it | push branch → PR with `Closes #<num>` → merge | GitHub fills the board's **Linked pull requests** system column by itself |
+| 5. Finish it | push branch → PR with `Closes #<num>` → `Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` → merge only on exit 0 | Review gate (GitHub flow: merge only after approval): requests Copilot review when available, waits for CI checks + review, reports decision/feedback/unresolved threads. Blocked = fix, push, re-run. Then GitHub fills **Linked pull requests** by itself |
 
 Notes:
 - Step 4 supports `-DryRun` (preview, no mutation). A CLOSED issue is refused with a reopen hint.
@@ -168,6 +168,12 @@ Notes:
   requests` and `Sub-issues progress` are system-derived, read-only columns — the ONLY way to fill
   Linked PRs is finishing through a PR that closes the issue; Sub-issues progress only applies to
   parent issues with native sub-issues (empty = not applicable, not a gap).
+- **Review gate fallbacks** (in order): Copilot code review (auto-requested) → `second-opinion`
+  skill as extra reviewer → explicit self-review of `gh pr diff` (must be stated honestly in the
+  report). "No checks configured" counts as pass with a hint to run `/board automate`.
+- `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset` (optional, once per repo) installs a
+  ruleset requiring PRs into the default branch; repo admins keep bypass — never claim it blocks
+  admins.
 - `-Branch` skips branch creation (with a warning) when the cwd is not a clone of the issue's repo.
 - Skip steps 1–2 when the user already named a board.
 - The script respects an already-set `GH_TOKEN` (from gh-account); otherwise it reads `GITHUB_TOKEN_PERSONAL` (or the var given in `-TokenVar`).

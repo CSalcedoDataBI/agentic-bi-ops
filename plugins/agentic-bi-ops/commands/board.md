@@ -54,11 +54,21 @@ matching recipe from the projects-admin references:
      labels, sub-issues). Then CONTINUE WORKING that issue in this session: treat the printed
      context as the task briefing. Always pass `-Branch` when the issue belongs to the current
      repo. `--dry-run` previews without mutating; a CLOSED issue is refused.
-  5. **Finish with a PR — MANDATORY.** When the work is done, push the branch and open a PR whose
-     body contains `Closes #<issueNum>`, then merge it. NEVER commit board-tracked issue work
-     directly to main — the PR is what makes GitHub fill the board's "Linked pull requests"
-     column (it is a system column no API can write). This overrides any general
-     commit-directly-to-main workflow rule for issues started via `work`.
+  5. **Finish with a PR + review gate — MANDATORY.** When the work is done:
+     a. Push the branch and open a PR whose body contains `Closes #<issueNum>`. NEVER commit
+        board-tracked issue work directly to main — the PR is what makes GitHub fill the
+        board's "Linked pull requests" column (a system column no API can write). This
+        overrides any general commit-directly-to-main workflow rule for issues started via `work`.
+     b. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
+        code review when available, waits for CI checks, waits for the review, and prints
+        decision + feedback + unresolved threads. Exit 0 = gate passed; exit 1 = blocked.
+        Address the printed feedback with new commits, push, and RE-RUN the gate until it
+        passes. If the `second-opinion` skill is available, use it as an extra reviewer.
+        If no reviewer is available at all, an explicit self-review of `gh pr diff <n>` is
+        obligatory before merging — and say so honestly in your report.
+     c. Only after the gate passes: `gh pr merge <n> --squash --delete-branch`.
+     - Optional, once per repo: `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset`
+       installs a ruleset requiring PRs into the default branch (admins keep bypass — say so).
   - If many pending items lack Priority/Size, suggest `/board fill` to triage them first.
 - **init** — create a board and fill it coherently: title, short description, README, and link the
   repo (references/board-ops.md). Tell the user the two UI-only items (Default repository pick, View
