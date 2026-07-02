@@ -87,11 +87,11 @@ matching recipe from the projects-admin references:
         directly to main — the PR is what makes GitHub fill the board's "Linked pull
         requests" column (a system column no API can write). This overrides any general
         commit-directly-to-main workflow rule for issues started via `work`.
-     b. Move the board item into **QA** (the testing/review stage) now that the PR is open:
-        `scripts/Board-Work.ps1 -ProjectNum <n> -ToQA <issueNum>`. If the board has no QA
-        column yet, add it once with `/board field` (Status option QA between In Progress and
-        Done). On boards without QA, `Board-Fill` keeps mapping open PRs to In Progress, so this
-        step is a no-op there — skip it.
+     b. Move the board item into **In Review** (the review/testing stage) now that the PR is
+        open: `scripts/Board-Work.ps1 -ProjectNum <n> -ToReview <issueNum>`. If the board has no
+        In Review column yet, apply the field preset (`/board field apply en`) — it creates the
+        canonical Status (Todo·In Progress·In Review·Blocked·Done) with colors. On boards without
+        it, `Board-Fill` keeps mapping open PRs to In Progress, so this step is a no-op — skip it.
      c. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
         code review when available, measures PR size (warns over 600 lines / 20 files and
         suggests `Board-Breakdown.ps1` — small PRs review better), runs the **TMDL diff review**

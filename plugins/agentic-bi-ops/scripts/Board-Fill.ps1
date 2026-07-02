@@ -12,7 +12,7 @@
       Assignees : if empty, assign the board owner
       Status    : issue CLOSED -> Done
                   issue OPEN + merged PR -> Done
-                  issue OPEN + open PR   -> QA (In Progress if no QA option)
+                  issue OPEN + open PR   -> In Review (In Progress if absent)
                   issue OPEN + no PR     -> Todo
       Priority  : if empty -> P2 Medium
       Size      : if empty -> M
@@ -105,7 +105,7 @@ $statusId   = $statusNode.id
 $doneId     = Get-Opt $statusNode "Done"
 $inProgId   = Get-Opt $statusNode "In Progress"
 $todoId     = Get-Opt $statusNode "Todo"
-$qaId       = Get-Opt $statusNode "QA"   # optional (added via /board field); falls back to In Progress
+$reviewId   = Get-Opt $statusNode "In Review"   # optional (from the field preset); falls back to In Progress
 
 $prioNode   = Get-Field "Priority"
 $prioId     = $prioNode.id
@@ -249,10 +249,10 @@ foreach ($item in $items) {
     if     ($c.state -eq "CLOSED"  -and $currentStatus -ne $doneId)  { $targetStatus=$doneId;   $targetStatusN="Done (issue cerrado)" }
     elseif ($mergedPRs.Count -gt 0 -and $currentStatus -ne $doneId)  { $targetStatus=$doneId;   $targetStatusN="Done (PR mergeado)" }
     elseif ($openPRs.Count -gt 0) {
-        # An open PR means the change is in testing/review -> QA (the review-gate
-        # stage). Fall back to In Progress on boards without a QA option.
-        $prTarget  = if ($qaId) { $qaId } else { $inProgId }
-        $prTargetN = if ($qaId) { "QA (PR abierto)" } else { "In Progress (PR abierto)" }
+        # An open PR means the change is in review/testing -> In Review (the
+        # review-gate stage). Fall back to In Progress on boards without it.
+        $prTarget  = if ($reviewId) { $reviewId } else { $inProgId }
+        $prTargetN = if ($reviewId) { "In Review (PR abierto)" } else { "In Progress (PR abierto)" }
         if ($currentStatus -ne $prTarget -and $currentStatus -ne $doneId) { $targetStatus=$prTarget; $targetStatusN=$prTargetN }
     }
     elseif (-not $currentStatus)                                       { $targetStatus=$todoId;   $targetStatusN="Todo (sin PR)" }

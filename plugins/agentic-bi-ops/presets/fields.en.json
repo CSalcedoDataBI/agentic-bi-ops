@@ -1,9 +1,20 @@
 {
   "lang": "en",
-  "description": "Standard engineering governance fields for a GitHub Projects board.",
+  "description": "Standard engineering governance fields for a GitHub Projects board. Single-select options may be a plain string or {name,color}; colors are the canonical palette applied by Apply-FieldPreset (gh cannot set option colors on create).",
   "fields": [
-    { "name": "Status",   "type": "SINGLE_SELECT", "options": ["Todo", "In Progress", "Blocked", "In Review", "Done"] },
-    { "name": "Priority", "type": "SINGLE_SELECT", "options": ["P0", "P1", "P2", "P3"] },
+    { "name": "Status",   "type": "SINGLE_SELECT", "options": [
+      { "name": "Todo",        "color": "GRAY" },
+      { "name": "In Progress", "color": "YELLOW" },
+      { "name": "In Review",   "color": "ORANGE" },
+      { "name": "Blocked",     "color": "RED" },
+      { "name": "Done",        "color": "GREEN" }
+    ] },
+    { "name": "Priority", "type": "SINGLE_SELECT", "options": [
+      { "name": "P0", "color": "RED" },
+      { "name": "P1", "color": "ORANGE" },
+      { "name": "P2", "color": "YELLOW" },
+      { "name": "P3", "color": "GRAY" }
+    ] },
     { "name": "Type",     "type": "SINGLE_SELECT", "options": ["Bug", "Feature", "Improvement", "Chore", "Docs", "Spike"] },
     { "name": "Area",     "type": "TEXT" },
     { "name": "Estimate", "type": "NUMBER" },

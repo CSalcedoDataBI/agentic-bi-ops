@@ -1,9 +1,20 @@
 {
   "lang": "es",
-  "description": "Campos estándar de governance de ingeniería para un board de GitHub Projects (en español). Nota: el campo 'Status' por defecto de GitHub no se puede renombrar por CLI; este preset crea 'Estado' como campo nuevo.",
+  "description": "Campos estándar de governance de ingeniería para un board de GitHub Projects (en español). Nota: el campo 'Status' por defecto de GitHub no se puede renombrar por CLI; este preset crea 'Estado' como campo nuevo. Las opciones single-select pueden ser string o {name,color}; los colores son la paleta canónica aplicada por Apply-FieldPreset (gh no puede setear color de opción en el create).",
   "fields": [
-    { "name": "Estado",    "type": "SINGLE_SELECT", "options": ["Por hacer", "En progreso", "Bloqueado", "En revisión", "Hecho"] },
-    { "name": "Prioridad", "type": "SINGLE_SELECT", "options": ["P0", "P1", "P2", "P3"] },
+    { "name": "Estado",    "type": "SINGLE_SELECT", "options": [
+      { "name": "Por hacer",   "color": "GRAY" },
+      { "name": "En progreso", "color": "YELLOW" },
+      { "name": "En revisión", "color": "ORANGE" },
+      { "name": "Bloqueado",   "color": "RED" },
+      { "name": "Hecho",       "color": "GREEN" }
+    ] },
+    { "name": "Prioridad", "type": "SINGLE_SELECT", "options": [
+      { "name": "P0", "color": "RED" },
+      { "name": "P1", "color": "ORANGE" },
+      { "name": "P2", "color": "YELLOW" },
+      { "name": "P3", "color": "GRAY" }
+    ] },
     { "name": "Tipo",      "type": "SINGLE_SELECT", "options": ["Bug", "Funcionalidad", "Mejora", "Tarea", "Docs", "Spike"] },
     { "name": "Área",      "type": "TEXT" },
     { "name": "Estimado",  "type": "NUMBER" },
