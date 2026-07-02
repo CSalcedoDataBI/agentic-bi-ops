@@ -50,7 +50,9 @@ matching recipe from the projects-admin references:
   2. **Pick a board.** Show the listing (pending counts + URLs) and ask which board.
   3. **Pick an issue.** Run with `-ProjectNum <n>` — pending items sorted by Priority. Show them
      and ask which issue to start. Draft notes appear flagged: they must be converted with
-     `/board fill` before they can be started.
+     `/board fill` before they can be started. Items labeled `blocked` appear as `[BLOCKED]`
+     and cannot be started; `-Start` also refuses them (and issues with open native blocked-by
+     dependencies) with the blocker listed — `-IgnoreBlocked` overrides a false positive.
   4. **Start it.** Run with `-ProjectNum <n> -Start <issueNum> -Branch` — moves the item to
      In Progress, assigns the owner, creates + checks out the work branch `issue-<num>-<slug>`
      (when the cwd is a clone of the issue's repo), and prints the full issue context (body,

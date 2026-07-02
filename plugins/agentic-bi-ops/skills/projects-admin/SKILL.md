@@ -176,6 +176,9 @@ Notes:
 - `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset` (optional, once per repo) installs a
   ruleset requiring PRs into the default branch; repo admins keep bypass — never claim it blocks
   admins.
+- **Dependency check**: pending items labeled `blocked` show as `[BLOCKED]` and `-Start` refuses
+  them, plus any issue with OPEN native blocked-by dependencies (best-effort API), listing the
+  blocker. `-IgnoreBlocked` overrides a false positive; remove the `blocked` label when unblocked.
 - `-Branch` skips branch creation (with a warning) when the cwd is not a clone of the issue's repo.
 - Skip steps 1–2 when the user already named a board.
 - The script respects an already-set `GH_TOKEN` (from gh-account); otherwise it reads `GITHUB_TOKEN_PERSONAL` (or the var given in `-TokenVar`).
