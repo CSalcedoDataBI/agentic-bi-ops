@@ -182,6 +182,10 @@ Notes:
 - **Multi-session lock**: `-Start` refuses an issue already In Progress + assigned (shows the
   last `[abios-claim]` fingerprint comment: hostname, PID, time, branch). `-TakeOver` retakes it
   deliberately and posts a TAKEOVER claim. GitHub is the lock — it works across machines too.
+- **Session registry**: every successful `-Start` records `{issue, branch, workPath, sessionPid,
+  host, started}` in `.agentic-bi-ops/sessions.json` next to the MAIN clone (shared across
+  worktrees, gitignored). The pending list shows live local sessions; entries with dead PIDs are
+  pruned automatically on read.
 - **Worktree mode**: when the working copy is busy (dirty tree or another `issue-*` branch),
   `-Branch` creates/reuses an isolated worktree `../<repo>--issue-<n>` instead of switching —
   the agent must continue the work in the printed path and `git worktree remove` it after the

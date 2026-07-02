@@ -94,6 +94,51 @@ function Test-Pending($item) {
     (-not $item.status) -or ($item.status -eq "Todo")
 }
 
+# -- Local session registry (multi-session awareness) ---------------------------
+# Shared across worktrees of the same repo: it lives next to the MAIN clone's .git
+# (git rev-parse --git-common-dir), inside .agentic-bi-ops/ (gitignored).
+# Session identity = the PARENT process of this script (the long-lived Claude/host
+# process), because the script's own PID dies as soon as it returns.
+function Get-SessionRegistryPath {
+    $common = git rev-parse --git-common-dir 2>$null
+    if (-not $common) { return $null }
+    try { $root = Split-Path (Resolve-Path $common).Path -Parent } catch { return $null }
+    $dir = Join-Path $root ".agentic-bi-ops"
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+    return (Join-Path $dir "sessions.json")
+}
+
+function Read-SessionRegistry {
+    $p = Get-SessionRegistryPath
+    if (-not $p -or -not (Test-Path $p)) { return @() }
+    try { $entries = @(Get-Content $p -Raw | ConvertFrom-Json) } catch { return @() }
+    # Stale cleanup: drop entries whose session process is dead
+    $alive = @($entries | Where-Object { $_.sessionPid -and (Get-Process -Id $_.sessionPid -ErrorAction SilentlyContinue) })
+    if ($alive.Count -ne $entries.Count) {
+        # Pipe (not -InputObject) or a passed array gets double-wrapped by -AsArray
+        $alive | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
+    }
+    return $alive
+}
+
+function Write-SessionRegistryEntry([int]$issueNum, [string]$branch, [string]$workPath) {
+    $p = Get-SessionRegistryPath
+    if (-not $p) { return }
+    $parentPid = $null
+    try { $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId } catch { }
+    if (-not $parentPid) { return }
+    $entries = @(Read-SessionRegistry | Where-Object { $_.issue -ne $issueNum })
+    $entries += [PSCustomObject]@{
+        issue      = $issueNum
+        branch     = $branch
+        workPath   = $workPath
+        sessionPid = $parentPid
+        host       = $env:COMPUTERNAME
+        started    = (Get-Date -Format "yyyy-MM-dd HH:mm")
+    }
+    $entries | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
+}
+
 # ==============================================================================
 # MODE 1: -ListBoards  -> every board with its pending count
 # ==============================================================================
@@ -206,6 +251,17 @@ if ($Start -le 0) {
     }
     Write-Host ""
     Write-Host ("Total: {0} pendiente(s)." -f $pending.Count) -ForegroundColor Yellow
+
+    # Multi-session: show what other LIVE local sessions are working right now
+    $sessions = @(Read-SessionRegistry)
+    if ($sessions.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Sesiones activas en esta maquina:" -ForegroundColor Cyan
+        foreach ($s in $sessions) {
+            Write-Host ("  #{0}  rama {1}  (PID {2} vivo, desde {3}) en {4}" -f $s.issue, $s.branch, $s.sessionPid, $s.started, $s.workPath) -ForegroundColor DarkCyan
+        }
+    }
+    Write-Host ""
     Write-Host "Siguiente paso: Board-Work.ps1 -ProjectNum $ProjectNum -Start <issueNum> para empezar uno." -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Board: $boardUrl" -ForegroundColor Cyan
@@ -406,6 +462,7 @@ if ($Branch) {
                 $existingPath = $Matches[1]
                 Write-Host "  OK  Worktree ya existia para la rama: $existingPath" -ForegroundColor Green
                 Write-Host "       TRABAJA EL ISSUE ALLI: cd `"$existingPath`"" -ForegroundColor Cyan
+                $script:workPath = $existingPath
                 return
             }
             if (Test-Path $wtPath) {
@@ -419,6 +476,7 @@ if ($Branch) {
                 Write-Host "  OK  Worktree creado: $wtPath (rama $branchName)" -ForegroundColor Green
                 Write-Host "       TRABAJA EL ISSUE ALLI: cd `"$wtPath`"" -ForegroundColor Cyan
                 Write-Host "       Al mergear el PR, limpia con: git worktree remove `"$wtPath`"" -ForegroundColor DarkGray
+                $script:workPath = $wtPath
             } else {
                 Write-Host "  FAIL no se pudo crear el worktree - crea la rama manualmente: git checkout -b $branchName" -ForegroundColor Red
             }
@@ -442,7 +500,13 @@ if ($Branch) {
                 git checkout -b $branchName 2>&1 | Out-Null
                 Write-Host "  OK  Rama $branchName creada y activa" -ForegroundColor Green
             }
+            $script:workPath = (Get-Location).Path
         }
+    }
+    # Register this session's work in the local registry (stale PIDs pruned on read)
+    if ($script:workPath) {
+        Write-SessionRegistryEntry -issueNum $Start -branch $branchName -workPath $script:workPath
+        Write-Host "  OK  Sesion registrada en .agentic-bi-ops/sessions.json" -ForegroundColor Green
     }
 }
 Write-Host ""
