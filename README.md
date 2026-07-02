@@ -40,12 +40,16 @@ Then enable **agentic-bi-ops** in your Claude Code plugins.
 After installing, use the `/board` command or just ask:
 
 ```
-/board work                      # see pending issues across ALL your boards and start one
+/board work                      # the daily driver: see pending work, pick an issue, start it
 /board init                      # create a Projects board and link it to this repo
 /board add #42                   # add issue #42 to the board
 /board move #42 to Done          # set an item's Status
+/board fill                      # detect + fill board gaps (assignees, Status, Priority, ...)
 /board bulk close label:stale    # batch-close (shows a dry-run + asks first)
 /board automate                  # install the CI workflow that auto-adds issues/PRs
+/board templates                 # install issue forms + PR template into the repo
+/board labels                    # apply the label taxonomy (bug/docs/refactor/chore/blocked/...)
+/board update                    # post a high-level status update on the board
 ```
 
 ---
@@ -107,6 +111,32 @@ Two layers protect this repo:
 
 It's defense-in-depth, not a guarantee: a denylist only catches terms you list, so keep layer 1
 honest. Override (`--no-verify`) only for a confirmed false positive.
+
+---
+
+## GitHub best practices — enforced by design
+
+The `/board work` flow doesn't just *allow* good GitHub hygiene — it **enforces** it. Checked
+against the official guides ([Projects](https://docs.github.com/en/issues/planning-and-tracking-with-projects/learning-about-projects/best-practices-for-projects),
+[GitHub flow](https://docs.github.com/en/get-started/using-github/github-flow),
+[Pull requests](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/getting-started/best-practices-for-pull-requests),
+[Issues](https://docs.github.com/en/issues/tracking-your-work-with-issues/configuring-issues/planning-and-tracking-work-for-your-team-or-project)):
+
+| Official practice | How the tool enforces it |
+|---|---|
+| Branch per change, descriptive name | `work` creates `issue-<num>-<slug>` on start |
+| PR for every change, issue auto-closed | step 5 mandates a PR with `Closes #<num>` — never direct to main |
+| Merge only after review | **review gate**: Copilot review request + CI checks + unresolved threads; exit 0 gates the merge; honest self-review fallback |
+| Small, focused PRs | gate warns over 600 lines / 20 files and suggests a sub-issue split |
+| Delete branch after merge | merge flow uses `--delete-branch` |
+| Break down large issues | `Board-Breakdown.ps1` creates native sub-issues (progress column fills itself) |
+| Custom-field metadata | field presets + `Board-Fill` (assignees, Status, Priority, Size, Type) |
+| Issue templates & labels | `/board templates` (forms + PR template) and `/board labels` (taxonomy) |
+| Status updates | `/board update` posts high-level progress on the board |
+| Dependencies respected | `[BLOCKED]` items are flagged and refused by `-Start` |
+| Single source of truth | one board ⇄ one repo, resolve-before-create, backup-before-delete |
+
+Honestly out of scope (GitHub exposes no API): view layouts, charts/insights, project templates.
 
 ---
 
