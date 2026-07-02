@@ -147,22 +147,24 @@ query($o:String!, $r:String!, $n:Int!) {
     return $q.data.repository.pullRequest
 }
 
-$pr = Get-ReviewState
+# NOTE: variable must NOT be named $pr - PowerShell vars are case-insensitive and it would
+# collide with the [int]$PR parameter (type conversion crash).
+$prState = Get-ReviewState
 if ($copilotRequested) {
     Write-Host ""
     Write-Host "  Esperando el review (max $TimeoutMinutes min)..." -ForegroundColor Cyan
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     while ((Get-Date) -lt $deadline) {
-        $reviews = @($pr.reviews.nodes)
+        $reviews = @($prState.reviews.nodes)
         if ($reviews.Count -gt 0 -and ($reviews | Where-Object { $_.author.login -match '(?i)copilot' })) { break }
         Start-Sleep -Seconds 20
-        $pr = Get-ReviewState
+        $prState = Get-ReviewState
     }
 }
 
-$reviews    = @($pr.reviews.nodes)
-$unresolved = @($pr.reviewThreads.nodes | Where-Object { $_.isResolved -eq $false }).Count
-$decision   = $pr.reviewDecision
+$reviews    = @($prState.reviews.nodes)
+$unresolved = @($prState.reviewThreads.nodes | Where-Object { $_.isResolved -eq $false }).Count
+$decision   = $prState.reviewDecision
 
 Write-Host ""
 Write-Host "----- RESULTADO DEL REVIEW -----" -ForegroundColor Cyan
