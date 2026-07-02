@@ -1,0 +1,15 @@
+{
+  "comment": "Label taxonomy for /board labels. The type labels (bug/docs/refactor/chore) are exactly what Board-Fill Type detection reads; 'blocked' is what /board work dependency checks read.",
+  "labels": [
+    { "name": "bug",      "color": "d73a4a", "description": "Something is broken" },
+    { "name": "feature",  "color": "a2eeef", "description": "New capability or improvement" },
+    { "name": "task",     "color": "0e8a16", "description": "Concrete work item with a definition of done" },
+    { "name": "docs",     "color": "0075ca", "description": "Documentation only" },
+    { "name": "refactor", "color": "cfd3d7", "description": "Code change without behavior change" },
+    { "name": "chore",    "color": "fef2c0", "description": "Maintenance, tooling, housekeeping" },
+    { "name": "blocked",  "color": "b60205", "description": "Cannot start: waiting on another issue or external dependency" },
+    { "name": "roadmap",  "color": "5319e7", "description": "Top-level milestone / epic" },
+    { "name": "plan",     "color": "0e8a16", "description": "Tracked plan epic" },
+    { "name": "plan-task","color": "c2e0c6", "description": "Child task of a tracked plan" }
+  ]
+}

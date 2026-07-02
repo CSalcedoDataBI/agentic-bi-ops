@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2] - 2026-07-01
+### Added
+- **M5.3 — `/board labels`** (`scripts/Apply-LabelPreset.ps1` + `presets/labels.json`):
+  idempotent label taxonomy for any repo. Wired to the suite: `bug`/`docs`/`refactor`/`chore`
+  are exactly what Board-Fill Type detection reads, `blocked` is what the work dependency check
+  (M5.7) reads, `roadmap`/`plan`/`plan-task` are what plan tracking uses. Never deletes labels.
+
 ## [0.8.1] - 2026-07-01
 ### Added
 - **M5.2 — `/board templates`** (`scripts/Install-RepoTemplates.ps1` + `presets/templates/`):
