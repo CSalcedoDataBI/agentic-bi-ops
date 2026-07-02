@@ -54,6 +54,8 @@ matching recipe from the projects-admin references:
      `/board fill` before they can be started. Items labeled `blocked` appear as `[BLOCKED]`
      and cannot be started; `-Start` also refuses them (and issues with open native blocked-by
      dependencies) with the blocker listed — `-IgnoreBlocked` overrides a false positive.
+     The list also shows LIVE local sessions from `.agentic-bi-ops/sessions.json` (who works
+     what, where) — dead-PID entries are pruned automatically.
      **Multi-session lock:** `-Start` also refuses an issue already In Progress + assigned
      (another Claude session probably has it — the last `[abios-claim]` fingerprint comment is
      shown). `-TakeOver` retakes it on purpose (dead session / deliberate handoff) and posts a

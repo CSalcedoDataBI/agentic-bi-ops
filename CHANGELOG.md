@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1] - 2026-07-01
+### Added
+- **MS2.2 — Local session registry** (`.agentic-bi-ops/sessions.json`, gitignored, shared
+  across worktrees next to the MAIN clone): every successful `-Start` records issue, branch,
+  work path, session PID (the long-lived parent process), host and start time. The pending
+  list now shows LIVE local sessions ("who works what, where"); dead-PID entries are pruned
+  automatically on every read. Completes the multi-session awareness plan.
+
 ## [0.9.0] - 2026-07-01
 ### Added
 - **MS2.1 — Automatic worktree mode**: when the working copy is busy (dirty tree or another
