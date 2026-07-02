@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.12.0] - 2026-07-02
+### Added
+- **QA stage in the work flow** (#80): the board gains a **QA** Status column (Todo → In
+  Progress → QA → Done) so a change moves through testing/review before Done.
+  - `Board-Work.ps1 -ToQA <issueNum>`: moves a board item into QA. The `/board work` flow calls
+    it right after the PR opens (step 5b), so the item sits in QA while the review gate runs;
+    the merge then closes the issue and it lands in Done. Errors clearly if the board has no QA
+    option.
+  - `Board-Fill.ps1`: an OPEN issue with an **open PR** now maps to **QA** instead of In
+    Progress (falls back to In Progress on boards without a QA option).
+
 ## [0.11.0] - 2026-07-02
 ### Added
 - **M4.2 — Changelog generation from board items** (`scripts/Board-Changelog.ps1`, `/board
