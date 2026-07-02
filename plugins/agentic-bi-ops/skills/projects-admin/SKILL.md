@@ -207,6 +207,7 @@ Notes:
 | Install CI auto-add workflow | `references/automation.md` | drop-in YAML |
 | Install issue forms + PR template | `Install-RepoTemplates.ps1` | copies `presets/templates/` into `.github/`, ensures form labels exist, never overwrites without `-Force` |
 | Apply the label taxonomy | `Apply-LabelPreset.ps1` | idempotent `gh label create --force` from `presets/labels.json`; type labels feed Board-Fill, `blocked` feeds work; never deletes |
+| Break a big issue into sub-issues | `Board-Breakdown.ps1 -Parent <n> -Tasks ...` | native sub-issues via `addSubIssue`; refuses a CLOSED parent; task-list checkboxes are the fallback for tiny pieces |
 
 ---
 

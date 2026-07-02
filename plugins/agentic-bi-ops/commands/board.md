@@ -56,6 +56,10 @@ matching recipe from the projects-admin references:
      labels, sub-issues). Then CONTINUE WORKING that issue in this session: treat the printed
      context as the task briefing. Always pass `-Branch` when the issue belongs to the current
      repo. `--dry-run` previews without mutating; a CLOSED issue is refused.
+     - **Too big for one PR?** Break it down FIRST with
+       `scripts/Board-Breakdown.ps1 -Parent <issueNum> -Tasks "child A", "child B"` — creates
+       native sub-issues (Sub-issues progress fills itself) — then start one child. Use a
+       checkbox task list in the parent body instead when the pieces are too small for issues.
   5. **Finish with a PR + review gate — MANDATORY.** When the work is done:
      a. Push the branch and open a PR whose body contains `Closes #<issueNum>`. NEVER commit
         board-tracked issue work directly to main — the PR is what makes GitHub fill the
