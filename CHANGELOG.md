@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.8] - 2026-07-01
+### Added
+- **MS1.1 — Multi-session issue lock** in `Board-Work.ps1 -Start`: refuses an issue already
+  In Progress + assigned (another Claude session probably has it), showing the last
+  `[abios-claim]` fingerprint comment. `-TakeOver` retakes deliberately (dead session /
+  handoff) and posts a TAKEOVER claim. Every successful start posts a claim comment
+  (hostname, PID, time, branch). GitHub is the lock — works across machines, not just local
+  sessions. First piece of the multi-session awareness plan.
+
 ## [0.8.7] - 2026-07-01
 ### Added
 - **`/board plan`** (`scripts/Board-Plan.ps1`): turn a plan into a tracked epic + NATIVE
