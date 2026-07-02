@@ -87,7 +87,12 @@ matching recipe from the projects-admin references:
         directly to main — the PR is what makes GitHub fill the board's "Linked pull
         requests" column (a system column no API can write). This overrides any general
         commit-directly-to-main workflow rule for issues started via `work`.
-     b. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
+     b. Move the board item into **QA** (the testing/review stage) now that the PR is open:
+        `scripts/Board-Work.ps1 -ProjectNum <n> -ToQA <issueNum>`. If the board has no QA
+        column yet, add it once with `/board field` (Status option QA between In Progress and
+        Done). On boards without QA, `Board-Fill` keeps mapping open PRs to In Progress, so this
+        step is a no-op there — skip it.
+     c. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
         code review when available, measures PR size (warns over 600 lines / 20 files and
         suggests `Board-Breakdown.ps1` — small PRs review better), runs the **TMDL diff review**
         when the PR touches `*.tmdl` (a PBIP semantic model — warn-only report of BREAKING /
@@ -98,7 +103,8 @@ matching recipe from the projects-admin references:
         passes. If the `second-opinion` skill is available, use it as an extra reviewer.
         If no reviewer is available at all, an explicit self-review of `gh pr diff <n>` is
         obligatory before merging — and say so honestly in your report.
-     c. Only after the gate passes: `gh pr merge <n> --squash --delete-branch`.
+     d. Only after the gate passes: `gh pr merge <n> --squash --delete-branch` — the merge closes
+        the issue, which moves the board item from QA to **Done** (close→Done + `Board-Fill`).
      - Optional, once per repo: `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset`
        installs a ruleset requiring PRs into the default branch (admins keep bypass — say so).
   - If many pending items lack Priority/Size, suggest `/board fill` to triage them first.

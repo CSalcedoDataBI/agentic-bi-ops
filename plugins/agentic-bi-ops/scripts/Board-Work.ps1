@@ -45,8 +45,13 @@
 .PARAMETER Start
     Issue number to start working (requires -ProjectNum).
 
+.PARAMETER ToQA
+    Issue number to move into the QA Status column (requires -ProjectNum). The
+    work flow calls this after opening the PR: the change is now in testing /
+    review while the gate runs. Errors if the board has no QA option.
+
 .PARAMETER DryRun
-    With -Start: print what would change without executing.
+    With -Start / -ToQA: print what would change without executing.
 
 .PARAMETER Branch
     With -Start: also create and checkout a work branch issue-<num>-<slug>
@@ -64,6 +69,7 @@
     .\Board-Work.ps1 -ProjectNum 13
     .\Board-Work.ps1 -ProjectNum 13 -Start 12 -DryRun
     .\Board-Work.ps1 -ProjectNum 13 -Start 12
+    .\Board-Work.ps1 -ProjectNum 13 -ToQA 12
 #>
 [CmdletBinding()]
 param(
@@ -72,6 +78,7 @@ param(
     [string]$Repo     = "",
     [int]   $ProjectNum = 0,
     [int]   $Start      = 0,
+    [int]   $ToQA       = 0,
     [switch]$DryRun,
     [switch]$Branch,
     [switch]$IgnoreBlocked,
@@ -216,7 +223,7 @@ $boardUrl = Get-BoardUrl $ProjectNum
 # ==============================================================================
 # MODE 2: -ProjectNum  -> pending items of one board
 # ==============================================================================
-if ($Start -le 0) {
+if ($Start -le 0 -and $ToQA -le 0) {
     Write-Host "=== Pendientes del board #$ProjectNum de $Owner ===" -ForegroundColor Cyan
     Write-Host ""
 
@@ -264,6 +271,66 @@ if ($Start -le 0) {
     Write-Host ""
     Write-Host "Siguiente paso: Board-Work.ps1 -ProjectNum $ProjectNum -Start <issueNum> para empezar uno." -ForegroundColor Cyan
     Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+    exit 0
+}
+
+# ==============================================================================
+# MODE 4: -ProjectNum -ToQA <issueNum>  -> move the board item to the QA column
+# The work flow calls this after opening the PR: the change is now in testing /
+# review while the gate runs. Merge later moves it to Done (close->Done + fill).
+# ==============================================================================
+if ($ToQA -gt 0) {
+    $projData = gh api graphql -f query='
+query($owner:String!, $num:Int!) {
+  user(login:$owner) {
+    projectV2(number:$num) {
+      id
+      fields(first:30) { nodes { ... on ProjectV2SingleSelectField { id name options { id name } } } }
+    }
+  }
+}' -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
+
+    $projectId  = $projData.data.user.projectV2.id
+    if (-not $projectId) { throw "Board #$ProjectNum no encontrado para $Owner." }
+    $statusNode = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name -eq "Status" }
+    $qaId       = ($statusNode.options | Where-Object { $_.name -eq "QA" }).id
+    if (-not $qaId) {
+        throw "El board #$ProjectNum no tiene la opcion 'QA' en Status. Agregala (/board field) antes de usar -ToQA."
+    }
+
+    # Find the item (one retry for GitHub eventual consistency, like -Start).
+    $item = $null
+    foreach ($attempt in 1..2) {
+        $itemsData = gh api graphql -f query='
+query($proj:ID!) {
+  node(id:$proj) {
+    ... on ProjectV2 {
+      items(first:100) { nodes { id content { __typename ... on Issue { number title } } } } }
+  }
+}' -F "proj=$projectId" | ConvertFrom-Json
+        $item = $itemsData.data.node.items.nodes |
+                Where-Object { $_.content.__typename -eq "Issue" -and $_.content.number -eq $ToQA } |
+                Select-Object -First 1
+        if ($item) { break }
+        if ($attempt -eq 1) { Start-Sleep -Seconds 3 }
+    }
+    if (-not $item) { throw "Issue #$ToQA no esta en el board #$ProjectNum." }
+
+    if ($DryRun) {
+        Write-Host "DRY-RUN: #$ToQA '$($item.content.title)' -> Status QA (no ejecutado)." -ForegroundColor Gray
+        Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+        exit 0
+    }
+
+    gh api graphql -f query='
+mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
+  updateProjectV2ItemFieldValue(input:{
+    projectId:$proj, itemId:$item, fieldId:$field,
+    value:{singleSelectOptionId:$opt}
+  }) { projectV2Item { id } }
+}' -f "proj=$projectId" -f "item=$($item.id)" -f "field=$($statusNode.id)" -f "opt=$qaId" | Out-Null
+    Write-Host "OK  #$ToQA '$($item.content.title)' -> Status QA (en review/testing)." -ForegroundColor Green
     Write-Host "Board: $boardUrl" -ForegroundColor Cyan
     exit 0
 }
