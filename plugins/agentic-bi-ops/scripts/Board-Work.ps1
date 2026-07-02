@@ -75,6 +75,7 @@ param(
     [switch]$DryRun,
     [switch]$Branch,
     [switch]$IgnoreBlocked,
+    [switch]$TakeOver,
     [string]$TokenVar   = "GITHUB_TOKEN_PERSONAL"
 )
 
@@ -262,6 +263,7 @@ query($proj:ID!) {
             __typename
             ... on Issue {
               number title state url
+              assignees(first:5) { nodes { login } }
               repository { nameWithOwner }
             }
           }
@@ -315,6 +317,22 @@ if (-not $IgnoreBlocked) {
     }
 }
 
+# -- Issue lock (multi-session): refuse an issue another session already has ----
+$assignees = @($item.content.assignees.nodes.login)
+if (-not $TakeOver -and $currentStatus -eq "In Progress" -and $assignees.Count -gt 0) {
+    Write-Host "OCUPADO - el issue #$Start ya esta In Progress (asignado: $($assignees -join ', '))." -ForegroundColor Red
+    # Show the last claim fingerprint if one exists
+    $lastClaim = gh api "repos/$repo/issues/$Start/comments" --jq '[.[] | select(.body | startswith("[abios-claim]"))] | last | .body' 2>$null
+    if ($lastClaim -and $lastClaim -ne "null") {
+        Write-Host "  Ultimo claim: $lastClaim" -ForegroundColor Yellow
+    }
+    Write-Host "Probablemente otra sesion de Claude lo esta trabajando. Si NO es asi (sesion muerta" -ForegroundColor Yellow
+    Write-Host "o quieres retomarlo a proposito), re-ejecuta con -TakeOver." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+    exit 1
+}
+
 Write-Host ("  #{0} {1}" -f $Start, $item.content.title) -ForegroundColor Yellow
 Write-Host ("  Repo: {0} | Status actual: {1}" -f $repo, $currentStatus) -ForegroundColor DarkGray
 Write-Host ""
@@ -356,6 +374,16 @@ try {
     Write-Host "  OK  Assignee -> $Owner" -ForegroundColor Green
 } catch {
     Write-Host "  WARN no se pudo asignar: $_" -ForegroundColor DarkYellow
+}
+
+# -- Execute: claim fingerprint (multi-session diagnostics) ---------------------
+$claimNote = if ($TakeOver) { "TAKEOVER" } else { "claim" }
+$fingerprint = "[abios-claim] $claimNote por sesion Claude en $env:COMPUTERNAME (PID $PID) - $(Get-Date -Format 'yyyy-MM-dd HH:mm') - rama $branchName"
+try {
+    gh issue comment $Start --repo $repo --body $fingerprint | Out-Null
+    Write-Host "  OK  Claim registrado ($claimNote)" -ForegroundColor Green
+} catch {
+    Write-Host "  WARN no se pudo registrar el claim: $_" -ForegroundColor DarkYellow
 }
 
 # -- Execute: work branch (only if cwd is a clone of the issue's repo) ----------

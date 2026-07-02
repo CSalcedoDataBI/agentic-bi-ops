@@ -179,6 +179,9 @@ Notes:
 - **Dependency check**: pending items labeled `blocked` show as `[BLOCKED]` and `-Start` refuses
   them, plus any issue with OPEN native blocked-by dependencies (best-effort API), listing the
   blocker. `-IgnoreBlocked` overrides a false positive; remove the `blocked` label when unblocked.
+- **Multi-session lock**: `-Start` refuses an issue already In Progress + assigned (shows the
+  last `[abios-claim]` fingerprint comment: hostname, PID, time, branch). `-TakeOver` retakes it
+  deliberately and posts a TAKEOVER claim. GitHub is the lock — it works across machines too.
 - `-Branch` skips branch creation (with a warning) when the cwd is not a clone of the issue's repo.
 - Skip steps 1–2 when the user already named a board.
 - The script respects an already-set `GH_TOKEN` (from gh-account); otherwise it reads `GITHUB_TOKEN_PERSONAL` (or the var given in `-TokenVar`).
