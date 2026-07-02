@@ -35,6 +35,12 @@
 .PARAMETER TimeoutMinutes
     Max minutes to wait for the requested review. Default 6.
 
+.PARAMETER MaxLines
+    Small-PR guard: warn when additions+deletions exceed this. Default 600.
+
+.PARAMETER MaxFiles
+    Small-PR guard: warn when changed files exceed this. Default 20.
+
 .PARAMETER TokenVar
     Windows USER env var holding the PAT. Defaults to GITHUB_TOKEN_PERSONAL.
 
@@ -48,6 +54,8 @@ param(
     [int]   $PR = 0,
     [switch]$InstallRuleset,
     [int]   $TimeoutMinutes = 6,
+    [int]   $MaxLines = 600,
+    [int]   $MaxFiles = 20,
     [string]$TokenVar = "GITHUB_TOKEN_PERSONAL"
 )
 
@@ -117,6 +125,18 @@ if (-not $copilotRequested) {
     Write-Host "  WARN Copilot code review no disponible en esta cuenta/repo." -ForegroundColor DarkYellow
     Write-Host "       Fallback obligatorio: self-review explicito de 'gh pr diff $PR' antes de mergear," -ForegroundColor DarkYellow
     Write-Host "       y si la skill second-opinion esta disponible, usala como segundo revisor." -ForegroundColor DarkYellow
+}
+
+# ── 1.5. Small-PR guard (GitHub PR BP: small, focused pull requests) ──────────
+$size = gh pr view $PR --repo $Repo --json additions,deletions,changedFiles | ConvertFrom-Json
+$totalLines = $size.additions + $size.deletions
+Write-Host ""
+Write-Host ("  Tamano del PR: {0} archivo(s), +{1}/-{2} ({3} lineas)" -f $size.changedFiles, $size.additions, $size.deletions, $totalLines) -ForegroundColor Cyan
+if ($totalLines -gt $MaxLines -or $size.changedFiles -gt $MaxFiles) {
+    Write-Host "  WARN PR grande (umbral: $MaxLines lineas / $MaxFiles archivos)." -ForegroundColor DarkYellow
+    Write-Host "       Un PR chico se revisa mejor y mete menos bugs. Considera dividir el issue con:" -ForegroundColor DarkYellow
+    Write-Host "       Board-Breakdown.ps1 -Parent <issueNum> -Tasks `"parte A`", `"parte B`"" -ForegroundColor DarkYellow
+    Write-Host "       (advertencia, no bloqueo - los umbrales se ajustan con -MaxLines/-MaxFiles)" -ForegroundColor DarkGray
 }
 
 # ── 2. CI checks ───────────────────────────────────────────────────────────────
