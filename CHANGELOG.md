@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0] - 2026-07-01
+### Added
+- **M5.1 — Review gate before merge** (`scripts/Board-ReviewGate.ps1` + work step 5b): no PR
+  merges blind anymore. The gate requests a GitHub Copilot code review when available, waits for
+  CI checks, waits for the review, prints decision + feedback + unresolved threads, and only
+  exit 0 allows the merge. Fallback chain, stated honestly: Copilot → `second-opinion` skill →
+  explicit self-review of `gh pr diff`. Closes the only RED gap in the GitHub-flow compliance
+  matrix (merge only after approval).
+- `Board-ReviewGate.ps1 -InstallRuleset` (optional, once per repo): repository ruleset requiring
+  PRs into the default branch; repo admins keep bypass (documented — the hard gate for the agent
+  is the work flow itself).
+
 ## [0.7.7] - 2026-07-01
 ### Fixed
 - **Destructive false positive in the Status heuristic** (Board-Fill.ps1 AND the board-sync.sh
