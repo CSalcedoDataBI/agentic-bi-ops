@@ -546,7 +546,7 @@ query($o:String!, $r:String!, $n:Int!) {
 Write-Host "------------------------------" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Issue #$Start listo para trabajar (In Progress, asignado a $Owner)." -ForegroundColor Green
-Write-Host "AL TERMINAR: push de la rama y PR con 'Closes #$Start' en el cuerpo - NO commit directo a main." -ForegroundColor Yellow
+Write-Host "AL TERMINAR: New-BoardPR.ps1 -Issue $Start  (push + PR 'Closes #$Start' con la cuenta correcta) - NO commit directo a main." -ForegroundColor Yellow
 Write-Host "(asi GitHub llena solo la columna 'Linked pull requests' del board)" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "Board: $boardUrl" -ForegroundColor Cyan

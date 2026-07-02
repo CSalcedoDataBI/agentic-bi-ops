@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.2] - 2026-07-02
+### Added
+- **M2.3 — Cross-account PR workflow** (`scripts/New-BoardPR.ps1`): one command closes the
+  work loop on any BI repo regardless of which account owns it. Resolves the account from the
+  repo OWNER (CSalcedoDataBI -> `GITHUB_TOKEN_PERSONAL`, PAL-Devs -> `GITHUB_TOKEN_BUSINESS`;
+  `-TokenVar` forces one), verifies the login has push permission, pushes the branch through a
+  one-shot credential helper (the stored remote is never rewritten and the token never appears
+  on the command line or in logs), and opens the PR with `Closes #<n>` — or, on re-run, just
+  pushes new commits to the already-open PR (the review-gate iteration loop). `-DryRun`
+  previews everything. `/board work` step 5a, the `gh-account` skill, and the `-Start` closing
+  message now point here.
+
 ## [0.9.1] - 2026-07-01
 ### Added
 - **MS2.2 — Local session registry** (`.agentic-bi-ops/sessions.json`, gitignored, shared
