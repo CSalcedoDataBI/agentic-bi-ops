@@ -48,28 +48,47 @@ UI click (don't claim they were set).
 
 ---
 
-## Create fields: Status / Priority / Target as single-select
+## Create fields: prefer the preset (canonical names + colors)
 
-These three fields are the standard in this ecosystem. Create them once per board.
+Do NOT hand-roll `field-create` calls with ad-hoc option names/colors — that is how a
+board ends up with random colors and divergent labels (Todo green, "QA" vs "In Review", …).
+Apply the **field preset** instead; it is idempotent and, crucially, applies the canonical
+option **colors** that `gh project field-create` cannot set (GitHub auto-assigns random ones
+on create — the preset script fixes them afterward via GraphQL, preserving option IDs):
+
+```powershell
+& "<plugin>/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Lang en   # or -Lang es
+```
+
+### Canonical taxonomy (the standard — keep boards coherent)
+
+**Language rule:** board artifacts (Status/Type/labels) are in **English** by default —
+universal, GitHub-native, and consistent with the commits-in-English convention. The
+conversation with the user stays in their language. Use `-Lang es` only when the user
+explicitly wants a Spanish board (it creates `Estado` etc. as new fields).
+
+**Status** (order + colors) — a change flows left to right; Blocked is a side state:
+
+| Order | Option | Color | Meaning |
+|---|---|---|---|
+| 1 | Todo | GRAY | not started |
+| 2 | In Progress | YELLOW | actively worked |
+| 3 | In Review | ORANGE | PR open — review / testing (the review-gate stage) |
+| 4 | Blocked | RED | blocked by a dependency |
+| 5 | Done | GREEN | completed |
+
+**Priority**: P0 RED · P1 ORANGE · P2 YELLOW · P3 GRAY.
+
+`In Review` is the canonical name for the review/testing stage (not "QA"); `Board-Work.ps1
+-ToReview` and `Board-Fill.ps1` (open PR → In Review) key on exactly that name. The valid
+GitHub option colors are GRAY, BLUE, GREEN, YELLOW, ORANGE, RED, PINK, PURPLE.
+
+If you must create a single field by hand, `gh` can set names but NOT colors:
 
 ```bash
-# Status field
-gh project field-create <num> --owner <owner> \
-  --name "Status" \
-  --data-type SINGLE_SELECT \
-  --single-select-options "Todo,In Progress,Done,Blocked"
-
-# Priority field
-gh project field-create <num> --owner <owner> \
-  --name "Priority" \
-  --data-type SINGLE_SELECT \
-  --single-select-options "P0,P1,P2"
-
-# Target field (sprints or milestones — adapt options as needed)
-gh project field-create <num> --owner <owner> \
-  --name "Target" \
-  --data-type SINGLE_SELECT \
-  --single-select-options "Sprint 1,Sprint 2,Backlog"
+gh project field-create <num> --owner <owner> --name "Status" \
+  --data-type SINGLE_SELECT --single-select-options "Todo,In Progress,In Review,Blocked,Done"
+# then re-run Apply-FieldPreset.ps1 to apply the canonical colors.
 ```
 
 ---

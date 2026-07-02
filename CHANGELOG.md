@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.0] - 2026-07-02
+### Changed
+- **Canonical field taxonomy + colors** (#82): established one standard so boards stay coherent
+  and `gh` never assigns random option colors again.
+  - **Language rule**: board artifacts (Status/Type/labels) default to **English** (universal,
+    GitHub-native, matches the commits-in-English convention); the `es` preset stays available
+    for explicit Spanish boards.
+  - **Canonical Status**: `Todo` GRAY → `In Progress` YELLOW → `In Review` ORANGE → `Blocked`
+    RED → `Done` GREEN. The review/testing stage is named **In Review** (renamed from `QA`);
+    `Board-Work.ps1 -ToReview` (was `-ToQA`) and `Board-Fill.ps1` (open PR → In Review) key on it.
+  - **Field presets** (`fields.en/es.json`) now carry per-option colors; `Apply-FieldPreset.ps1`
+    applies them via GraphQL after field creation (gh cannot set option colors on create),
+    preserving existing option IDs so item assignments survive. Priority: P0 RED · P1 ORANGE ·
+    P2 YELLOW · P3 GRAY.
+
 ## [0.12.0] - 2026-07-02
 ### Added
 - **QA stage in the work flow** (#80): the board gains a **QA** Status column (Todo → In
