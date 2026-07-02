@@ -23,7 +23,7 @@ gh project edit <num> --owner <owner> \
 gh project edit <num> --owner <owner> --readme "# <repo> — Roadmap
 
 Tracks planned work and issues for **<owner>/<repo>**.
-Status: Todo / In Progress / Done.
+Status: Backlog / In Progress / In Review / Blocked / Done.
 Repo: https://github.com/<owner>/<repo>"
 
 # 4) Link the repo (settings → linked repositories; required before "Default repository")
@@ -51,7 +51,7 @@ UI click (don't claim they were set).
 ## Create fields: prefer the preset (canonical names + colors)
 
 Do NOT hand-roll `field-create` calls with ad-hoc option names/colors — that is how a
-board ends up with random colors and divergent labels (Todo green, "QA" vs "In Review", …).
+board ends up with random colors and divergent labels (a green "not started" column, "QA" vs "In Review", …).
 Apply the **field preset** instead; it is idempotent and, crucially, applies the canonical
 option **colors** that `gh project field-create` cannot set (GitHub auto-assigns random ones
 on create — the preset script fixes them afterward via GraphQL, preserving option IDs):
@@ -71,7 +71,7 @@ explicitly wants a Spanish board (it creates `Estado` etc. as new fields).
 
 | Order | Option | Color | Meaning |
 |---|---|---|---|
-| 1 | Todo | GRAY | not started |
+| 1 | Backlog | GRAY | not started |
 | 2 | In Progress | YELLOW | actively worked |
 | 3 | In Review | ORANGE | PR open — review / testing (the review-gate stage) |
 | 4 | Blocked | RED | blocked by a dependency |
@@ -87,7 +87,7 @@ If you must create a single field by hand, `gh` can set names but NOT colors:
 
 ```bash
 gh project field-create <num> --owner <owner> --name "Status" \
-  --data-type SINGLE_SELECT --single-select-options "Todo,In Progress,In Review,Blocked,Done"
+  --data-type SINGLE_SELECT --single-select-options "Backlog,In Progress,In Review,Blocked,Done"
 # then re-run Apply-FieldPreset.ps1 to apply the canonical colors.
 ```
 

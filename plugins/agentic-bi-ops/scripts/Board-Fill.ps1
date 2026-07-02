@@ -13,7 +13,7 @@
       Status    : issue CLOSED -> Done
                   issue OPEN + merged PR -> Done
                   issue OPEN + open PR   -> In Review (In Progress if absent)
-                  issue OPEN + no PR     -> Todo
+                  issue OPEN + no PR     -> Backlog
       Priority  : if empty -> P2 Medium
       Size      : if empty -> M
       Type      : if empty -> detect from labels (bug->Bug, docs->Docs,
@@ -104,7 +104,7 @@ $statusNode = Get-Field "Status"
 $statusId   = $statusNode.id
 $doneId     = Get-Opt $statusNode "Done"
 $inProgId   = Get-Opt $statusNode "In Progress"
-$todoId     = Get-Opt $statusNode "Todo"
+$backlogId  = Get-Opt $statusNode "Backlog"
 $reviewId   = Get-Opt $statusNode "In Review"   # optional (from the field preset); falls back to In Progress
 
 $prioNode   = Get-Field "Priority"
@@ -255,7 +255,7 @@ foreach ($item in $items) {
         $prTargetN = if ($reviewId) { "In Review (PR abierto)" } else { "In Progress (PR abierto)" }
         if ($currentStatus -ne $prTarget -and $currentStatus -ne $doneId) { $targetStatus=$prTarget; $targetStatusN=$prTargetN }
     }
-    elseif (-not $currentStatus)                                       { $targetStatus=$todoId;   $targetStatusN="Todo (sin PR)" }
+    elseif (-not $currentStatus)                                       { $targetStatus=$backlogId; $targetStatusN="Backlog (sin PR)" }
     if ($targetStatus) {
         $changes += [PSCustomObject]@{ Type="single"; FieldId=$statusId; TargetId=$targetStatus; Display="Status [$currentStatusN] -> $targetStatusN" }
     }

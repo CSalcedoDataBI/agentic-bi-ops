@@ -24,9 +24,9 @@ Regenerate with `scripts/Export-BoardSnapshot.ps1 -Number 13 -Owner CSalcedoData
 
 | Status | Item | Issue |
 |--------|------|-------|
-| Todo | M2 — PBIP / Fabric git ops | [#2](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/2) |
-| Todo | M3 — Semantic-model review agents wired to the board | [#3](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/3) |
-| Todo | M4 — BI release automation | [#4](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/4) |
+| In Review | M2 — PBIP / Fabric git ops | [#2](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/2) |
+| In Review | M3 — Semantic-model review agents wired to the board | [#3](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/3) |
+| In Review | M4 — BI release automation | [#4](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/4) |
 | Done | guard: secret patterns self-matched their own definition lines | [#1](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/1) |
 | Done | packaging: plugin must live in `plugins/<name>/`, not repo root | [#5](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/5) |
 | Done | init: fill board description/README/linked-repo coherently | [#6](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/6) |
@@ -35,8 +35,9 @@ Regenerate with `scripts/Export-BoardSnapshot.ps1 -Number 13 -Owner CSalcedoData
 | Done | showcase: self-referential example + board snapshot export | [#9](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/9) |
 | Done | visibility: public-repo board must be Public | [#10](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/10) |
 
-The three `Todo` items are the forward roadmap; the `Done` items are self-found improvements —
-each one a real rough edge the tool surfaced about itself and then fixed.
+The three `In Review` items (M2–M4) are the forward roadmap, their scaffolds open for review;
+the `Done` items are self-found improvements — each one a real rough edge the tool surfaced
+about itself and then fixed.
 
 ## How it evolved
 

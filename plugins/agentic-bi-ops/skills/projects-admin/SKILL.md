@@ -62,8 +62,8 @@ All boards in this ecosystem use three single-select fields with these exact nam
 
 | Field | Purpose | Typical options |
 |-------|---------|----------------|
-| **Status** | Workflow stage (kanban column) | `Todo`, `In Progress`, `Done`, `Blocked` |
-| **Priority** | Urgency / triage | `P0`, `P1`, `P2` |
+| **Status** | Workflow stage (kanban column) | `Backlog`, `In Progress`, `In Review`, `Blocked`, `Done` |
+| **Priority** | Urgency / triage | `P0`, `P1`, `P2`, `P3` |
 | **Target** | Milestone / sprint target | Sprint labels or date strings |
 
 For the exact commands to create these fields and set their values on items, see `references/board-ops.md`.
@@ -85,7 +85,7 @@ Scans the board for missing values (assignees, Status) and fills them. In CI it 
 | Column | Fill rule |
 |--------|-----------|
 | **Assignees** | If empty, assign the board owner (`$OWNER`) |
-| **Status** | Issue closed → `Done`; PR merged → `Done`; open PR + Status=Todo → `In Progress` |
+| **Status** | Issue closed → `Done`; PR merged → `Done`; open PR → `In Review`; else → `Backlog` |
 | **Linked PRs** | System-derived by GitHub from PR mentions — not writable via API |
 | **Sub-issues progress** | System-derived from closed sub-issues — not writable via API |
 
@@ -155,7 +155,7 @@ and wait for; never assume the account or the scope:
 |------|---------|--------------|
 | 0. Ask account | (registry check, no script) | If BOTH `GITHUB_TOKEN_PERSONAL` and `GITHUB_TOKEN_BUSINESS` exist in the Windows USER registry, ask which account (personal = default); only one → use it silently. Business → pass `-TokenVar GITHUB_TOKEN_BUSINESS -Owner PAL-Devs` everywhere |
 | 1. Ask scope | `git remote get-url origin` | Inside a GitHub repo clone, ask: boards of THIS repo or ALL boards of the account? Outside a repo, skip the question (= all) |
-| 2. Pick a board | `Board-Work.ps1 -ListBoards [-Repo <owner/name>]` | With `-Repo`: only boards LINKED to that repo (`repository.projectsV2`) — exactly one result skips this pick. Without: every board of the owner (backups excluded). Both show pending count (Todo or no Status) + URL, most pending first |
+| 2. Pick a board | `Board-Work.ps1 -ListBoards [-Repo <owner/name>]` | With `-Repo`: only boards LINKED to that repo (`repository.projectsV2`) — exactly one result skips this pick. Without: every board of the owner (backups excluded). Both show pending count (Backlog or no Status) + URL, most pending first |
 | 3. Pick an issue | `Board-Work.ps1 -ProjectNum <n>` | That board's pending items sorted by Priority; drafts flagged (convert via `/board fill` first) |
 | 4. Start it | `Board-Work.ps1 -ProjectNum <n> -Start <issueNum> -Branch` | Status → In Progress, assign owner, create + checkout branch `issue-<num>-<slug>`, print full issue context (body, labels, sub-issues) |
 | 5. Finish it | push branch → PR with `Closes #<num>` → `Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` → merge only on exit 0 | Review gate (GitHub flow: merge only after approval): requests Copilot review when available, waits for CI checks + review, reports decision/feedback/unresolved threads. Blocked = fix, push, re-run. Then GitHub fills **Linked pull requests** by itself |

@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $items = (gh project item-list $Number --owner $Owner --format json --limit 500 | ConvertFrom-Json).items
 
-$rank  = @{ 'Todo' = 0; 'In Progress' = 1; 'In Review' = 2; 'Done' = 3 }
+$rank  = @{ 'Backlog' = 0; 'In Progress' = 1; 'In Review' = 2; 'Done' = 3 }
 $sorted = $items | Sort-Object `
   @{ Expression = { if ($rank.ContainsKey([string]$_.status)) { $rank[[string]$_.status] } else { 9 } } },
   @{ Expression = { $_.content.number } }

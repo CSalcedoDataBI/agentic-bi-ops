@@ -3,7 +3,7 @@
   "description": "Standard engineering governance fields for a GitHub Projects board. Single-select options may be a plain string or {name,color}; colors are the canonical palette applied by Apply-FieldPreset (gh cannot set option colors on create).",
   "fields": [
     { "name": "Status",   "type": "SINGLE_SELECT", "options": [
-      { "name": "Todo",        "color": "GRAY" },
+      { "name": "Backlog",     "color": "GRAY" },
       { "name": "In Progress", "color": "YELLOW" },
       { "name": "In Review",   "color": "ORANGE" },
       { "name": "Blocked",     "color": "RED" },
