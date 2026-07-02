@@ -206,6 +206,7 @@ Notes:
 | Bulk label issues | `references/issue-ops.md` | loop over issues → `gh issue edit --add-label` |
 | Install CI auto-add workflow | `references/automation.md` | drop-in YAML |
 | Install issue forms + PR template | `Install-RepoTemplates.ps1` | copies `presets/templates/` into `.github/`, ensures form labels exist, never overwrites without `-Force` |
+| Apply the label taxonomy | `Apply-LabelPreset.ps1` | idempotent `gh label create --force` from `presets/labels.json`; type labels feed Board-Fill, `blocked` feeds work; never deletes |
 
 ---
 

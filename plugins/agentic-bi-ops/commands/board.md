@@ -20,6 +20,7 @@ for the user to pick (they can answer with just the number):
 9. bulk             → mover/cerrar/etiquetar muchos items a la vez
 10. automate        → instalar CI que sincroniza el board solo
 11. templates       → instalar issue forms (bug/feature/task) + PR template en el repo actual
+12. labels          → aplicar la taxonomia de labels (bug/docs/refactor/chore/blocked/...) al repo
 ```
 
 When they answer (number or name), execute that sub-action following the instructions below.
@@ -104,6 +105,11 @@ matching recipe from the projects-admin references:
   - Existing files are SKIPPED (never overwrite a repo's customized templates); `--force`
     overwrites. The script only touches the working copy — commit through the normal flow
     (PR when the work is board-tracked).
+- **labels** — apply the label taxonomy preset by running `scripts/Apply-LabelPreset.ps1`
+  (repo derived from origin, or `-Repo owner/name`). Idempotent `gh label create --force` from
+  `presets/labels.json`: `bug`/`docs`/`refactor`/`chore` feed Board-Fill Type detection,
+  `blocked` feeds the work dependency check, `roadmap`/`plan`/`plan-task` feed plan tracking.
+  Never deletes existing labels.
 
 ALWAYS END WITH THE BOARD LINK (mandatory): every response about a board operation — plan,
 result, or error — must end with the board URL so the user can open it in one click:
