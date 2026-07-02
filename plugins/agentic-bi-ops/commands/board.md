@@ -76,10 +76,16 @@ matching recipe from the projects-admin references:
        native sub-issues (Sub-issues progress fills itself) — then start one child. Use a
        checkbox task list in the parent body instead when the pieces are too small for issues.
   5. **Finish with a PR + review gate — MANDATORY.** When the work is done:
-     a. Push the branch and open a PR whose body contains `Closes #<issueNum>`. NEVER commit
-        board-tracked issue work directly to main — the PR is what makes GitHub fill the
-        board's "Linked pull requests" column (a system column no API can write). This
-        overrides any general commit-directly-to-main workflow rule for issues started via `work`.
+     a. Run `scripts/New-BoardPR.ps1 -Issue <issueNum>` — the cross-account push+PR step:
+        it resolves the RIGHT account from the repo OWNER (CSalcedoDataBI → personal PAT,
+        PAL-Devs → business PAT; `-TokenVar` forces one), verifies push permission, pushes
+        the branch with a one-shot credential helper (the stored remote is never rewritten
+        and the token never hits the command line or logs), and opens the PR with
+        `Closes #<issueNum>` in the body — or, on re-run, just pushes new commits to the
+        already-open PR (the gate-feedback iteration). NEVER commit board-tracked issue work
+        directly to main — the PR is what makes GitHub fill the board's "Linked pull
+        requests" column (a system column no API can write). This overrides any general
+        commit-directly-to-main workflow rule for issues started via `work`.
      b. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
         code review when available, measures PR size (warns over 600 lines / 20 files and
         suggests `Board-Breakdown.ps1` — small PRs review better), waits for CI checks, waits

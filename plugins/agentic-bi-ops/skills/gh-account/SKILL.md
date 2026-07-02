@@ -107,6 +107,26 @@ $env:GH_TOKEN = $t
 
 ---
 
+## Cross-account git push & PR (work step 5a)
+
+`GH_TOKEN` covers `gh` API calls only — a `git push` authenticates through git's credential
+machinery, which is a separate path. **Never solve this by embedding a token in the stored
+remote URL** (it leaks into `git remote -v`, shell history, and every future clone of the
+config). Use `scripts/New-BoardPR.ps1` instead:
+
+```powershell
+& "<plugin-root>/scripts/New-BoardPR.ps1" -Issue <n>          # account auto-resolved from repo owner
+& "<plugin-root>/scripts/New-BoardPR.ps1" -Issue <n> -TokenVar GITHUB_TOKEN_BUSINESS   # force PAL-Devs
+```
+
+It resolves the account **from the repo owner** (CSalcedoDataBI → `GITHUB_TOKEN_PERSONAL`,
+PAL-Devs → `GITHUB_TOKEN_BUSINESS`), verifies the login has push permission, pushes through a
+one-shot credential helper (token only ever in an env var read inside git's shell), and opens
+the PR with `Closes #<n>` — or pushes to the already-open PR on re-run. Session `GH_TOKEN` is
+deliberately ignored there: the identity must match the repo owner, not whatever ran last.
+
+---
+
 ## Verified status
 
 Verified 2026-06-26: both Windows USER env vars (`GITHUB_TOKEN_PERSONAL` for CSalcedoDataBI and `GITHUB_TOKEN_BUSINESS` for PAL-Devs) exist on this machine and carry the `project` scope.

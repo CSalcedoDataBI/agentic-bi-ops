@@ -126,6 +126,7 @@ against the official guides ([Projects](https://docs.github.com/en/issues/planni
 |---|---|
 | Branch per change, descriptive name | `work` creates `issue-<num>-<slug>` on start |
 | PR for every change, issue auto-closed | step 5 mandates a PR with `Closes #<num>` — never direct to main |
+| Right identity per repo | `New-BoardPR.ps1` resolves the account from the repo OWNER, pushes with a one-shot credential (remote never rewritten), opens/updates the PR |
 | Merge only after review | **review gate**: Copilot review request + CI checks + unresolved threads; exit 0 gates the merge; honest self-review fallback |
 | Small, focused PRs | gate warns over 600 lines / 20 files and suggests a sub-issue split |
 | Delete branch after merge | merge flow uses `--delete-branch` |
