@@ -107,7 +107,7 @@ if ([string]::IsNullOrWhiteSpace($token)) { throw "$TokenVar no esta en el entor
 $env:GH_TOKEN = $token
 
 # -- 3. Identity + push permission ---------------------------------------------
-$login = (gh api user --jq .login).Trim()
+$login = "$(gh api user --jq .login 2>$null)".Trim()
 if ($LASTEXITCODE -ne 0 -or -not $login) { throw "El token de $TokenVar no autentica contra la API." }
 $repoInfo = gh api "repos/$Repo" 2>$null | ConvertFrom-Json
 if (-not $repoInfo) { throw "'$login' no ve el repo $Repo (no existe o sin acceso). Cuenta equivocada?" }
