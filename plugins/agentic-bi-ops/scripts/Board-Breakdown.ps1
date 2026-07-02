@@ -1,0 +1,94 @@
+<#
+.SYNOPSIS
+    Break a large issue into native sub-issues (/board work breakdown).
+
+.DESCRIPTION
+    GitHub best practice: break large issues into smaller ones so work is
+    manageable and PRs stay small. This script creates one child issue per
+    task title and attaches each to the parent as a NATIVE sub-issue
+    (GraphQL addSubIssue), which makes the board's "Sub-issues progress"
+    column fill itself as children close.
+
+    Children get the 'task' label (created if missing) and a body that
+    links back to the parent. If the repo has an auto-add CI workflow
+    (/board automate), the children land on the board automatically.
+
+    Use a task LIST in the parent body instead (checkboxes) when the pieces
+    are too small to deserve their own issue - this script is for
+    substantial children only.
+
+.PARAMETER Parent
+    Parent issue number. Mandatory.
+
+.PARAMETER Tasks
+    One or more child issue titles. Mandatory.
+
+.PARAMETER Repo
+    owner/name. Default: derived from the current directory's origin remote.
+
+.PARAMETER Label
+    Label for the children (created if missing). Default: task.
+
+.PARAMETER TokenVar
+    Windows USER env var holding the PAT. Defaults to GITHUB_TOKEN_PERSONAL.
+
+.EXAMPLE
+    .\Board-Breakdown.ps1 -Parent 47 -Tasks "Part A - schema reader", "Part B - diff engine"
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][int]$Parent,
+    [Parameter(Mandatory)][string[]]$Tasks,
+    [string]$Repo = "",
+    [string]$Label = "task",
+    [string]$TokenVar = "GITHUB_TOKEN_PERSONAL"
+)
+
+$ErrorActionPreference = "Stop"
+
+if (-not $env:GH_TOKEN) {
+    $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
+}
+if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
+
+if (-not $Repo) {
+    $originUrl = git remote get-url origin 2>$null
+    if ($originUrl -match 'github\.com[/:]([^/]+)/([^/.]+)') { $Repo = "$($Matches[1])/$($Matches[2])" }
+}
+if (-not $Repo) { throw "No pude derivar el repo del origin - pasa -Repo owner/name." }
+
+# Parent must exist and be open
+$parentData = gh issue view $Parent --repo $Repo --json id,title,state | ConvertFrom-Json
+if ($parentData.state -eq "CLOSED") { throw "El issue padre #$Parent esta CERRADO - reabrelo antes de desglosarlo." }
+$parentId    = $parentData.id
+$parentTitle = $parentData.title
+
+Write-Host "=== Board-Breakdown  #$Parent '$parentTitle'  ->  $($Tasks.Count) sub-issue(s) ===" -ForegroundColor Cyan
+Write-Host ""
+
+# Label must exist or gh issue create fails
+gh label create $Label --color 0e8a16 --description "Concrete work item with a definition of done" --force --repo $Repo 2>&1 | Out-Null
+
+$created = @(); $fail = 0
+foreach ($t in $Tasks) {
+    try {
+        $body = "Part of #${Parent}: $parentTitle"
+        $url  = gh issue create --repo $Repo --title $t --body $body --label $Label
+        $num  = [int]($url -split '/')[-1]
+        $childId = gh issue view $num --repo $Repo --json id -q .id
+        gh api graphql -f query='
+mutation($p:ID!, $c:ID!) {
+  addSubIssue(input:{issueId:$p, subIssueId:$c}) { issue { number } }
+}' -f "p=$parentId" -f "c=$childId" | Out-Null
+        Write-Host "  OK  #$num  $t" -ForegroundColor Green
+        $created += $num
+    } catch {
+        Write-Host "  FAIL '$t': $_" -ForegroundColor Red
+        $fail++
+    }
+}
+
+Write-Host ""
+Write-Host "Sub-issues creados: $($created.Count)  fallos: $fail" -ForegroundColor Cyan
+Write-Host "La columna 'Sub-issues progress' del board se llena sola al cerrarlos." -ForegroundColor DarkGray
+Write-Host "Empieza uno con: Board-Work.ps1 -ProjectNum <n> -Start <num> -Branch" -ForegroundColor Cyan

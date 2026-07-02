@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.3] - 2026-07-01
+### Added
+- **M5.4 — Sub-issue breakdown** (`scripts/Board-Breakdown.ps1`, wired into work step 4): break
+  a large issue into NATIVE sub-issues (`addSubIssue`) so the board's *Sub-issues progress*
+  column fills itself as children close. Children get the `task` label and a "Part of #parent"
+  body; a CLOSED parent is refused. Task-list checkboxes remain the documented fallback for
+  pieces too small to be issues.
+
 ## [0.8.2] - 2026-07-01
 ### Added
 - **M5.3 — `/board labels`** (`scripts/Apply-LabelPreset.ps1` + `presets/labels.json`):
