@@ -205,6 +205,7 @@ Notes:
 | Bulk close issues | `references/issue-ops.md` | loop over `gh issue list` → `gh issue close` |
 | Bulk label issues | `references/issue-ops.md` | loop over issues → `gh issue edit --add-label` |
 | Install CI auto-add workflow | `references/automation.md` | drop-in YAML |
+| Install issue forms + PR template | `Install-RepoTemplates.ps1` | copies `presets/templates/` into `.github/`, ensures form labels exist, never overwrites without `-Force` |
 
 ---
 
