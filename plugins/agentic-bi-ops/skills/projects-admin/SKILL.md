@@ -182,6 +182,10 @@ Notes:
 - **Multi-session lock**: `-Start` refuses an issue already In Progress + assigned (shows the
   last `[abios-claim]` fingerprint comment: hostname, PID, time, branch). `-TakeOver` retakes it
   deliberately and posts a TAKEOVER claim. GitHub is the lock — it works across machines too.
+- **Worktree mode**: when the working copy is busy (dirty tree or another `issue-*` branch),
+  `-Branch` creates/reuses an isolated worktree `../<repo>--issue-<n>` instead of switching —
+  the agent must continue the work in the printed path and `git worktree remove` it after the
+  merge. Same-issue re-entry in the main clone stays a plain checkout.
 - `-Branch` skips branch creation (with a warning) when the cwd is not a clone of the issue's repo.
 - Skip steps 1–2 when the user already named a board.
 - The script respects an already-set `GH_TOKEN` (from gh-account); otherwise it reads `GITHUB_TOKEN_PERSONAL` (or the var given in `-TokenVar`).

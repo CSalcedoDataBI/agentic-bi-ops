@@ -395,18 +395,44 @@ if ($Branch) {
         Write-Host "       Crea la rama en ese repo con: git checkout -b $branchName" -ForegroundColor DarkYellow
     } else {
         # Dirty-tree guard (multi-session): NEVER switch branches under another session's feet.
+        # When the folder is busy, the issue gets its own git worktree automatically instead
+        # (the official parallel-sessions pattern).
+        function New-IssueWorktree {
+            $repoName = ($repo -split '/')[1]
+            $wtPath   = Join-Path (Split-Path (Get-Location) -Parent) "$repoName--issue-$Start"
+            # Reuse: is the branch already checked out in some worktree?
+            $wtList = git worktree list --porcelain 2>$null | Out-String
+            if ($wtList -match "(?m)^worktree (.+)\r?\n(?:.*\r?\n)?branch refs/heads/$([regex]::Escape($branchName))") {
+                $existingPath = $Matches[1]
+                Write-Host "  OK  Worktree ya existia para la rama: $existingPath" -ForegroundColor Green
+                Write-Host "       TRABAJA EL ISSUE ALLI: cd `"$existingPath`"" -ForegroundColor Cyan
+                return
+            }
+            if (Test-Path $wtPath) {
+                Write-Host "  WARN la carpeta $wtPath existe pero no es worktree de $branchName - resuelvelo manualmente." -ForegroundColor DarkYellow
+                return
+            }
+            git rev-parse --verify --quiet $branchName 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { git worktree add $wtPath $branchName 2>&1 | Out-Null }
+            else                     { git worktree add $wtPath -b $branchName 2>&1 | Out-Null }
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  OK  Worktree creado: $wtPath (rama $branchName)" -ForegroundColor Green
+                Write-Host "       TRABAJA EL ISSUE ALLI: cd `"$wtPath`"" -ForegroundColor Cyan
+                Write-Host "       Al mergear el PR, limpia con: git worktree remove `"$wtPath`"" -ForegroundColor DarkGray
+            } else {
+                Write-Host "  FAIL no se pudo crear el worktree - crea la rama manualmente: git checkout -b $branchName" -ForegroundColor Red
+            }
+        }
         $dirty     = @(git status --porcelain 2>$null)
         $curBranch = git branch --show-current 2>$null
         if ($dirty.Count -gt 0 -and $curBranch -ne $branchName) {
-            Write-Host "  OCUPADO: el working tree tiene $($dirty.Count) cambio(s) sin commitear (rama actual: $curBranch)." -ForegroundColor Red
-            Write-Host "       Otra sesion puede estar trabajando en esta carpeta - NO cambio de rama." -ForegroundColor Yellow
-            Write-Host "       Opciones: commitea/stashea esos cambios, o trabaja #$Start en un worktree:" -ForegroundColor Yellow
-            Write-Host "         git worktree add ../$(($repo -split '/')[1])--issue-$Start -b $branchName" -ForegroundColor Yellow
+            Write-Host "  OCUPADO: el working tree tiene $($dirty.Count) cambio(s) sin commitear (rama actual: $curBranch)." -ForegroundColor Yellow
+            Write-Host "       Otra sesion puede estar trabajando aqui - NO cambio de rama; uso un worktree aislado:" -ForegroundColor Yellow
+            New-IssueWorktree
         } elseif ($curBranch -and $curBranch -match '^issue-\d+' -and $curBranch -ne $branchName) {
-            Write-Host "  OCUPADO: esta carpeta esta en la rama '$curBranch' (otro issue en curso)." -ForegroundColor Red
-            Write-Host "       Otra sesion parece activa aqui - NO cambio de rama." -ForegroundColor Yellow
-            Write-Host "       Trabaja #$Start en un worktree:" -ForegroundColor Yellow
-            Write-Host "         git worktree add ../$(($repo -split '/')[1])--issue-$Start -b $branchName" -ForegroundColor Yellow
+            Write-Host "  OCUPADO: esta carpeta esta en la rama '$curBranch' (otro issue en curso)." -ForegroundColor Yellow
+            Write-Host "       Otra sesion parece activa aqui - NO cambio de rama; uso un worktree aislado:" -ForegroundColor Yellow
+            New-IssueWorktree
         } else {
             git rev-parse --verify --quiet $branchName 2>$null | Out-Null
             if ($LASTEXITCODE -eq 0) {

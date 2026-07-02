@@ -64,6 +64,11 @@ matching recipe from the projects-admin references:
      labels, sub-issues). Then CONTINUE WORKING that issue in this session: treat the printed
      context as the task briefing. Always pass `-Branch` when the issue belongs to the current
      repo. `--dry-run` previews without mutating; a CLOSED issue is refused.
+     - **Busy working copy?** If the folder has uncommitted changes or sits on another
+       `issue-*` branch (another session active), `-Branch` does NOT switch — it creates an
+       isolated **git worktree** `../<repo>--issue-<n>` automatically (the official
+       parallel-sessions pattern) and prints `cd <path>`: CONTINUE THE WORK THERE. After the
+       PR merges, clean it with `git worktree remove <path>`.
      - **Too big for one PR?** Break it down FIRST with
        `scripts/Board-Breakdown.ps1 -Parent <issueNum> -Tasks "child A", "child B"` — creates
        native sub-issues (Sub-issues progress fills itself) — then start one child. Use a
