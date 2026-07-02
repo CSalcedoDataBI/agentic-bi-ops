@@ -104,7 +104,7 @@ matching recipe from the projects-admin references:
         If no reviewer is available at all, an explicit self-review of `gh pr diff <n>` is
         obligatory before merging — and say so honestly in your report.
      d. Only after the gate passes: `gh pr merge <n> --squash --delete-branch` — the merge closes
-        the issue, which moves the board item from QA to **Done** (close→Done + `Board-Fill`).
+        the issue, which moves the board item from In Review to **Done** (close→Done + `Board-Fill`).
      - Optional, once per repo: `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset`
        installs a ruleset requiring PRs into the default branch (admins keep bypass — say so).
   - If many pending items lack Priority/Size, suggest `/board fill` to triage them first.
