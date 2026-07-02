@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a new capability or improvement
+labels: ["feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What need or friction does this address? Real examples help.
+      placeholder: Every time I ... I have to ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: What should the tool do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: Other ways to solve it, and why they fall short.
+    validations:
+      required: false

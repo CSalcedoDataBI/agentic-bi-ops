@@ -1,0 +1,28 @@
+name: Task
+description: A concrete piece of work with a clear definition of done
+labels: ["task"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What must be true when this task is finished?
+      placeholder: The X supports Y / the doc explains Z...
+    validations:
+      required: true
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of done
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / links
+      placeholder: Related issues, docs, decisions.
+    validations:
+      required: false

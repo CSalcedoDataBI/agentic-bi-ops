@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.1] - 2026-07-01
+### Added
+- **M5.2 — `/board templates`** (`scripts/Install-RepoTemplates.ps1` + `presets/templates/`):
+  installs issue forms (`bug`/`feature`/`task` + `config.yml`) and a `PULL_REQUEST_TEMPLATE.md`
+  with the mandatory `Closes #` slot into the current repo's `.github/`. Ensures the labels the
+  forms reference exist (GitHub silently ignores a form label that doesn't) — `bug` feeds the
+  Board-Fill Type detection directly. Existing files are skipped unless `-Force`; the script
+  only touches the working copy, committing goes through the normal (PR) flow. Installed on this
+  repo as the first consumer.
+
 ## [0.8.0] - 2026-07-01
 ### Added
 - **M5.1 — Review gate before merge** (`scripts/Board-ReviewGate.ps1` + work step 5b): no PR

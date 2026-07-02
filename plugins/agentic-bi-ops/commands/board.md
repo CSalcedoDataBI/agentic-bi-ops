@@ -19,6 +19,7 @@ for the user to pick (they can answer with just the number):
 8. field            → crear campos o llenar un campo en todos los items por regla
 9. bulk             → mover/cerrar/etiquetar muchos items a la vez
 10. automate        → instalar CI que sincroniza el board solo
+11. templates       → instalar issue forms (bug/feature/task) + PR template en el repo actual
 ```
 
 When they answer (number or name), execute that sub-action following the instructions below.
@@ -94,6 +95,15 @@ matching recipe from the projects-admin references:
   - NOTE: which columns a VIEW displays is UI-only — if fields look "empty" on the board page,
     tell the user to click `+` at the right of the view header and enable Priority/Size/Type.
 - **automate** — install the actions/add-to-project CI workflow (references/automation.md)
+- **templates** — install issue forms + PR template into the current repo working copy by running
+  `scripts/Install-RepoTemplates.ps1` (default `-Path .`, repo derived from origin):
+  - Drops `.github/ISSUE_TEMPLATE/{bug,feature,task,config}.yml` and
+    `.github/PULL_REQUEST_TEMPLATE.md` (with the mandatory `Closes #` slot).
+  - Ensures the labels the forms reference exist (`bug`/`feature`/`task`) — GitHub silently
+    ignores a form label that does not exist.
+  - Existing files are SKIPPED (never overwrite a repo's customized templates); `--force`
+    overwrites. The script only touches the working copy — commit through the normal flow
+    (PR when the work is board-tracked).
 
 ALWAYS END WITH THE BOARD LINK (mandatory): every response about a board operation — plan,
 result, or error — must end with the board URL so the user can open it in one click:

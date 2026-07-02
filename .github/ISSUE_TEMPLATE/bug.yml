@@ -1,0 +1,36 @@
+name: Bug report
+description: Something is broken or behaves wrong
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see? Paste the exact error/output if there is one.
+      placeholder: The command X printed Y / the board showed Z...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run ...
+        2. Then ...
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What should have happened instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / environment
+      placeholder: e.g. plugin 0.8.0, Windows 11, gh 2.62
+    validations:
+      required: false
