@@ -10,18 +10,19 @@ for the user to pick (they can answer with just the number):
 ¿Qué quieres hacer con el board?
 
 1. work             → ver qué issues están pendientes (en todos los boards) y empezar a trabajar uno
-2. fill --dry-run   → ver qué gaps hay (assignees, Status, Priority, Size, Type) SIN cambiar nada
-3. fill --auto      → llenar todos los gaps automáticamente (convierte drafts a issues reales)
-4. fill             → llenar gaps pidiendo confirmación antes de ejecutar
-5. init             → crear/configurar el board de este repo
-6. add <url>        → añadir un issue/PR al board
-7. move             → cambiar el Status de un item
-8. field            → crear campos o llenar un campo en todos los items por regla
-9. bulk             → mover/cerrar/etiquetar muchos items a la vez
-10. automate        → instalar CI que sincroniza el board solo
-11. templates       → instalar issue forms (bug/feature/task) + PR template en el repo actual
-12. labels          → aplicar la taxonomia de labels (bug/docs/refactor/chore/blocked/...) al repo
-13. update          → publicar un status update del board (progreso de alto nivel)
+2. plan             → planificar (o tomar un plan existente) y convertir sus tareas en epic + issues
+3. fill --dry-run   → ver qué gaps hay (assignees, Status, Priority, Size, Type) SIN cambiar nada
+4. fill --auto      → llenar todos los gaps automáticamente (convierte drafts a issues reales)
+5. fill             → llenar gaps pidiendo confirmación antes de ejecutar
+6. init             → crear/configurar el board de este repo
+7. add <url>        → añadir un issue/PR al board
+8. move             → cambiar el Status de un item
+9. field            → crear campos o llenar un campo en todos los items por regla
+10. bulk            → mover/cerrar/etiquetar muchos items a la vez
+11. automate        → instalar CI que sincroniza el board solo
+12. templates       → instalar issue forms (bug/feature/task) + PR template en el repo actual
+13. labels          → aplicar la taxonomia de labels (bug/docs/refactor/chore/blocked/...) al repo
+14. update          → publicar un status update del board (progreso de alto nivel)
 ```
 
 When they answer (number or name), execute that sub-action following the instructions below.
@@ -81,6 +82,21 @@ matching recipe from the projects-admin references:
      - Optional, once per repo: `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset`
        installs a ruleset requiring PRs into the default branch (admins keep bypass — say so).
   - If many pending items lack Priority/Size, suggest `/board fill` to triage them first.
+- **plan** — turn a plan into a tracked epic + native sub-issues on the board. A plan is NOT
+  done when a markdown file is written — it is done when its tasks are issues. Two entry modes
+  (ask which one if unclear):
+  1. **Plan now (interactive):** gather the goal and the SUBSTANTIAL tasks conversationally
+     (tiny steps stay as checkboxes in the epic description, not issues). Show the proposed
+     epic title + task list and WAIT for the user's approval.
+  2. **Plan exists:** read the plan document (or plan-mode output) the user points to, extract
+     goal + substantial tasks, show the same proposal, and WAIT for approval. Link the doc in
+     the description ONLY as a full `https://github.com/<owner>/<repo>/blob/<branch>/<path>`
+     URL on a PUSHED ref — relative paths render broken in issues.
+  Then run `scripts/Board-Plan.ps1 -Title "plan: <feature>" -Tasks "A","B",... -Description "..."`
+  — it ensures plan/plan-task labels, creates the epic, reuses Board-Breakdown for NATIVE
+  sub-issues, resolves the repo board with Resolve-Board (never a duplicate), and registers
+  epic + children. Suggest `/board fill` for Priority/Size/Type and `/board work` to start the
+  first task. Issues are created ONLY in the current repo (origin) — never elsewhere.
 - **init** — create a board and fill it coherently: title, short description, README, and link the
   repo (references/board-ops.md). Tell the user the two UI-only items (Default repository pick, View
   name/layout) need one click in settings — do not claim they were set.
