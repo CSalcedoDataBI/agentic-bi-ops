@@ -105,9 +105,15 @@ $copilotRequested = $false
 try {
     gh api "repos/$Repo/pulls/$PR/requested_reviewers" -X POST `
         -f "reviewers[]=copilot-pull-request-reviewer[bot]" 2>$null | Out-Null
-    $copilotRequested = $true
-    Write-Host "  OK  Review de Copilot solicitado" -ForegroundColor Green
-} catch {
+    # The POST can return 200 WITHOUT adding the bot (Copilot code review not enabled for the
+    # account). Verify the reviewer is really pending before committing to the review wait.
+    $pending = gh pr view $PR --repo $Repo --json reviewRequests -q '.reviewRequests[].login' 2>$null
+    if ($pending -match '(?i)copilot') {
+        $copilotRequested = $true
+        Write-Host "  OK  Review de Copilot solicitado (reviewer pendiente confirmado)" -ForegroundColor Green
+    }
+} catch { }
+if (-not $copilotRequested) {
     Write-Host "  WARN Copilot code review no disponible en esta cuenta/repo." -ForegroundColor DarkYellow
     Write-Host "       Fallback obligatorio: self-review explicito de 'gh pr diff $PR' antes de mergear," -ForegroundColor DarkYellow
     Write-Host "       y si la skill second-opinion esta disponible, usala como segundo revisor." -ForegroundColor DarkYellow
@@ -191,8 +197,9 @@ if ($unresolved -gt 0)                     { $blockers += "$unresolved hilo(s) d
 
 if ($blockers.Count -eq 0) {
     Write-Host "GATE PASSED - seguro mergear (gh pr merge $PR --repo $Repo --squash --delete-branch)." -ForegroundColor Green
-    if (-not $copilotRequested -and $reviews.Count -eq 0) {
-        Write-Host "RECUERDA: sin reviewer disponible el self-review de 'gh pr diff' es OBLIGATORIO antes del merge." -ForegroundColor Yellow
+    if ($reviews.Count -eq 0) {
+        Write-Host "RECUERDA: llegaron 0 reviews (solicitud aceptada no garantiza review) -" -ForegroundColor Yellow
+        Write-Host "el self-review de 'gh pr diff $PR' es OBLIGATORIO antes del merge." -ForegroundColor Yellow
     }
     exit 0
 } else {
