@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.1] - 2026-07-02
+### Fixed
+- **Board-Fill.ps1 cross-account** (#75): the script pinned `GITHUB_TOKEN_PERSONAL`
+  unconditionally, so `/board fill` could not operate on a business-account board even with
+  `$env:GH_TOKEN` pre-set. Now takes a `-TokenVar` parameter (default `GITHUB_TOKEN_PERSONAL`)
+  and respects a pre-set `$env:GH_TOKEN` instead of clobbering it — same contract as
+  `Board-Work.ps1`.
+- **Board-Fill.ps1 silent failure** (#75): when the project or repo failed to resolve (wrong
+  account / missing `project` scope / bad number), the script sailed on and reported "Board
+  completo. Sin gaps detectados." Now it aborts loudly with a non-zero exit and a clear message.
+
 ## [0.10.0] - 2026-07-02
 ### Added
 - **M2.2 — TMDL diff review** (`scripts/Tmdl-DiffReview.ps1` + `tmdl-review` skill): parses a
