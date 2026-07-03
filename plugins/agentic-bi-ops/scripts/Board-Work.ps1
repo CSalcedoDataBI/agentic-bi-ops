@@ -28,11 +28,13 @@
          Batch-start SEVERAL independent issues at once. For each issue it
          runs the same start logic as mode 3 (In Progress + assign + claim)
          but ALWAYS in its own isolated git worktree (../<repo>--issue-<n>),
-         each branched off a fresh origin/main. Leaves one ready worktree per
-         issue for a separate Claude session to pick up (the launcher lives in
-         the -Parallel companion, tracked separately). -DryRun plans the whole
-         batch without mutating the board or touching git. Blocked / claimed /
-         closed issues are skipped with a reason, never aborting the batch.
+         each branched off a fresh origin/main. Add -Launch to open one visible
+         Claude session per worktree (a Windows Terminal tab when 'wt' exists,
+         else a standalone pwsh window), each briefed to work its own issue
+         end-to-end. -DryRun plans the whole batch (and previews the launch
+         commands) without mutating the board, touching git, or spawning
+         anything. Blocked / claimed / closed issues are skipped with a reason,
+         never aborting the batch.
 
     Same conventions as Board-Fill.ps1: token from the Windows USER registry
     (unless GH_TOKEN is already set by gh-account), pure-ASCII source, and
@@ -58,6 +60,12 @@
 .PARAMETER Parallel
     One or more issue numbers to batch-start, each in its own worktree
     (requires -ProjectNum). Mutually exclusive with -Start / -ToReview.
+
+.PARAMETER Launch
+    With -Parallel: after starting each worktree, spawn one visible Claude
+    session per worktree (Windows Terminal tab, or a pwsh window as fallback),
+    each briefed to work its own issue to a PR + review gate. With -DryRun it
+    only previews the launch commands.
 
 .PARAMETER ToReview
     Issue number to move into the "In Review" Status column (requires
@@ -87,6 +95,8 @@
     .\Board-Work.ps1 -ProjectNum 13 -Start 12 -Branch
     .\Board-Work.ps1 -ProjectNum 13 -Parallel 12,14,15 -DryRun
     .\Board-Work.ps1 -ProjectNum 13 -Parallel 12,14,15
+    .\Board-Work.ps1 -ProjectNum 13 -Parallel 12,14,15 -Launch
+    .\Board-Work.ps1 -ProjectNum 13 -Parallel 12,14,15 -Launch -DryRun
     .\Board-Work.ps1 -ProjectNum 13 -ToReview 12
 #>
 [CmdletBinding()]
@@ -97,6 +107,7 @@ param(
     [int]   $ProjectNum = 0,
     [int]   $Start      = 0,
     [int[]] $Parallel   = @(),
+    [switch]$Launch,
     [int]   $ToReview   = 0,
     [switch]$DryRun,
     [switch]$Branch,
@@ -125,12 +136,20 @@ function Test-Pending($item) {
 # (git rev-parse --git-common-dir), inside .agentic-bi-ops/ (gitignored).
 # Session identity = the PARENT process of this script (the long-lived Claude/host
 # process), because the script's own PID dies as soon as it returns.
-function Get-SessionRegistryPath {
+# The shared .agentic-bi-ops/ dir (registry + briefings) lives next to the MAIN
+# clone's .git so every worktree of the repo sees the same one.
+function Get-AbiosDir {
     $common = git rev-parse --git-common-dir 2>$null
     if (-not $common) { return $null }
     try { $root = Split-Path (Resolve-Path $common).Path -Parent } catch { return $null }
     $dir = Join-Path $root ".agentic-bi-ops"
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+    return $dir
+}
+
+function Get-SessionRegistryPath {
+    $dir = Get-AbiosDir
+    if (-not $dir) { return $null }
     return (Join-Path $dir "sessions.json")
 }
 
@@ -474,6 +493,79 @@ query($o:String!, $r:String!, $n:Int!) {
 }
 
 # ==============================================================================
+# Parallel session launcher (mode 5 -Launch): one visible Claude session per
+# worktree, each briefed to work its own issue end-to-end.
+# ==============================================================================
+
+# The one-line first message a spawned Claude session receives. Pure -> testable.
+function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [string]$workPath) {
+    return ("Pick up GitHub issue #$issueNum in $repo. It is already In Progress and claimed, " +
+            "on branch $branch in this worktree ($workPath). Steps: " +
+            "(1) read it with: gh issue view $issueNum --repo $repo ; " +
+            "(2) implement it fully in this worktree; " +
+            "(3) open the PR with: plugins/agentic-bi-ops/scripts/New-BoardPR.ps1 -Issue $issueNum ; " +
+            "(4) pass the review gate with Board-ReviewGate.ps1, address feedback, then squash-merge. " +
+            "Work ONLY this issue - do not touch other worktrees or issues.")
+}
+
+# Build the exact launch command for a worktree session. Returns an object
+# { launcher, args, briefingFile } WITHOUT spawning - pure enough to unit-test
+# and to preview under -DryRun. Windows Terminal tab when 'wt' exists (grouped in
+# a named window), else a standalone pwsh window. The briefing is passed via a
+# file (written by the caller) so no long/quoted text ever hits the command line.
+function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel") {
+    $tabTitle  = "issue-$issueNum"
+    $claudeCmd = "claude (Get-Content -Raw -LiteralPath '$briefingFile')"
+    if (Get-Command wt -ErrorAction SilentlyContinue) {
+        return [PSCustomObject]@{
+            launcher     = "wt"
+            args         = @('-w', $windowName, 'new-tab', '--title', $tabTitle,
+                             '--startingDirectory', $workPath, 'pwsh', '-NoExit', '-Command', $claudeCmd)
+            briefingFile = $briefingFile
+            usesWt       = $true
+        }
+    }
+    return [PSCustomObject]@{
+        launcher     = "pwsh"
+        args         = @('-NoExit', '-Command', $claudeCmd)
+        briefingFile = $briefingFile
+        usesWt       = $false
+    }
+}
+
+# Spawn (or -Preview) ONE visible Claude session for a started worktree.
+function Start-WorktreeSession {
+    param(
+        [int]$IssueNum, [string]$Repo, [string]$Branch, [string]$WorkPath,
+        [switch]$Preview
+    )
+    $abios = Get-AbiosDir
+    $briefingFile = if ($abios) { Join-Path $abios "briefing-$IssueNum.txt" } else { Join-Path $WorkPath "briefing-$IssueNum.txt" }
+    $plan  = Build-WorktreeLaunch $IssueNum $WorkPath $briefingFile
+
+    if ($Preview) {
+        Write-Host ("  [preview] #{0}: {1} {2}" -f $IssueNum, $plan.launcher, ($plan.args -join ' ')) -ForegroundColor Gray
+        return $plan
+    }
+
+    if (-not $WorkPath -or -not (Test-Path $WorkPath)) {
+        Write-Host "  WARN #${IssueNum}: worktree '$WorkPath' no existe - no se lanza sesion." -ForegroundColor DarkYellow
+        return $null
+    }
+    # Persist the briefing so the spawned session reads it without command-line quoting.
+    Set-Content -LiteralPath $briefingFile -Value (Get-SessionBriefing $IssueNum $Repo $Branch $WorkPath) -Encoding UTF8
+    try {
+        if ($plan.usesWt) { Start-Process $plan.launcher -ArgumentList $plan.args | Out-Null }
+        else              { Start-Process $plan.launcher -ArgumentList $plan.args -WorkingDirectory $WorkPath | Out-Null }
+        $how = if ($plan.usesWt) { "WT tab 'issue-$IssueNum'" } else { "ventana pwsh" }
+        Write-Host ("  OK  #{0}: sesion Claude lanzada ({1}) en {2}" -f $IssueNum, $how, $WorkPath) -ForegroundColor Green
+    } catch {
+        Write-Host "  FAIL #${IssueNum}: no se pudo lanzar la sesion: $_" -ForegroundColor Red
+    }
+    return $plan
+}
+
+# ==============================================================================
 # MODE 1: -ListBoards  -> every board with its pending count
 # ==============================================================================
 if ($ListBoards) {
@@ -720,7 +812,7 @@ if ($Parallel.Count -gt 0) {
         Write-Host ("DRY-RUN: {0} se iniciarian, {1} se saltarian. Ningun cambio hecho." -f $planned.Count, $skipped.Count) -ForegroundColor Gray
     } else {
         Write-Host ("Iniciados: {0} / {1}. Worktrees listos, uno por issue." -f $started.Count, $queue.Count) -ForegroundColor Yellow
-        if ($started.Count -gt 0) {
+        if ($started.Count -gt 0 -and -not $Launch) {
             Write-Host ""
             Write-Host "Cada worktree tiene su rama y su claim. Trabaja cada issue en su carpeta:" -ForegroundColor Cyan
             foreach ($r in $started) {
@@ -728,9 +820,34 @@ if ($Parallel.Count -gt 0) {
             }
             Write-Host ""
             Write-Host "Al terminar cada uno: PR con 'Closes #<num>' + review gate (Board-ReviewGate.ps1)." -ForegroundColor DarkGray
-            Write-Host "El lanzador de sesiones Claude por worktree se agrega en la tarea companion (#100)." -ForegroundColor DarkGray
+            Write-Host "Agrega -Launch para abrir una sesion Claude por worktree automaticamente." -ForegroundColor DarkGray
         }
     }
+
+    # -- Launch: one visible Claude session per worktree (-Launch) --------------
+    if ($Launch) {
+        Write-Host ""
+        if ($DryRun) {
+            Write-Host "----- LAUNCH (preview, -DryRun no lanza nada) -----" -ForegroundColor Cyan
+            foreach ($r in $planned) {
+                $repoName    = ($r.repo -split '/')[1]
+                $previewPath = Join-Path (Split-Path (Get-Location) -Parent) "$repoName--issue-$($r.issue)"
+                Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $previewPath -Preview | Out-Null
+            }
+        } else {
+            Write-Host "----- LANZANDO SESIONES CLAUDE -----" -ForegroundColor Cyan
+            $launched = 0
+            foreach ($r in $started) {
+                if ($r.workPath) {
+                    Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $r.workPath | Out-Null
+                    $launched++
+                }
+            }
+            Write-Host ""
+            Write-Host ("Lanzadas: {0} sesion(es). Cada una trabaja su issue hasta el PR + review gate." -f $launched) -ForegroundColor Yellow
+        }
+    }
+
     Write-Host ""
     Write-Host "Board: $boardUrl" -ForegroundColor Cyan
     exit 0
