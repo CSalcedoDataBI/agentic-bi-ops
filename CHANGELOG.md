@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.14.1] - 2026-07-03
+### Added
+- **skills-audit passive Stop hook** (#95, Phase 2): `scripts/SkillAudit-StopHook.ps1` is an
+  OPT-IN Claude Stop hook that runs a fast static audit of the current repo's project skills and,
+  if there are findings, appends one suggestion line to `.agentic-bi-ops/skill-suggestions.jsonl`
+  (gitignored, local) nudging you to run `/skills audit`. Suggest-only: it never opens an issue,
+  edits a skill, blocks, or throws — the human stays in the loop. Wiring in
+  `skills/skills-audit/references/stop-hook.md`. Not enabled by default.
+
 ## [0.14.0] - 2026-07-03
 ### Added
 - **skills-ops — skill lifecycle management module** (#87): manage Agent Skills end to end.
