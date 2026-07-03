@@ -6,7 +6,7 @@
     {
       "name": "agentic-bi-ops",
       "source": "./plugins/agentic-bi-ops",
-      "description": "Cross-account GitHub Projects & issues governance: gh-account, projects-admin, abios-feedback, /board."
+      "description": "Cross-account GitHub Projects & issues governance plus a skills-ops lifecycle module: gh-account, projects-admin, abios-feedback, skills-organize, skills-audit, skills-bootstrap, /board, /scan, /skills."
     }
   ]
 }

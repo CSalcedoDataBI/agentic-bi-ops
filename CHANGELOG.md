@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.14.0] - 2026-07-03
+### Added
+- **skills-ops — skill lifecycle management module** (#87): manage Agent Skills end to end.
+  - **`Get-SkillInventory.ps1`** (#88): read-only inventory across the 3 scopes
+    (plugin/personal/project) → normalized JSON with a description lint (the routing surface),
+    a budget proxy for the `doctor` health view (1536-char cap), monorepo project inference,
+    misplaced detection (knows `.claude/skills` and `plugins/*/skills` canonical layouts), and
+    near-duplicate flagging by keyword Jaccard.
+  - **`skills-organize`** (#89, #90): report mode (catalog + health) and reorganize mode
+    (`Move-SkillsLayout.ps1`) that relocates scattered `SKILL.md` into
+    `.claude/skills/<project>/<skill>/` via `git mv` — dry-run default, clean-tree guard,
+    `skills-index.json`, exact revert. Never touches the plugin cache or `~/.claude/skills`.
+  - **`skills-audit`** (#91, #92): `Invoke-SkillAudit.ps1` classifies failures;
+    `Resolve-SkillOwner.ps1` routes each to its OWNING repo (the tool's board for its skills,
+    the project's board for project skills, local-only for third-party) so nothing leaks into
+    the private project in use. Sanitized filing behind a human gate, `guard-no-private.ps1`
+    backstop, plus an on-demand runtime trigger-eval loop.
+  - **`skills-bootstrap`** (#93): `Get-SkillGaps.ps1` detects missing recommended skills
+    (skill-creator, writing-skills, skill-improver, second-opinion) without duplicating an
+    installed one; `Install-SkillFromRepo.ps1` clean-clones each gap preserving the LICENSE.
+  - **`/skills`** command (#94): menu routing to organize / audit / bootstrap.
+  - 24 Pester tests over temp fixtures. Design spec:
+    `docs/superpowers/specs/2026-07-03-skills-ops-design.md`.
+
 ## [0.13.1] - 2026-07-02
 ### Changed
 - **Rename Status `Todo` → `Backlog`** (#84): "Todo" (English "to-do") is a false friend with the
