@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Show pending work across boards and start working an issue.
+    Show pending work across boards and start working an issue (single or parallel).
 
 .DESCRIPTION
-    Three modes, designed for the /board work flow:
+    Modes, designed for the /board work flow:
 
       1. -ListBoards [-Repo <owner/name>]
          Lists boards with their pending count (items in Backlog or no Status),
@@ -23,6 +23,16 @@
          assigns the owner, and prints the full issue context (labels,
          body, sub-issues) so the agent can begin working it in-session.
          Supports -DryRun to preview without mutating.
+
+      5. -ProjectNum <n> -Parallel <issueNums>
+         Batch-start SEVERAL independent issues at once. For each issue it
+         runs the same start logic as mode 3 (In Progress + assign + claim)
+         but ALWAYS in its own isolated git worktree (../<repo>--issue-<n>),
+         each branched off a fresh origin/main. Leaves one ready worktree per
+         issue for a separate Claude session to pick up (the launcher lives in
+         the -Parallel companion, tracked separately). -DryRun plans the whole
+         batch without mutating the board or touching git. Blocked / claimed /
+         closed issues are skipped with a reason, never aborting the batch.
 
     Same conventions as Board-Fill.ps1: token from the Windows USER registry
     (unless GH_TOKEN is already set by gh-account), pure-ASCII source, and
@@ -45,6 +55,10 @@
 .PARAMETER Start
     Issue number to start working (requires -ProjectNum).
 
+.PARAMETER Parallel
+    One or more issue numbers to batch-start, each in its own worktree
+    (requires -ProjectNum). Mutually exclusive with -Start / -ToReview.
+
 .PARAMETER ToReview
     Issue number to move into the "In Review" Status column (requires
     -ProjectNum). The work flow calls this after opening the PR: the change is
@@ -52,13 +66,14 @@
     "In Review" option.
 
 .PARAMETER DryRun
-    With -Start / -ToReview: print what would change without executing.
+    With -Start / -Parallel / -ToReview: print what would change without executing.
 
 .PARAMETER Branch
     With -Start: also create and checkout a work branch issue-<num>-<slug>
     (only when the current directory is a clone of the issue's repo).
     Finishing the work MUST then go through a PR with "Closes #<num>" so
     GitHub fills the Linked pull requests column on the board by itself.
+    -Parallel always creates a branch (in a worktree), so -Branch is implied there.
 
 .PARAMETER TokenVar
     Windows USER env var holding the PAT. Defaults to GITHUB_TOKEN_PERSONAL;
@@ -69,7 +84,9 @@
     .\Board-Work.ps1 -ListBoards -Repo CSalcedoDataBI/agentic-bi-ops
     .\Board-Work.ps1 -ProjectNum 13
     .\Board-Work.ps1 -ProjectNum 13 -Start 12 -DryRun
-    .\Board-Work.ps1 -ProjectNum 13 -Start 12
+    .\Board-Work.ps1 -ProjectNum 13 -Start 12 -Branch
+    .\Board-Work.ps1 -ProjectNum 13 -Parallel 12,14,15 -DryRun
+    .\Board-Work.ps1 -ProjectNum 13 -Parallel 12,14,15
     .\Board-Work.ps1 -ProjectNum 13 -ToReview 12
 #>
 [CmdletBinding()]
@@ -79,6 +96,7 @@ param(
     [string]$Repo     = "",
     [int]   $ProjectNum = 0,
     [int]   $Start      = 0,
+    [int[]] $Parallel   = @(),
     [int]   $ToReview   = 0,
     [switch]$DryRun,
     [switch]$Branch,
@@ -145,6 +163,314 @@ function Write-SessionRegistryEntry([int]$issueNum, [string]$branch, [string]$wo
         started    = (Get-Date -Format "yyyy-MM-dd HH:mm")
     }
     $entries | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
+}
+
+# ==============================================================================
+# Reusable start helpers (shared by -Start mode 3 and -Parallel mode 5)
+# ==============================================================================
+
+# Work branch name: issue-<num>-<slug-from-title>. Pure -> unit-testable.
+function Get-IssueSlugBranch([int]$num, [string]$title) {
+    $slug = ($title.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+    if ($slug.Length -gt 40) {
+        $slug = $slug.Substring(0, 40)
+        if ($slug.Contains('-')) { $slug = $slug.Substring(0, $slug.LastIndexOf('-')) }  # no cortar palabras
+        $slug = $slug.Trim('-')
+    }
+    return "issue-$num-$slug"
+}
+
+# Resolve the board id + Status field + "In Progress" option once, reuse per issue.
+function Resolve-BoardStatus([string]$owner, [int]$projectNum) {
+    $projData = gh api graphql -f query='
+query($owner:String!, $num:Int!) {
+  user(login:$owner) {
+    projectV2(number:$num) {
+      id
+      fields(first:30) {
+        nodes {
+          ... on ProjectV2SingleSelectField { id name options { id name } }
+        }
+      }
+    }
+  }
+}' -F "owner=$owner" -F "num=$projectNum" | ConvertFrom-Json
+
+    $projectId  = $projData.data.user.projectV2.id
+    if (-not $projectId) { throw "Board #$projectNum no encontrado para $owner." }
+    $statusNode = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name -eq "Status" }
+    $inProgId   = ($statusNode.options | Where-Object { $_.name -eq "In Progress" }).id
+    if (-not $inProgId) { throw "El board #$projectNum no tiene la opcion 'In Progress' en Status." }
+    return [PSCustomObject]@{ projectId = $projectId; statusNode = $statusNode; inProgId = $inProgId }
+}
+
+# Find the board item for an issue number, with one retry (eventual consistency).
+function Get-BoardItem([string]$projectId, [int]$issueNum) {
+    foreach ($attempt in 1..2) {
+        $itemsData = gh api graphql -f query='
+query($proj:ID!) {
+  node(id:$proj) {
+    ... on ProjectV2 {
+      items(first:100) {
+        nodes {
+          id
+          fieldValues(first:20) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                field { ... on ProjectV2SingleSelectField { name } }
+                name
+              }
+            }
+          }
+          content {
+            __typename
+            ... on Issue {
+              number title state url
+              assignees(first:5) { nodes { login } }
+              repository { nameWithOwner }
+            }
+          }
+        }
+      }
+    }
+  }
+}' -F "proj=$projectId" | ConvertFrom-Json
+
+        $item = $itemsData.data.node.items.nodes |
+                Where-Object { $_.content.__typename -eq "Issue" -and $_.content.number -eq $issueNum } |
+                Select-Object -First 1
+        if ($item) { return $item }
+        if ($attempt -eq 1) {
+            Write-Host "  (issue #$issueNum aun no visible en el board - reintentando en 4s...)" -ForegroundColor DarkGray
+            Start-Sleep -Seconds 4
+        }
+    }
+    return $null
+}
+
+# Return the list of reasons this issue is blocked (empty array => not blocked).
+function Get-IssueBlockers([string]$repo, [int]$issueNum) {
+    $blockers = @()
+    try {
+        $issueLabels = @((gh issue view $issueNum --repo $repo --json labels | ConvertFrom-Json).labels.name)
+        if ($issueLabels -contains "blocked") { $blockers += "label 'blocked' presente" }
+    } catch { }
+    # Native blocked-by dependencies (best-effort: API may not exist for the account)
+    try {
+        $deps = gh api "repos/$repo/issues/$issueNum/dependencies/blocked_by" 2>$null | ConvertFrom-Json
+        foreach ($d in @($deps | Where-Object { $_.state -eq "open" })) {
+            $blockers += "bloqueado por #$($d.number) '$($d.title)' (abierto)"
+        }
+    } catch { }
+    return $blockers
+}
+
+# Create an isolated worktree ../<repo>--issue-<n> for a branch. Returns the path
+# or $null. $baseRef (e.g. origin/main) is used only when creating a NEW branch:
+# parallel starts each independent issue off a fresh main; single start passes ""
+# to keep branching off the current HEAD.
+function New-IssueWorktree([string]$repo, [int]$issueNum, [string]$branchName, [string]$baseRef = "") {
+    $repoName = ($repo -split '/')[1]
+    $wtPath   = Join-Path (Split-Path (Get-Location) -Parent) "$repoName--issue-$issueNum"
+    # Reuse: is the branch already checked out in some worktree?
+    $wtList = git worktree list --porcelain 2>$null | Out-String
+    if ($wtList -match "(?m)^worktree (.+)\r?\n(?:.*\r?\n)?branch refs/heads/$([regex]::Escape($branchName))") {
+        $existingPath = $Matches[1]
+        Write-Host "  OK  Worktree ya existia para la rama: $existingPath" -ForegroundColor Green
+        Write-Host "       TRABAJA EL ISSUE ALLI: cd `"$existingPath`"" -ForegroundColor Cyan
+        return $existingPath
+    }
+    if (Test-Path $wtPath) {
+        Write-Host "  WARN la carpeta $wtPath existe pero no es worktree de $branchName - resuelvelo manualmente." -ForegroundColor DarkYellow
+        return $null
+    }
+    git rev-parse --verify --quiet $branchName 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0)     { git worktree add $wtPath $branchName 2>&1 | Out-Null }
+    elseif ($baseRef)            { git worktree add $wtPath -b $branchName $baseRef 2>&1 | Out-Null }
+    else                         { git worktree add $wtPath -b $branchName 2>&1 | Out-Null }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  OK  Worktree creado: $wtPath (rama $branchName)" -ForegroundColor Green
+        Write-Host "       TRABAJA EL ISSUE ALLI: cd `"$wtPath`"" -ForegroundColor Cyan
+        Write-Host "       Al mergear el PR, limpia con: git worktree remove `"$wtPath`"" -ForegroundColor DarkGray
+        return $wtPath
+    }
+    Write-Host "  FAIL no se pudo crear el worktree para #$issueNum - crea la rama manualmente: git checkout -b $branchName" -ForegroundColor Red
+    return $null
+}
+
+# Start ONE issue: find item, run safety checks, and (unless -DryRunStart) move it
+# to In Progress + assign + claim + optionally branch/worktree. Writes progress and
+# returns a structured result so callers (single or batch) can decide what to print
+# and how to exit. -PreferWorktree forces an isolated worktree (batch); otherwise the
+# in-place-vs-worktree decision matches the classic single-start behaviour.
+function Invoke-IssueStart {
+    param(
+        [int]    $IssueNum,
+        [object] $Ctx,
+        [string] $Owner,
+        [switch] $MakeBranch,
+        [switch] $PreferWorktree,
+        [string] $BaseRef = "",
+        [switch] $DryRunStart,
+        [switch] $IgnoreBlocked,
+        [switch] $TakeOver
+    )
+    $result = [PSCustomObject]@{
+        issue = $IssueNum; title = ""; repo = ""; branch = ""; workPath = ""
+        started = $false; dryRun = [bool]$DryRunStart; skipped = ""
+    }
+
+    $item = Get-BoardItem $Ctx.projectId $IssueNum
+    if (-not $item) {
+        $result.skipped = "no esta en el board (agregalo con /board add)"
+        Write-Host "  SKIP #${IssueNum}: $($result.skipped)" -ForegroundColor DarkYellow
+        return $result
+    }
+
+    $result.title = $item.content.title
+    $repo         = $item.content.repository.nameWithOwner
+    $result.repo  = $repo
+    $currentStatus = ($item.fieldValues.nodes | Where-Object { $_.field.name -eq "Status" }).name
+    if (-not $currentStatus) { $currentStatus = "(vacio)" }
+
+    if ($item.content.state -eq "CLOSED") {
+        $result.skipped = "CERRADO (reabre con gh issue reopen $IssueNum --repo $repo)"
+        Write-Host "  SKIP #${IssueNum}: $($result.skipped)" -ForegroundColor Red
+        return $result
+    }
+
+    if (-not $IgnoreBlocked) {
+        $blockers = @(Get-IssueBlockers $repo $IssueNum)
+        if ($blockers.Count -gt 0) {
+            $result.skipped = "BLOQUEADO: " + ($blockers -join "; ")
+            Write-Host "  SKIP #${IssueNum}: bloqueado (usa -IgnoreBlocked si es falso positivo):" -ForegroundColor Red
+            $blockers | ForEach-Object { Write-Host "         - $_" -ForegroundColor Red }
+            return $result
+        }
+    }
+
+    $assignees = @($item.content.assignees.nodes.login)
+    if (-not $TakeOver -and $currentStatus -eq "In Progress" -and $assignees.Count -gt 0) {
+        $result.skipped = "OCUPADO (In Progress, asignado a $($assignees -join ', '))"
+        Write-Host "  SKIP #${IssueNum}: $($result.skipped) - otra sesion probablemente lo trabaja." -ForegroundColor Red
+        $lastClaim = gh api "repos/$repo/issues/$IssueNum/comments" --jq '[.[] | select(.body | startswith("[abios-claim]"))] | last | .body' 2>$null
+        if ($lastClaim -and $lastClaim -ne "null") { Write-Host "         Ultimo claim: $lastClaim" -ForegroundColor Yellow }
+        Write-Host "         Re-ejecuta con -TakeOver si la sesion esta muerta o quieres retomarlo." -ForegroundColor Yellow
+        return $result
+    }
+
+    $branchName    = Get-IssueSlugBranch $IssueNum $item.content.title
+    $result.branch = $branchName
+
+    Write-Host ("  #{0} {1}" -f $IssueNum, $item.content.title) -ForegroundColor Yellow
+    Write-Host ("       Repo: {0} | Status actual: {1} -> In Progress | Assignee -> {2}" -f $repo, $currentStatus, $Owner) -ForegroundColor DarkGray
+    if ($MakeBranch) { Write-Host "       Rama de trabajo: $branchName" -ForegroundColor DarkGray }
+
+    if ($DryRunStart) {
+        Write-Host "  #${IssueNum}: DRY-RUN - nada ejecutado." -ForegroundColor Gray
+        return $result
+    }
+
+    # -- Execute: Status -> In Progress -----------------------------------------
+    gh api graphql -f query='
+mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
+  updateProjectV2ItemFieldValue(input:{
+    projectId:$proj, itemId:$item, fieldId:$field,
+    value:{singleSelectOptionId:$opt}
+  }) { projectV2Item { id } }
+}' -f "proj=$($Ctx.projectId)" -f "item=$($item.id)" -f "field=$($Ctx.statusNode.id)" -f "opt=$($Ctx.inProgId)" | Out-Null
+    Write-Host "  OK  Status -> In Progress" -ForegroundColor Green
+
+    # -- Execute: assign owner --------------------------------------------------
+    try {
+        gh api "repos/$repo/issues/$IssueNum/assignees" -X POST -F "assignees[]=$Owner" | Out-Null
+        Write-Host "  OK  Assignee -> $Owner" -ForegroundColor Green
+    } catch {
+        Write-Host "  WARN no se pudo asignar: $_" -ForegroundColor DarkYellow
+    }
+
+    # -- Execute: claim fingerprint (multi-session diagnostics) -----------------
+    $claimNote = if ($TakeOver) { "TAKEOVER" } else { "claim" }
+    $fingerprint = "[abios-claim] $claimNote por sesion Claude en $env:COMPUTERNAME (PID $PID) - $(Get-Date -Format 'yyyy-MM-dd HH:mm') - rama $branchName"
+    try {
+        gh issue comment $IssueNum --repo $repo --body $fingerprint | Out-Null
+        Write-Host "  OK  Claim registrado ($claimNote)" -ForegroundColor Green
+    } catch {
+        Write-Host "  WARN no se pudo registrar el claim: $_" -ForegroundColor DarkYellow
+    }
+
+    # -- Execute: work branch (only if cwd is a clone of the issue's repo) -------
+    if ($MakeBranch) {
+        $originUrl = ""
+        try { $originUrl = (git remote get-url origin 2>$null) } catch { }
+        if ($originUrl -notmatch [regex]::Escape($repo)) {
+            Write-Host "  WARN el directorio actual no es un clon de $repo - rama NO creada." -ForegroundColor DarkYellow
+            Write-Host "       Crea la rama en ese repo con: git checkout -b $branchName" -ForegroundColor DarkYellow
+        } else {
+            $dirty     = @(git status --porcelain 2>$null)
+            $curBranch = git branch --show-current 2>$null
+            # Batch (-PreferWorktree) always isolates. Single start keeps the classic
+            # dirty-tree / other-issue-branch guard: never switch a busy working copy.
+            $needWorktree = $PreferWorktree -or `
+                            ($dirty.Count -gt 0 -and $curBranch -ne $branchName) -or `
+                            ($curBranch -and $curBranch -match '^issue-\d+' -and $curBranch -ne $branchName)
+            if ($needWorktree) {
+                if (-not $PreferWorktree) {
+                    Write-Host "  OCUPADO: working tree ocupado (rama actual: $curBranch) - uso un worktree aislado:" -ForegroundColor Yellow
+                }
+                $result.workPath = New-IssueWorktree $repo $IssueNum $branchName $BaseRef
+            } else {
+                git rev-parse --verify --quiet $branchName 2>$null | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    git checkout $branchName 2>&1 | Out-Null
+                    Write-Host "  OK  Rama $branchName ya existia - checkout hecho" -ForegroundColor Green
+                } else {
+                    git checkout -b $branchName 2>&1 | Out-Null
+                    Write-Host "  OK  Rama $branchName creada y activa" -ForegroundColor Green
+                }
+                $result.workPath = (Get-Location).Path
+            }
+        }
+        if ($result.workPath) {
+            Write-SessionRegistryEntry -issueNum $IssueNum -branch $branchName -workPath $result.workPath
+            Write-Host "  OK  Sesion registrada en .agentic-bi-ops/sessions.json" -ForegroundColor Green
+        }
+    }
+
+    $result.started = $true
+    return $result
+}
+
+# Print the full issue context so an in-session agent can start working (mode 3).
+function Write-IssueContext([int]$issueNum, [string]$repo) {
+    $issue = gh issue view $issueNum --repo $repo --json title,body,labels,milestone,url,state | ConvertFrom-Json
+    Write-Host "----- CONTEXTO DEL ISSUE -----" -ForegroundColor Cyan
+    Write-Host ("Titulo : {0}" -f $issue.title)
+    Write-Host ("URL    : {0}" -f $issue.url)
+    $labelNames = @($issue.labels | ForEach-Object { $_.name })
+    if ($labelNames.Count -gt 0) { Write-Host ("Labels : {0}" -f ($labelNames -join ", ")) }
+    if ($issue.milestone)        { Write-Host ("Hito   : {0}" -f $issue.milestone.title) }
+    Write-Host ""
+    if ($issue.body) { Write-Host $issue.body } else { Write-Host "(sin descripcion)" -ForegroundColor DarkGray }
+    Write-Host ""
+    try {
+        $repoParts = $repo -split "/"
+        $subData = gh api graphql -f query='
+query($o:String!, $r:String!, $n:Int!) {
+  repository(owner:$o, name:$r) {
+    issue(number:$n) {
+      subIssues(first:30) { nodes { number title state } }
+    }
+  }
+}' -F "o=$($repoParts[0])" -F "r=$($repoParts[1])" -F "n=$issueNum" 2>$null | ConvertFrom-Json
+        $subs = @($subData.data.repository.issue.subIssues.nodes)
+        if ($subs.Count -gt 0) {
+            Write-Host "Sub-issues:" -ForegroundColor Cyan
+            foreach ($s in $subs) { Write-Host ("  #{0} [{1}] {2}" -f $s.number, $s.state, $s.title) }
+            Write-Host ""
+        }
+    } catch { }
+    Write-Host "------------------------------" -ForegroundColor Cyan
 }
 
 # ==============================================================================
@@ -216,7 +542,11 @@ query($o:String!, $r:String!) {
 }
 
 if ($ProjectNum -le 0) {
-    throw "Usa -ListBoards, o -ProjectNum <n> (opcionalmente con -Start <issueNum>)."
+    throw "Usa -ListBoards, o -ProjectNum <n> (opcionalmente con -Start <issueNum> o -Parallel <nums>)."
+}
+
+if ($Start -gt 0 -and $Parallel.Count -gt 0) {
+    throw "-Start y -Parallel son mutuamente exclusivos: usa uno u otro."
 }
 
 $boardUrl = Get-BoardUrl $ProjectNum
@@ -224,7 +554,7 @@ $boardUrl = Get-BoardUrl $ProjectNum
 # ==============================================================================
 # MODE 2: -ProjectNum  -> pending items of one board
 # ==============================================================================
-if ($Start -le 0 -and $ToReview -le 0) {
+if ($Start -le 0 -and $ToReview -le 0 -and $Parallel.Count -eq 0) {
     Write-Host "=== Pendientes del board #$ProjectNum de $Owner ===" -ForegroundColor Cyan
     Write-Host ""
 
@@ -270,7 +600,7 @@ if ($Start -le 0 -and $ToReview -le 0) {
         }
     }
     Write-Host ""
-    Write-Host "Siguiente paso: Board-Work.ps1 -ProjectNum $ProjectNum -Start <issueNum> para empezar uno." -ForegroundColor Cyan
+    Write-Host "Siguiente paso: Board-Work.ps1 -ProjectNum $ProjectNum -Start <issueNum> (o -Parallel <n1,n2,...>)." -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Board: $boardUrl" -ForegroundColor Cyan
     exit 0
@@ -337,281 +667,101 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
 }
 
 # ==============================================================================
+# MODE 5: -ProjectNum -Parallel <issueNums>  -> batch-start, one worktree each
+# ==============================================================================
+if ($Parallel.Count -gt 0) {
+    # De-dup while preserving the requested order.
+    $queue = @()
+    foreach ($n in $Parallel) { if ($n -gt 0 -and $queue -notcontains $n) { $queue += $n } }
+    if ($queue.Count -eq 0) { throw "-Parallel no recibio numeros de issue validos." }
+
+    Write-Host "=== Parallel batch-start (board #$ProjectNum de $Owner) ===" -ForegroundColor Cyan
+    Write-Host ("  Issues: {0}" -f ($queue -join ', ')) -ForegroundColor DarkGray
+    if ($DryRun) { Write-Host "  Modo DRY-RUN - planifica sin mutar el board ni tocar git." -ForegroundColor Gray }
+    Write-Host ""
+
+    $ctx = Resolve-BoardStatus $Owner $ProjectNum
+
+    # Fresh base so each independent worktree branches off up-to-date main.
+    $baseRef = ""
+    if (-not $DryRun) {
+        git fetch origin --quiet 2>$null
+        git rev-parse --verify --quiet origin/main 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $baseRef = "origin/main" }
+    }
+
+    $results = @()
+    foreach ($n in $queue) {
+        Write-Host ("--- #{0} ---" -f $n) -ForegroundColor Cyan
+        $r = Invoke-IssueStart -IssueNum $n -Ctx $ctx -Owner $Owner -MakeBranch -PreferWorktree `
+                               -BaseRef $baseRef -DryRunStart:$DryRun `
+                               -IgnoreBlocked:$IgnoreBlocked -TakeOver:$TakeOver
+        $results += $r
+        Write-Host ""
+    }
+
+    # -- Summary ---------------------------------------------------------------
+    Write-Host "===== RESUMEN PARALELO =====" -ForegroundColor Cyan
+    $started = @($results | Where-Object { $_.started })
+    $planned = @($results | Where-Object { $_.dryRun -and -not $_.skipped })
+    $skipped = @($results | Where-Object { $_.skipped })
+    foreach ($r in $results) {
+        if ($r.skipped) {
+            Write-Host ("  #{0,-4} SKIP  {1}" -f $r.issue, $r.skipped) -ForegroundColor Red
+        } elseif ($r.dryRun) {
+            Write-Host ("  #{0,-4} plan  -> rama {1}" -f $r.issue, $r.branch) -ForegroundColor Gray
+        } else {
+            Write-Host ("  #{0,-4} OK    -> {1}" -f $r.issue, $r.workPath) -ForegroundColor Green
+        }
+    }
+    Write-Host ""
+
+    if ($DryRun) {
+        Write-Host ("DRY-RUN: {0} se iniciarian, {1} se saltarian. Ningun cambio hecho." -f $planned.Count, $skipped.Count) -ForegroundColor Gray
+    } else {
+        Write-Host ("Iniciados: {0} / {1}. Worktrees listos, uno por issue." -f $started.Count, $queue.Count) -ForegroundColor Yellow
+        if ($started.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Cada worktree tiene su rama y su claim. Trabaja cada issue en su carpeta:" -ForegroundColor Cyan
+            foreach ($r in $started) {
+                if ($r.workPath) { Write-Host ("  cd `"{0}`"   # #{1}" -f $r.workPath, $r.issue) -ForegroundColor DarkCyan }
+            }
+            Write-Host ""
+            Write-Host "Al terminar cada uno: PR con 'Closes #<num>' + review gate (Board-ReviewGate.ps1)." -ForegroundColor DarkGray
+            Write-Host "El lanzador de sesiones Claude por worktree se agrega en la tarea companion (#100)." -ForegroundColor DarkGray
+        }
+    }
+    Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+    exit 0
+}
+
+# ==============================================================================
 # MODE 3: -ProjectNum -Start <issueNum>  -> move to In Progress + assign + context
 # ==============================================================================
 Write-Host "=== Empezando issue #$Start (board #$ProjectNum de $Owner) ===" -ForegroundColor Cyan
 Write-Host ""
 
-# -- Resolve project + Status field via GraphQL (same pattern as Board-Fill) ---
-$projData = gh api graphql -f query='
-query($owner:String!, $num:Int!) {
-  user(login:$owner) {
-    projectV2(number:$num) {
-      id
-      fields(first:30) {
-        nodes {
-          ... on ProjectV2SingleSelectField { id name options { id name } }
-        }
-      }
-    }
-  }
-}' -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
+$ctx = Resolve-BoardStatus $Owner $ProjectNum
+$r = Invoke-IssueStart -IssueNum $Start -Ctx $ctx -Owner $Owner -MakeBranch:$Branch `
+                       -DryRunStart:$DryRun -IgnoreBlocked:$IgnoreBlocked -TakeOver:$TakeOver
 
-$projectId  = $projData.data.user.projectV2.id
-if (-not $projectId) { throw "Board #$ProjectNum no encontrado para $Owner." }
-$statusNode = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name -eq "Status" }
-$inProgId   = ($statusNode.options | Where-Object { $_.name -eq "In Progress" }).id
-if (-not $inProgId) { throw "El board #$ProjectNum no tiene la opcion 'In Progress' en Status." }
-
-# -- Find the board item for that issue number ---------------------------------
-# One retry with a short wait: an item added seconds ago may not be visible yet
-# in the items query (GitHub eventual consistency).
-$item = $null
-foreach ($attempt in 1..2) {
-    $itemsData = gh api graphql -f query='
-query($proj:ID!) {
-  node(id:$proj) {
-    ... on ProjectV2 {
-      items(first:100) {
-        nodes {
-          id
-          fieldValues(first:20) {
-            nodes {
-              ... on ProjectV2ItemFieldSingleSelectValue {
-                field { ... on ProjectV2SingleSelectField { name } }
-                name
-              }
-            }
-          }
-          content {
-            __typename
-            ... on Issue {
-              number title state url
-              assignees(first:5) { nodes { login } }
-              repository { nameWithOwner }
-            }
-          }
-        }
-      }
-    }
-  }
-}' -F "proj=$projectId" | ConvertFrom-Json
-
-    $item = $itemsData.data.node.items.nodes |
-            Where-Object { $_.content.__typename -eq "Issue" -and $_.content.number -eq $Start } |
-            Select-Object -First 1
-    if ($item) { break }
-    if ($attempt -eq 1) {
-        Write-Host "  (issue #$Start aun no visible en el board - reintentando en 4s...)" -ForegroundColor DarkGray
-        Start-Sleep -Seconds 4
-    }
-}
-if (-not $item) { throw "Issue #$Start no esta en el board #$ProjectNum. Agregalo primero con /board add." }
-
-$repo          = $item.content.repository.nameWithOwner
-$currentStatus = ($item.fieldValues.nodes | Where-Object { $_.field.name -eq "Status" }).name
-if (-not $currentStatus) { $currentStatus = "(vacio)" }
-
-if ($item.content.state -eq "CLOSED") {
-    Write-Host "AVISO: el issue #$Start esta CERRADO. Reabrelo antes de trabajarlo (gh issue reopen $Start --repo $repo)." -ForegroundColor Red
+if ($r.skipped) {
     Write-Host ""
     Write-Host "Board: $boardUrl" -ForegroundColor Cyan
     exit 1
 }
-
-# -- Dependency check (Issues BP): refuse to start a blocked issue --------------
-if (-not $IgnoreBlocked) {
-    $blockers = @()
-    $issueLabels = @((gh issue view $Start --repo $repo --json labels | ConvertFrom-Json).labels.name)
-    if ($issueLabels -contains "blocked") { $blockers += "label 'blocked' presente" }
-    # Native blocked-by dependencies (best-effort: API may not exist for the account)
-    try {
-        $deps = gh api "repos/$repo/issues/$Start/dependencies/blocked_by" 2>$null | ConvertFrom-Json
-        foreach ($d in @($deps | Where-Object { $_.state -eq "open" })) {
-            $blockers += "bloqueado por #$($d.number) '$($d.title)' (abierto)"
-        }
-    } catch { }
-    if ($blockers.Count -gt 0) {
-        Write-Host "BLOQUEADO - no se empieza #${Start}:" -ForegroundColor Red
-        $blockers | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
-        Write-Host "Resuelve la dependencia (o usa -IgnoreBlocked si es un falso positivo)." -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "Board: $boardUrl" -ForegroundColor Cyan
-        exit 1
-    }
-}
-
-# -- Issue lock (multi-session): refuse an issue another session already has ----
-$assignees = @($item.content.assignees.nodes.login)
-if (-not $TakeOver -and $currentStatus -eq "In Progress" -and $assignees.Count -gt 0) {
-    Write-Host "OCUPADO - el issue #$Start ya esta In Progress (asignado: $($assignees -join ', '))." -ForegroundColor Red
-    # Show the last claim fingerprint if one exists
-    $lastClaim = gh api "repos/$repo/issues/$Start/comments" --jq '[.[] | select(.body | startswith("[abios-claim]"))] | last | .body' 2>$null
-    if ($lastClaim -and $lastClaim -ne "null") {
-        Write-Host "  Ultimo claim: $lastClaim" -ForegroundColor Yellow
-    }
-    Write-Host "Probablemente otra sesion de Claude lo esta trabajando. Si NO es asi (sesion muerta" -ForegroundColor Yellow
-    Write-Host "o quieres retomarlo a proposito), re-ejecuta con -TakeOver." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
-    exit 1
-}
-
-Write-Host ("  #{0} {1}" -f $Start, $item.content.title) -ForegroundColor Yellow
-Write-Host ("  Repo: {0} | Status actual: {1}" -f $repo, $currentStatus) -ForegroundColor DarkGray
-Write-Host ""
-# Work branch name: issue-<num>-<slug-from-title>
-$slug = ($item.content.title.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
-if ($slug.Length -gt 40) {
-    $slug = $slug.Substring(0, 40)
-    if ($slug.Contains('-')) { $slug = $slug.Substring(0, $slug.LastIndexOf('-')) }  # no cortar palabras
-    $slug = $slug.Trim('-')
-}
-$branchName = "issue-$Start-$slug"
-
-Write-Host "  Plan:" -ForegroundColor Cyan
-Write-Host "    -> Status [$currentStatus] -> In Progress"
-Write-Host "    -> Assignee -> $Owner"
-if ($Branch) { Write-Host "    -> Rama de trabajo: $branchName" }
-Write-Host ""
 
 if ($DryRun) {
+    Write-Host ""
     Write-Host "Modo DRY-RUN - ningun cambio ejecutado." -ForegroundColor Gray
     Write-Host ""
     Write-Host "Board: $boardUrl" -ForegroundColor Cyan
     exit 0
 }
 
-# -- Execute: Status -> In Progress ---------------------------------------------
-gh api graphql -f query='
-mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
-  updateProjectV2ItemFieldValue(input:{
-    projectId:$proj, itemId:$item, fieldId:$field,
-    value:{singleSelectOptionId:$opt}
-  }) { projectV2Item { id } }
-}' -f "proj=$projectId" -f "item=$($item.id)" -f "field=$($statusNode.id)" -f "opt=$inProgId" | Out-Null
-Write-Host "  OK  Status -> In Progress" -ForegroundColor Green
-
-# -- Execute: assign owner ------------------------------------------------------
-try {
-    gh api "repos/$repo/issues/$Start/assignees" -X POST -F "assignees[]=$Owner" | Out-Null
-    Write-Host "  OK  Assignee -> $Owner" -ForegroundColor Green
-} catch {
-    Write-Host "  WARN no se pudo asignar: $_" -ForegroundColor DarkYellow
-}
-
-# -- Execute: claim fingerprint (multi-session diagnostics) ---------------------
-$claimNote = if ($TakeOver) { "TAKEOVER" } else { "claim" }
-$fingerprint = "[abios-claim] $claimNote por sesion Claude en $env:COMPUTERNAME (PID $PID) - $(Get-Date -Format 'yyyy-MM-dd HH:mm') - rama $branchName"
-try {
-    gh issue comment $Start --repo $repo --body $fingerprint | Out-Null
-    Write-Host "  OK  Claim registrado ($claimNote)" -ForegroundColor Green
-} catch {
-    Write-Host "  WARN no se pudo registrar el claim: $_" -ForegroundColor DarkYellow
-}
-
-# -- Execute: work branch (only if cwd is a clone of the issue's repo) ----------
-if ($Branch) {
-    $originUrl = ""
-    try { $originUrl = (git remote get-url origin 2>$null) } catch { }
-    if ($originUrl -notmatch [regex]::Escape($repo)) {
-        Write-Host "  WARN el directorio actual no es un clon de $repo - rama NO creada." -ForegroundColor DarkYellow
-        Write-Host "       Crea la rama en ese repo con: git checkout -b $branchName" -ForegroundColor DarkYellow
-    } else {
-        # Dirty-tree guard (multi-session): NEVER switch branches under another session's feet.
-        # When the folder is busy, the issue gets its own git worktree automatically instead
-        # (the official parallel-sessions pattern).
-        function New-IssueWorktree {
-            $repoName = ($repo -split '/')[1]
-            $wtPath   = Join-Path (Split-Path (Get-Location) -Parent) "$repoName--issue-$Start"
-            # Reuse: is the branch already checked out in some worktree?
-            $wtList = git worktree list --porcelain 2>$null | Out-String
-            if ($wtList -match "(?m)^worktree (.+)\r?\n(?:.*\r?\n)?branch refs/heads/$([regex]::Escape($branchName))") {
-                $existingPath = $Matches[1]
-                Write-Host "  OK  Worktree ya existia para la rama: $existingPath" -ForegroundColor Green
-                Write-Host "       TRABAJA EL ISSUE ALLI: cd `"$existingPath`"" -ForegroundColor Cyan
-                $script:workPath = $existingPath
-                return
-            }
-            if (Test-Path $wtPath) {
-                Write-Host "  WARN la carpeta $wtPath existe pero no es worktree de $branchName - resuelvelo manualmente." -ForegroundColor DarkYellow
-                return
-            }
-            git rev-parse --verify --quiet $branchName 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) { git worktree add $wtPath $branchName 2>&1 | Out-Null }
-            else                     { git worktree add $wtPath -b $branchName 2>&1 | Out-Null }
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "  OK  Worktree creado: $wtPath (rama $branchName)" -ForegroundColor Green
-                Write-Host "       TRABAJA EL ISSUE ALLI: cd `"$wtPath`"" -ForegroundColor Cyan
-                Write-Host "       Al mergear el PR, limpia con: git worktree remove `"$wtPath`"" -ForegroundColor DarkGray
-                $script:workPath = $wtPath
-            } else {
-                Write-Host "  FAIL no se pudo crear el worktree - crea la rama manualmente: git checkout -b $branchName" -ForegroundColor Red
-            }
-        }
-        $dirty     = @(git status --porcelain 2>$null)
-        $curBranch = git branch --show-current 2>$null
-        if ($dirty.Count -gt 0 -and $curBranch -ne $branchName) {
-            Write-Host "  OCUPADO: el working tree tiene $($dirty.Count) cambio(s) sin commitear (rama actual: $curBranch)." -ForegroundColor Yellow
-            Write-Host "       Otra sesion puede estar trabajando aqui - NO cambio de rama; uso un worktree aislado:" -ForegroundColor Yellow
-            New-IssueWorktree
-        } elseif ($curBranch -and $curBranch -match '^issue-\d+' -and $curBranch -ne $branchName) {
-            Write-Host "  OCUPADO: esta carpeta esta en la rama '$curBranch' (otro issue en curso)." -ForegroundColor Yellow
-            Write-Host "       Otra sesion parece activa aqui - NO cambio de rama; uso un worktree aislado:" -ForegroundColor Yellow
-            New-IssueWorktree
-        } else {
-            git rev-parse --verify --quiet $branchName 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                git checkout $branchName 2>&1 | Out-Null
-                Write-Host "  OK  Rama $branchName ya existia - checkout hecho" -ForegroundColor Green
-            } else {
-                git checkout -b $branchName 2>&1 | Out-Null
-                Write-Host "  OK  Rama $branchName creada y activa" -ForegroundColor Green
-            }
-            $script:workPath = (Get-Location).Path
-        }
-    }
-    # Register this session's work in the local registry (stale PIDs pruned on read)
-    if ($script:workPath) {
-        Write-SessionRegistryEntry -issueNum $Start -branch $branchName -workPath $script:workPath
-        Write-Host "  OK  Sesion registrada en .agentic-bi-ops/sessions.json" -ForegroundColor Green
-    }
-}
 Write-Host ""
-
-# -- Print full issue context so the agent can start working --------------------
-$issue = gh issue view $Start --repo $repo --json title,body,labels,milestone,url,state | ConvertFrom-Json
-
-Write-Host "----- CONTEXTO DEL ISSUE -----" -ForegroundColor Cyan
-Write-Host ("Titulo : {0}" -f $issue.title)
-Write-Host ("URL    : {0}" -f $issue.url)
-$labelNames = @($issue.labels | ForEach-Object { $_.name })
-if ($labelNames.Count -gt 0) { Write-Host ("Labels : {0}" -f ($labelNames -join ", ")) }
-if ($issue.milestone)        { Write-Host ("Hito   : {0}" -f $issue.milestone.title) }
-Write-Host ""
-if ($issue.body) { Write-Host $issue.body } else { Write-Host "(sin descripcion)" -ForegroundColor DarkGray }
-Write-Host ""
-
-# Sub-issues (optional API - ignore failures silently)
-try {
-    $repoParts = $repo -split "/"
-    $subData = gh api graphql -f query='
-query($o:String!, $r:String!, $n:Int!) {
-  repository(owner:$o, name:$r) {
-    issue(number:$n) {
-      subIssues(first:30) { nodes { number title state } }
-    }
-  }
-}' -F "o=$($repoParts[0])" -F "r=$($repoParts[1])" -F "n=$Start" 2>$null | ConvertFrom-Json
-    $subs = @($subData.data.repository.issue.subIssues.nodes)
-    if ($subs.Count -gt 0) {
-        Write-Host "Sub-issues:" -ForegroundColor Cyan
-        foreach ($s in $subs) { Write-Host ("  #{0} [{1}] {2}" -f $s.number, $s.state, $s.title) }
-        Write-Host ""
-    }
-} catch { }
-
-Write-Host "------------------------------" -ForegroundColor Cyan
+Write-IssueContext $Start $r.repo
 Write-Host ""
 Write-Host "Issue #$Start listo para trabajar (In Progress, asignado a $Owner)." -ForegroundColor Green
 Write-Host "AL TERMINAR: New-BoardPR.ps1 -Issue $Start  (push + PR 'Closes #$Start' con la cuenta correcta) - NO commit directo a main." -ForegroundColor Yellow
