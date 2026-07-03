@@ -21,8 +21,7 @@
     (skill-creator, writing-skills, skill-improver, second-opinion) without duplicating an
     installed one; `Install-SkillFromRepo.ps1` clean-clones each gap preserving the LICENSE.
   - **`/skills`** command (#94): menu routing to organize / audit / bootstrap.
-  - 24 Pester tests over temp fixtures. Design spec:
-    `docs/superpowers/specs/2026-07-03-skills-ops-design.md`.
+  - 24 Pester tests over temp fixtures. Design recorded in epic #87.
 
 ## [0.13.1] - 2026-07-02
 ### Changed
