@@ -1,0 +1,30 @@
+[
+  {
+    "name": "skill-creator",
+    "repo": "anthropics/skills",
+    "path": "skill-creator",
+    "license": "See repo (Anthropic)",
+    "purpose": "Create, test, benchmark and optimize skills; description-triggering eval loop."
+  },
+  {
+    "name": "writing-skills",
+    "repo": "obra/superpowers",
+    "path": "skills/writing-skills",
+    "license": "MIT",
+    "purpose": "Author high-quality SKILL.md — discovery optimization, RED/GREEN pressure tests."
+  },
+  {
+    "name": "skill-improver",
+    "repo": "trailofbits/skills",
+    "path": "skill-improver",
+    "license": "CC BY-SA 4.0",
+    "purpose": "Iterative fix-review loop to raise an existing skill to standard."
+  },
+  {
+    "name": "second-opinion",
+    "repo": "trailofbits/skills",
+    "path": "second-opinion",
+    "license": "CC BY-SA 4.0",
+    "purpose": "External LLM review (Codex/Gemini) of uncommitted changes — an extra reviewer."
+  }
+]
