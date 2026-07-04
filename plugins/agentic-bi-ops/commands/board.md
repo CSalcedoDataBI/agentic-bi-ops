@@ -9,7 +9,7 @@ for the user to pick (they can answer with just the number):
 ```
 ¿Qué quieres hacer con el board?
 
-1. work             → ver qué issues están pendientes (en todos los boards) y empezar a trabajar uno
+1. work             → ver qué issues están pendientes y empezar a trabajar uno (o varios en paralelo)
 2. plan             → planificar (o tomar un plan existente) y convertir sus tareas en epic + issues
 3. fill --dry-run   → ver qué gaps hay (assignees, Status, Priority, Size, Type) SIN cambiar nada
 4. fill --auto      → llenar todos los gaps automáticamente (convierte drafts a issues reales)
@@ -107,6 +107,18 @@ matching recipe from the projects-admin references:
         the issue, which moves the board item from In Review to **Done** (close→Done + `Board-Fill`).
      - Optional, once per repo: `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset`
        installs a ruleset requiring PRs into the default branch (admins keep bypass — say so).
+       Once installed, `gh pr merge` needs `--admin` to bypass it; say so honestly when you use it.
+  - **Parallel (several independent issues at once).** When the user picks MORE THAN ONE
+    independent pending issue, batch-start them instead of looping:
+    `scripts/Board-Work.ps1 -ProjectNum <n> -Parallel <n1,n2,...>` starts each (In Progress +
+    assign + claim) in its OWN worktree `../<repo>--issue-<n>` off a fresh `origin/main`;
+    blocked / claimed / closed issues are skipped with a reason (the batch never aborts).
+    Add `-Launch` to open one visible Claude session per worktree — a Windows Terminal (`wt`)
+    tab when available, else a `pwsh` window — each briefed to take its issue through step 5
+    (PR + review gate). `-DryRun` plans (and previews the launch commands) without mutating or
+    spawning. Monitor the fleet with `scripts/Board-Work.ps1 -Sessions`. Only parallelize issues
+    that DON'T depend on each other; clean each worktree with `git worktree remove` after its PR
+    merges. Requires Windows Terminal for tabs (Windows-only launcher).
   - If many pending items lack Priority/Size, suggest `/board fill` to triage them first.
 - **plan** — turn a plan into a tracked epic + native sub-issues on the board. A plan is NOT
   done when a markdown file is written — it is done when its tasks are issues. Two entry modes

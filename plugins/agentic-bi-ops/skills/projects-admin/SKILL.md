@@ -194,6 +194,29 @@ Notes:
 - Skip steps 1–2 when the user already named a board.
 - The script respects an already-set `GH_TOKEN` (from gh-account); otherwise it reads `GITHUB_TOKEN_PERSONAL` (or the var given in `-TokenVar`).
 
+### Parallel mode — start several independent issues at once
+
+When step 3 shows more than one issue the user wants to advance simultaneously, batch-start
+them instead of one-by-one (each still finishes through the same step 5):
+
+| Command | What it does |
+|---------|--------------|
+| `Board-Work.ps1 -ProjectNum <n> -Parallel <n1,n2,...>` | Batch-start each issue (In Progress + assign + claim), each in its OWN isolated worktree `../<repo>--issue-<n>` branched off a fresh `origin/main`. Blocked / claimed / closed issues are skipped with a reason — the batch never aborts |
+| `... -Parallel <nums> -Launch` | After starting, spawn ONE visible Claude session per worktree, each briefed to take its issue through step 5. Windows Terminal tab (grouped in one named window) when `wt` is on PATH; otherwise a standalone `pwsh` window per worktree |
+| `... -Parallel <nums> [-Launch] -DryRun` | Plan the whole batch (and, with `-Launch`, preview the exact launch commands) without mutating the board, touching git, or spawning anything |
+| `Board-Work.ps1 -Sessions` | Monitor the LIVE fleet from `sessions.json` (branch, worktree, launch method `via`, and the PR opened per branch). Dead-PID entries pruned on read; needs no `-ProjectNum` |
+
+- **Only for INDEPENDENT issues.** Never parallelize a chain where one depends on another's
+  merge — run those sequentially. The user picks which issues are safe to run together.
+- **Each spawned session finishes through step 5** (PR `Closes #<num>` → review gate → merge).
+  The briefing is written to `.agentic-bi-ops/briefing-<n>.txt` and read by the session, so no
+  long prompt ever hits the command line.
+- **Requires Windows Terminal (`wt`)** for grouped tabs; without it each session opens in its own
+  `pwsh` window (still works). Windows-only launcher.
+- **Clean up** each worktree after its PR merges: `git worktree remove ../<repo>--issue-<n>`.
+- PID tracking is reliable for the `pwsh` fallback; a `wt` launcher forks the terminal host and
+  exits, so those entries keep the host session's PID (documented limitation).
+
 ---
 
 ## Routing table
