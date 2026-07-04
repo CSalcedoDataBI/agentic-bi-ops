@@ -21,9 +21,10 @@
 
     Linked PRs and Sub-issues progress are system-derived — not writable via API.
 
-    The board owner may be a USER or an ORGANIZATION. Resolution tries user()
-    first and falls back to organization() (see Resolve-ProjectV2Node) so the
-    script never false-reports "no gaps" on an org-owned board (issue #86).
+    The board owner may be a USER or an ORGANIZATION. The owner type is resolved
+    up front (see Get-OwnerType) and the project is queried against the matching
+    GraphQL root, so the script never false-reports "no gaps" just because the
+    board could not be read under the wrong owner root (issue #86).
 
 .PARAMETER Owner
     GitHub login that owns the project board (user OR organization).
@@ -65,26 +66,49 @@ $ErrorActionPreference = "Stop"
 
 # ── Functions (pure + gh helpers; defined before the dot-source guard) ─────────
 
-function Select-ProjectV2Node {
-    # Pure: pick whichever owner root resolved to a real ProjectV2. The user root
-    # wins deterministically; a node without an id counts as unresolved. This is
-    # the decision point behind issue #86 (user-vs-org board resolution).
-    param($UserNode, $OrgNode)
-    if ($UserNode -and $UserNode.id) { return $UserNode }
-    if ($OrgNode  -and $OrgNode.id)  { return $OrgNode }
-    return $null
+function Get-OwnerRoot {
+    # Pure: map a GraphQL RepositoryOwner __typename to the query root field that
+    # exposes projectV2(number:) for that owner. This is the decision point behind
+    # issue #86 — the board owner may be a USER or an ORGANIZATION.
+    param([string]$OwnerType)
+    switch ($OwnerType) {
+        'User'         { 'user' }
+        'Organization' { 'organization' }
+        default        { $null }
+    }
+}
+
+function Get-OwnerUrlSegment {
+    # Pure: the github.com path segment for an owner's projects page.
+    # Organizations live under /orgs/<login>, everyone else under /users/<login>.
+    param([string]$OwnerType)
+    if ($OwnerType -eq 'Organization') { 'orgs' } else { 'users' }
+}
+
+function Get-OwnerType {
+    # Resolve whether $Owner is a User or an Organization. stderr is NOT suppressed
+    # so a real auth/network failure surfaces instead of being mistaken for "owner
+    # not found". Returns 'User', 'Organization', or $null (login does not exist).
+    param([string]$Owner)
+    $resp = gh api graphql -f query='
+query($o:String!) { repositoryOwner(login:$o) { __typename } }' -F "o=$Owner" | ConvertFrom-Json
+    return $resp.data.repositoryOwner.__typename
 }
 
 function Resolve-ProjectV2Node {
-    # Resolve a ProjectV2 (+ its single-select fields) by number regardless of
-    # whether $Owner is a USER or an ORGANIZATION. Querying only user(login:)
-    # silently returns null for org-owned boards, so the old code reported a
-    # healthy "no gaps" board that was really unread (issue #86). We try user()
-    # first (fast path, no stderr noise) and fall back to organization(); the
-    # non-matching root's "Could not resolve" GraphQL error is expected on the
-    # fallback, so its stderr is suppressed with 2>$null.
-    param([string]$Owner, [int]$Num)
-    $tmpl = @'
+    # Resolve a ProjectV2 (+ its single-select fields) by number for a USER- OR
+    # ORGANIZATION-owned board. Querying only user(login:) silently returns null
+    # for org-owned boards, so the old code reported a healthy "no gaps" board that
+    # was really unread (issue #86). We resolve the owner type first, then query
+    # the CORRECT root — no expected-error noise, and stderr stays visible so real
+    # failures are not hidden.
+    param([string]$Owner, [int]$Num, [string]$OwnerType)
+    $root = Get-OwnerRoot $OwnerType
+    if (-not $root) { return $null }
+    # Build the query in a variable first: PowerShell does NOT concatenate a
+    # bareword like `query=` with an adjacent `(...)` subexpression, so the inline
+    # `-f query=(...)` form would pass a broken argument to gh.
+    $query = @'
 query($owner:String!, $num:Int!) {
   ROOT(login:$owner) {
     projectV2(number:$num) {
@@ -97,18 +121,9 @@ query($owner:String!, $num:Int!) {
     }
   }
 }
-'@
-    # Build each query in its own variable first: PowerShell does NOT concatenate
-    # a bareword like `query=` with an adjacent `(...)` subexpression, so the
-    # inline `-f query=(...)` form would pass a broken argument to gh.
-    $userQuery = $tmpl -replace 'ROOT', 'user'
-    $userResp  = gh api graphql -f query=$userQuery -F "owner=$Owner" -F "num=$Num" 2>$null | ConvertFrom-Json
-    $node = Select-ProjectV2Node -UserNode $userResp.data.user.projectV2 -OrgNode $null
-    if ($node) { return $node }
-
-    $orgQuery = $tmpl -replace 'ROOT', 'organization'
-    $orgResp  = gh api graphql -f query=$orgQuery -F "owner=$Owner" -F "num=$Num" 2>$null | ConvertFrom-Json
-    return Select-ProjectV2Node -UserNode $null -OrgNode $orgResp.data.organization.projectV2
+'@ -replace 'ROOT', $root
+    $resp = gh api graphql -f query=$query -F "owner=$Owner" -F "num=$Num" | ConvertFrom-Json
+    return $resp.data.$root.projectV2
 }
 
 function Get-Field($name) { $allFields | Where-Object { $_.name -eq $name } }
@@ -169,19 +184,22 @@ if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (
 if (-not $Repo) { $Repo = "$Owner/agentic-bi-ops" }
 
 $mode = if ($DryRun) { "DRY-RUN" } elseif ($Auto) { "AUTO" } else { "INTERACTIVE" }
-$boardUrl = "https://github.com/users/$Owner/projects/$ProjectNum"
+
+# ── 1. Resolve owner type, board URL, project + field IDs ──────────────────────
+# The owner may be a USER or an ORGANIZATION — resolve which once, up front, so
+# both the board URL (/users/ vs /orgs/) and the project query use the right root.
+$ownerType = Get-OwnerType $Owner
+$boardUrl  = "https://github.com/$(Get-OwnerUrlSegment $ownerType)/$Owner/projects/$ProjectNum"
 Write-Host "=== Board-Fill  Owner=$Owner  Project=#$ProjectNum  Mode=$mode ===" -ForegroundColor Cyan
 Write-Host "Board: $boardUrl" -ForegroundColor Cyan
 Write-Host ""
 
-# ── 1. Resolve project + field IDs ────────────────────────────────────────────
-# Owner may be a user OR an org — Resolve-ProjectV2Node tries both.
-$projNode  = Resolve-ProjectV2Node -Owner $Owner -Num $ProjectNum
+$projNode = Resolve-ProjectV2Node -Owner $Owner -Num $ProjectNum -OwnerType $ownerType
 # A non-existent project (or a token for the wrong account / missing 'project'
-# scope) resolves projectV2 to null under BOTH owner roots, so gh exits 0 with
-# no node. Abort loudly instead of sailing on to report a healthy, empty board.
+# scope) resolves projectV2 to null, and an unknown owner resolves $ownerType to
+# null. Abort loudly instead of sailing on to report a healthy, empty board.
 if (-not $projNode -or -not $projNode.id) {
-    throw "No pude resolver el board: '$Owner' projectV2 #$ProjectNum no existe como user NI como organization, o el token ($TokenVar) no tiene acceso (revisa cuenta y scope 'project'). Aborto en vez de reportar un board sano."
+    throw "No pude resolver el board: '$Owner' projectV2 #$ProjectNum no existe (owner tipo '$ownerType'), o el token ($TokenVar) no tiene acceso (revisa cuenta y scope 'project'). Aborto en vez de reportar un board sano."
 }
 $projectId = $projNode.id
 $allFields = $projNode.fields.nodes | Where-Object { $_.name }
