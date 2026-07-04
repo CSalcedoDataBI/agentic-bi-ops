@@ -158,7 +158,7 @@ and wait for; never assume the account or the scope:
 | 2. Pick a board | `Board-Work.ps1 -ListBoards [-Repo <owner/name>]` | With `-Repo`: only boards LINKED to that repo (`repository.projectsV2`) — exactly one result skips this pick. Without: every board of the owner (backups excluded). Both show pending count (Backlog or no Status) + URL, most pending first |
 | 3. Pick an issue | `Board-Work.ps1 -ProjectNum <n>` | That board's pending items sorted by Priority; drafts flagged (convert via `/board fill` first) |
 | 4. Start it | `Board-Work.ps1 -ProjectNum <n> -Start <issueNum> -Branch` | Status → In Progress, assign owner, create + checkout branch `issue-<num>-<slug>`, print full issue context (body, labels, sub-issues) |
-| 5. Finish it | push branch → PR with `Closes #<num>` → `Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` → merge only on exit 0 | Review gate (GitHub flow: merge only after approval): requests Copilot review when available, waits for CI checks + review, reports decision/feedback/unresolved threads. Blocked = fix, push, re-run. Then GitHub fills **Linked pull requests** by itself |
+| 5. Finish it | push branch → PR with `Closes #<num>` → `Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` → `Board-Merge.ps1 -PR <n>` only on exit 0 | Review gate (GitHub flow: merge only after approval): requests Copilot review when available, waits for CI checks + review, reports decision/feedback/unresolved threads. Blocked = fix, push, re-run. Merge via `Board-Merge.ps1` (auto `--admin` when the `pr-before-merge` ruleset marks the PR blocked). Then GitHub fills **Linked pull requests** by itself |
 
 Notes:
 - Step 4 supports `-DryRun` (preview, no mutation). A CLOSED issue is refused with a reopen hint.
@@ -175,7 +175,9 @@ Notes:
   `-MaxLines`/`-MaxFiles`) and suggests `Board-Breakdown.ps1`. Warning, never a block.
 - `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset` (optional, once per repo) installs a
   ruleset requiring PRs into the default branch; repo admins keep bypass — never claim it blocks
-  admins.
+  admins. That ruleset makes `gh pr merge` return `blocked` (needs `--admin`), so **finish the
+  merge with `Board-Merge.ps1 -PR <n>`** — it retries with the admin bypass automatically and says
+  so, or reports a clear block for a non-admin. A raw `gh pr merge` is the escape hatch only.
 - **Dependency check**: pending items labeled `blocked` show as `[BLOCKED]` and `-Start` refuses
   them, plus any issue with OPEN native blocked-by dependencies (best-effort API), listing the
   blocker. `-IgnoreBlocked` overrides a false positive; remove the `blocked` label when unblocked.

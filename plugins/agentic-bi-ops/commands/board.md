@@ -103,11 +103,15 @@ matching recipe from the projects-admin references:
         passes. If the `second-opinion` skill is available, use it as an extra reviewer.
         If no reviewer is available at all, an explicit self-review of `gh pr diff <n>` is
         obligatory before merging — and say so honestly in your report.
-     d. Only after the gate passes: `gh pr merge <n> --squash --delete-branch` — the merge closes
-        the issue, which moves the board item from In Review to **Done** (close→Done + `Board-Fill`).
+     d. Only after the gate passes: `scripts/Board-Merge.ps1 -PR <n>` — merges the PR (squash +
+        delete-branch by default) and, if the repo's own `pr-before-merge` ruleset marks the PR
+        `blocked`, retries with the `--admin` bypass the ruleset grants admins (announced honestly);
+        a non-admin gets a clear blocked message instead of a raw error. The merge closes the issue,
+        which moves the board item from In Review to **Done** (close→Done + `Board-Fill`). Use a raw
+        `gh pr merge <n> --squash --delete-branch` only if you deliberately want no ruleset handling.
      - Optional, once per repo: `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset`
        installs a ruleset requiring PRs into the default branch (admins keep bypass — say so).
-       Once installed, `gh pr merge` needs `--admin` to bypass it; say so honestly when you use it.
+       `Board-Merge.ps1` handles the resulting `blocked` state for you (auto `--admin` when admin).
   - **Parallel (several independent issues at once).** When the user picks MORE THAN ONE
     independent pending issue, batch-start them instead of looping:
     `scripts/Board-Work.ps1 -ProjectNum <n> -Parallel <n1,n2,...>` starts each (In Progress +
