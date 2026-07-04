@@ -126,11 +126,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# -- 0. Token (respect GH_TOKEN if gh-account already set it) ------------------
-if (-not $env:GH_TOKEN) {
-    $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
-}
-if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
+# NOTE: the GH_TOKEN check lives in the main-entry guard below (after every function
+# is defined) so the pure helpers can be dot-sourced for unit tests without a token
+# and without side effects (set $env:ABIOS_BOARDWORK_DOTSOURCE=1 before dot-sourcing).
 
 function Get-BoardUrl([int]$num) { "https://github.com/users/$Owner/projects/$num" }
 
@@ -225,6 +223,16 @@ function Get-IssueSlugBranch([int]$num, [string]$title) {
     return "issue-$num-$slug"
 }
 
+# Normalize a -Parallel request into the batch queue: drop non-positive numbers and
+# de-duplicate while preserving the requested order. Pure -> unit-testable.
+function Get-ParallelQueue([int[]]$nums) {
+    $queue = @()
+    foreach ($n in $nums) { if ($n -gt 0 -and $queue -notcontains $n) { $queue += $n } }
+    # No unary-comma wrap: it would turn an empty queue into a 1-element array
+    # (an array holding @()). Callers wrap with @() to normalize the single case.
+    return $queue
+}
+
 # Resolve the board id + Status field + "In Progress" option once, reuse per issue.
 function Resolve-BoardStatus([string]$owner, [int]$projectNum) {
     $projData = gh api graphql -f query='
@@ -308,6 +316,12 @@ function Get-IssueBlockers([string]$repo, [int]$issueNum) {
         }
     } catch { }
     return $blockers
+}
+
+# Last [abios-claim] fingerprint comment on an issue (or empty). Wrapped so the
+# multi-session lock path can be unit-tested without a live gh call.
+function Get-LastClaim([string]$repo, [int]$issueNum) {
+    return (gh api "repos/$repo/issues/$issueNum/comments" --jq '[.[] | select(.body | startswith("[abios-claim]"))] | last | .body' 2>$null)
 }
 
 # Create an isolated worktree ../<repo>--issue-<n> for a branch. Returns the path
@@ -398,7 +412,7 @@ function Invoke-IssueStart {
     if (-not $TakeOver -and $currentStatus -eq "In Progress" -and $assignees.Count -gt 0) {
         $result.skipped = "OCUPADO (In Progress, asignado a $($assignees -join ', '))"
         Write-Host "  SKIP #${IssueNum}: $($result.skipped) - otra sesion probablemente lo trabaja." -ForegroundColor Red
-        $lastClaim = gh api "repos/$repo/issues/$IssueNum/comments" --jq '[.[] | select(.body | startswith("[abios-claim]"))] | last | .body' 2>$null
+        $lastClaim = Get-LastClaim $repo $IssueNum
         if ($lastClaim -and $lastClaim -ne "null") { Write-Host "         Ultimo claim: $lastClaim" -ForegroundColor Yellow }
         Write-Host "         Re-ejecuta con -TakeOver si la sesion esta muerta o quieres retomarlo." -ForegroundColor Yellow
         return $result
@@ -626,6 +640,19 @@ function Show-SessionFleet {
 }
 
 # ==============================================================================
+# Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
+# the script returns here with only the functions defined - no token check, no gh
+# calls, no side effects - so the pure helpers can be unit-tested in isolation.
+# ==============================================================================
+if ($env:ABIOS_BOARDWORK_DOTSOURCE) { return }
+
+# -- Token (respect GH_TOKEN if gh-account already set it) ---------------------
+if (-not $env:GH_TOKEN) {
+    $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
+}
+if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
+
+# ==============================================================================
 # MODE 0: -Sessions  -> monitor the local parallel-session fleet
 # ==============================================================================
 if ($Sessions) {
@@ -830,9 +857,8 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
 # MODE 5: -ProjectNum -Parallel <issueNums>  -> batch-start, one worktree each
 # ==============================================================================
 if ($Parallel.Count -gt 0) {
-    # De-dup while preserving the requested order.
-    $queue = @()
-    foreach ($n in $Parallel) { if ($n -gt 0 -and $queue -notcontains $n) { $queue += $n } }
+    # Normalize to the batch queue (drop <=0, de-dup, keep order).
+    $queue = @(Get-ParallelQueue $Parallel)
     if ($queue.Count -eq 0) { throw "-Parallel no recibio numeros de issue validos." }
 
     Write-Host "=== Parallel batch-start (board #$ProjectNum de $Owner) ===" -ForegroundColor Cyan
