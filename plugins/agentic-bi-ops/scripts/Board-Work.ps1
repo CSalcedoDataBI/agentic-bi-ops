@@ -159,6 +159,18 @@ function Get-SessionRegistryPath {
     return (Join-Path $dir "sessions.json")
 }
 
+function ConvertTo-SessionRegistryJson {
+    # Serialize the session list to a JSON ARRAY string, always. Piping the array
+    # into `ConvertTo-Json -AsArray` is what keeps a single entry from collapsing
+    # to a bare object - but an EMPTY pipe emits nothing, so `... | Set-Content`
+    # would write an empty file and the dead entries would never actually be
+    # pruned. Return an explicit '[]' for the empty case (issue #101).
+    param($SessionList)
+    $arr = @($SessionList)
+    if ($arr.Count -eq 0) { return '[]' }
+    return ($arr | ConvertTo-Json -Depth 4 -AsArray)
+}
+
 function Read-SessionRegistry {
     $p = Get-SessionRegistryPath
     if (-not $p -or -not (Test-Path $p)) { return @() }
@@ -166,8 +178,7 @@ function Read-SessionRegistry {
     # Stale cleanup: drop entries whose session process is dead
     $alive = @($entries | Where-Object { $_.sessionPid -and (Get-Process -Id $_.sessionPid -ErrorAction SilentlyContinue) })
     if ($alive.Count -ne $entries.Count) {
-        # Pipe (not -InputObject) or a passed array gets double-wrapped by -AsArray
-        $alive | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
+        Set-Content -Path $p -Value (ConvertTo-SessionRegistryJson $alive)
     }
     return $alive
 }
@@ -205,7 +216,7 @@ function Write-SessionRegistryEntry {
         host       = $env:COMPUTERNAME
         started    = (Get-Date -Format "yyyy-MM-dd HH:mm")
     }
-    $entries | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
+    Set-Content -Path $p -Value (ConvertTo-SessionRegistryJson $entries)
 }
 
 # ==============================================================================
@@ -614,14 +625,16 @@ function Start-WorktreeSession {
 # (Read-SessionRegistry prunes dead-PID entries on the way in) with its branch,
 # worktree, launch method and - best-effort - the PR opened for its branch.
 function Show-SessionFleet {
-    $sessions = @(Read-SessionRegistry)
+    # $liveSessions (not $sessions): even here inside a function the name would
+    # shadow the [switch]$Sessions param and invites the issue-#101 footgun.
+    $liveSessions = @(Read-SessionRegistry)
     Write-Host "=== Flota de sesiones activas (esta maquina) ===" -ForegroundColor Cyan
     Write-Host ""
-    if ($sessions.Count -eq 0) {
+    if ($liveSessions.Count -eq 0) {
         Write-Host "No hay sesiones vivas registradas en .agentic-bi-ops/sessions.json." -ForegroundColor DarkGray
         return
     }
-    foreach ($s in ($sessions | Sort-Object issue)) {
+    foreach ($s in ($liveSessions | Sort-Object issue)) {
         $via = if ($s.via) { $s.via } else { "-" }
         Write-Host ("  #{0,-4} {1}" -f $s.issue, $s.branch) -ForegroundColor Yellow
         Write-Host ("        PID {0} via {1} | host {2} | desde {3}" -f $s.sessionPid, $via, $s.host, $s.started) -ForegroundColor DarkGray
@@ -636,7 +649,7 @@ function Show-SessionFleet {
         }
     }
     Write-Host ""
-    Write-Host ("Total: {0} sesion(es) viva(s). Las de PID muerto se podaron automaticamente." -f $sessions.Count) -ForegroundColor Cyan
+    Write-Host ("Total: {0} sesion(es) viva(s). Las de PID muerto se podaron automaticamente." -f $liveSessions.Count) -ForegroundColor Cyan
 }
 
 # ==============================================================================
@@ -777,12 +790,15 @@ if ($Start -le 0 -and $ToReview -le 0 -and $Parallel.Count -eq 0) {
     Write-Host ""
     Write-Host ("Total: {0} pendiente(s)." -f $pending.Count) -ForegroundColor Yellow
 
-    # Multi-session: show what other LIVE local sessions are working right now
-    $sessions = @(Read-SessionRegistry)
-    if ($sessions.Count -gt 0) {
+    # Multi-session: show what other LIVE local sessions are working right now.
+    # NOTE: do NOT name this $sessions - PowerShell variable names are
+    # case-insensitive, so it would alias the [switch]$Sessions PARAMETER and
+    # throw "Cannot convert Object[] to SwitchParameter" on assignment (issue #101).
+    $liveSessions = @(Read-SessionRegistry)
+    if ($liveSessions.Count -gt 0) {
         Write-Host ""
         Write-Host "Sesiones activas en esta maquina:" -ForegroundColor Cyan
-        foreach ($s in $sessions) {
+        foreach ($s in $liveSessions) {
             Write-Host ("  #{0}  rama {1}  (PID {2} vivo, desde {3}) en {4}" -f $s.issue, $s.branch, $s.sessionPid, $s.started, $s.workPath) -ForegroundColor DarkCyan
         }
     }

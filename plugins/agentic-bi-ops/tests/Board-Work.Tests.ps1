@@ -180,3 +180,37 @@ Describe 'Invoke-IssueStart safety refusals + dry-run' {
         $r.branch  | Should -Match '^issue-1-'
     }
 }
+
+Describe 'ConvertTo-SessionRegistryJson (prune serialization, issue #101)' {
+    It 'returns an explicit empty JSON array when every session is dead' {
+        # The bug: `@() | ConvertTo-Json -AsArray | Set-Content` writes NOTHING,
+        # so dead entries were never actually pruned. Must emit '[]' instead.
+        ConvertTo-SessionRegistryJson @() | Should -Be '[]'
+    }
+    It 'serializes a single session as a one-element array (not a bare object)' {
+        $json = ConvertTo-SessionRegistryJson @([pscustomobject]@{ issue = 1 })
+        $parsed = $json | ConvertFrom-Json
+        @($parsed).Count | Should -Be 1
+        @($parsed)[0].issue | Should -Be 1
+    }
+    It 'serializes multiple sessions as an array' {
+        $json = ConvertTo-SessionRegistryJson @(
+            [pscustomobject]@{ issue = 1 }, [pscustomobject]@{ issue = 2 })
+        @($json | ConvertFrom-Json).Count | Should -Be 2
+    }
+}
+
+Describe 'MODE 2 session list must not alias the [switch]$Sessions param (issue #101)' {
+    BeforeAll { $script:Src = Get-Content $script:Script -Raw }
+    It 'declares Sessions as a switch parameter' {
+        $script:Src | Should -Match '\[switch\]\$Sessions'
+    }
+    It 'does NOT assign the live session list to the colliding $sessions name at script scope' {
+        # `$sessions = @(...)` at script scope aliases the [switch]$Sessions param
+        # (case-insensitive) and throws "Cannot convert Object[] to SwitchParameter".
+        $script:Src | Should -Not -Match '\$sessions\s*=\s*@\(Read-SessionRegistry\)'
+    }
+    It 'uses the safe $liveSessions name for the MODE 2 listing' {
+        $script:Src | Should -Match '\$liveSessions\s*=\s*@\(Read-SessionRegistry\)'
+    }
+}
