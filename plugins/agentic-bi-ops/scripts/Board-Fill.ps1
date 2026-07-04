@@ -21,8 +21,14 @@
 
     Linked PRs and Sub-issues progress are system-derived — not writable via API.
 
+    The board owner may be a USER or an ORGANIZATION. The owner type is resolved
+    up front (see Get-OwnerType) and the project is queried against the matching
+    GraphQL root, so the script never false-reports "no gaps" just because the
+    board could not be read under the wrong owner root (issue #86).
+
 .PARAMETER Owner
-    GitHub username that owns the project board. Defaults to CSalcedoDataBI.
+    GitHub login that owns the project board (user OR organization).
+    Defaults to CSalcedoDataBI.
 
 .PARAMETER Repo
     owner/repo string. Issues are created here when converting drafts.
@@ -58,25 +64,53 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# ── 0. Token ──────────────────────────────────────────────────────────────────
-# Respect a pre-set $env:GH_TOKEN (a business board is reached by exporting
-# GITHUB_TOKEN_BUSINESS first) instead of clobbering it with the personal PAT.
-if (-not $env:GH_TOKEN) {
-    $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
+# ── Functions (pure + gh helpers; defined before the dot-source guard) ─────────
+
+function Get-OwnerRoot {
+    # Pure: map a GraphQL RepositoryOwner __typename to the query root field that
+    # exposes projectV2(number:) for that owner. This is the decision point behind
+    # issue #86 — the board owner may be a USER or an ORGANIZATION.
+    param([string]$OwnerType)
+    switch ($OwnerType) {
+        'User'         { 'user' }
+        'Organization' { 'organization' }
+        default        { $null }
+    }
 }
-if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
-if (-not $Repo) { $Repo = "$Owner/agentic-bi-ops" }
 
-$mode = if ($DryRun) { "DRY-RUN" } elseif ($Auto) { "AUTO" } else { "INTERACTIVE" }
-$boardUrl = "https://github.com/users/$Owner/projects/$ProjectNum"
-Write-Host "=== Board-Fill  Owner=$Owner  Project=#$ProjectNum  Mode=$mode ===" -ForegroundColor Cyan
-Write-Host "Board: $boardUrl" -ForegroundColor Cyan
-Write-Host ""
+function Get-OwnerUrlSegment {
+    # Pure: the github.com path segment for an owner's projects page.
+    # Organizations live under /orgs/<login>, everyone else under /users/<login>.
+    param([string]$OwnerType)
+    if ($OwnerType -eq 'Organization') { 'orgs' } else { 'users' }
+}
 
-# ── 1. Resolve project + field IDs ────────────────────────────────────────────
-$projData = gh api graphql -f query='
+function Get-OwnerType {
+    # Resolve whether $Owner is a User or an Organization. stderr is NOT suppressed
+    # so a real auth/network failure surfaces instead of being mistaken for "owner
+    # not found". Returns 'User', 'Organization', or $null (login does not exist).
+    param([string]$Owner)
+    $resp = gh api graphql -f query='
+query($o:String!) { repositoryOwner(login:$o) { __typename } }' -F "o=$Owner" | ConvertFrom-Json
+    return $resp.data.repositoryOwner.__typename
+}
+
+function Resolve-ProjectV2Node {
+    # Resolve a ProjectV2 (+ its single-select fields) by number for a USER- OR
+    # ORGANIZATION-owned board. Querying only user(login:) silently returns null
+    # for org-owned boards, so the old code reported a healthy "no gaps" board that
+    # was really unread (issue #86). We resolve the owner type first, then query
+    # the CORRECT root — no expected-error noise, and stderr stays visible so real
+    # failures are not hidden.
+    param([string]$Owner, [int]$Num, [string]$OwnerType)
+    $root = Get-OwnerRoot $OwnerType
+    if (-not $root) { return $null }
+    # Build the query in a variable first: PowerShell does NOT concatenate a
+    # bareword like `query=` with an adjacent `(...)` subexpression, so the inline
+    # `-f query=(...)` form would pass a broken argument to gh.
+    $query = @'
 query($owner:String!, $num:Int!) {
-  user(login:$owner) {
+  ROOT(login:$owner) {
     projectV2(number:$num) {
       id
       fields(first:30) {
@@ -86,53 +120,15 @@ query($owner:String!, $num:Int!) {
       }
     }
   }
-}' -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
-
-$projectId = $projData.data.user.projectV2.id
-# A non-existent project (or a token for the wrong account / missing 'project'
-# scope) resolves projectV2 to null WITHOUT a GraphQL error, so gh exits 0.
-# Abort loudly instead of sailing on to report a healthy, empty board.
-if (-not $projectId) {
-    throw "No pude resolver el board: user '$Owner' projectV2 #$ProjectNum no existe o el token ($TokenVar) no tiene acceso (revisa cuenta y scope 'project'). Aborto en vez de reportar un board sano."
 }
-$allFields = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name }
+'@ -replace 'ROOT', $root
+    $resp = gh api graphql -f query=$query -F "owner=$Owner" -F "num=$Num" | ConvertFrom-Json
+    return $resp.data.$root.projectV2
+}
 
 function Get-Field($name) { $allFields | Where-Object { $_.name -eq $name } }
 function Get-Opt($field, $optName) { ($field.options | Where-Object { $_.name -eq $optName }).id }
 
-$statusNode = Get-Field "Status"
-$statusId   = $statusNode.id
-$doneId     = Get-Opt $statusNode "Done"
-$inProgId   = Get-Opt $statusNode "In Progress"
-$backlogId  = Get-Opt $statusNode "Backlog"
-$reviewId   = Get-Opt $statusNode "In Review"   # optional (from the field preset); falls back to In Progress
-
-$prioNode   = Get-Field "Priority"
-$prioId     = $prioNode.id
-$prioMedId  = Get-Opt $prioNode "P2 Medium"
-
-$sizeNode   = Get-Field "Size"
-$sizeId     = $sizeNode.id
-$sizeMId    = Get-Opt $sizeNode "M"
-
-$typeNode   = Get-Field "Type"
-$typeId     = $typeNode.id
-
-# ── 1.5. Resolve repo ID (needed for draft conversion) ────────────────────────
-$repoParts = $Repo -split "/"
-$repoOwner = $repoParts[0]
-$repoName  = $repoParts[1]
-
-$repoData = gh api graphql -f query='
-query($owner:String!, $name:String!) {
-  repository(owner:$owner, name:$name) { id }
-}' -F "owner=$repoOwner" -F "name=$repoName" | ConvertFrom-Json
-$repoId = $repoData.data.repository.id
-if (-not $repoId) {
-    throw "No pude resolver el repo '$Repo' (no existe o el token ($TokenVar) no tiene acceso). Aborto."
-}
-
-# ── 2. Helper: load all board items ───────────────────────────────────────────
 function Get-BoardItems($projId) {
     $data = gh api graphql -f query='
 query($proj:ID!) {
@@ -172,6 +168,73 @@ query($proj:ID!) {
   }
 }' -F "proj=$projId" | ConvertFrom-Json
     return $data.data.node.items.nodes
+}
+
+# Dot-source guard: tests set this to load the functions above without running
+# the token check or any gh call (same contract as Board-Work.ps1).
+if ($env:ABIOS_BOARDFILL_DOTSOURCE) { return }
+
+# ── 0. Token ──────────────────────────────────────────────────────────────────
+# Respect a pre-set $env:GH_TOKEN (a business board is reached by exporting
+# GITHUB_TOKEN_BUSINESS first) instead of clobbering it with the personal PAT.
+if (-not $env:GH_TOKEN) {
+    $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
+}
+if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
+if (-not $Repo) { $Repo = "$Owner/agentic-bi-ops" }
+
+$mode = if ($DryRun) { "DRY-RUN" } elseif ($Auto) { "AUTO" } else { "INTERACTIVE" }
+
+# ── 1. Resolve owner type, board URL, project + field IDs ──────────────────────
+# The owner may be a USER or an ORGANIZATION — resolve which once, up front, so
+# both the board URL (/users/ vs /orgs/) and the project query use the right root.
+$ownerType = Get-OwnerType $Owner
+$boardUrl  = "https://github.com/$(Get-OwnerUrlSegment $ownerType)/$Owner/projects/$ProjectNum"
+Write-Host "=== Board-Fill  Owner=$Owner  Project=#$ProjectNum  Mode=$mode ===" -ForegroundColor Cyan
+Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+Write-Host ""
+
+$projNode = Resolve-ProjectV2Node -Owner $Owner -Num $ProjectNum -OwnerType $ownerType
+# A non-existent project (or a token for the wrong account / missing 'project'
+# scope) resolves projectV2 to null, and an unknown owner resolves $ownerType to
+# null. Abort loudly instead of sailing on to report a healthy, empty board.
+if (-not $projNode -or -not $projNode.id) {
+    throw "No pude resolver el board: '$Owner' projectV2 #$ProjectNum no existe (owner tipo '$ownerType'), o el token ($TokenVar) no tiene acceso (revisa cuenta y scope 'project'). Aborto en vez de reportar un board sano."
+}
+$projectId = $projNode.id
+$allFields = $projNode.fields.nodes | Where-Object { $_.name }
+
+$statusNode = Get-Field "Status"
+$statusId   = $statusNode.id
+$doneId     = Get-Opt $statusNode "Done"
+$inProgId   = Get-Opt $statusNode "In Progress"
+$backlogId  = Get-Opt $statusNode "Backlog"
+$reviewId   = Get-Opt $statusNode "In Review"   # optional (from the field preset); falls back to In Progress
+
+$prioNode   = Get-Field "Priority"
+$prioId     = $prioNode.id
+$prioMedId  = Get-Opt $prioNode "P2 Medium"
+
+$sizeNode   = Get-Field "Size"
+$sizeId     = $sizeNode.id
+$sizeMId    = Get-Opt $sizeNode "M"
+
+$typeNode   = Get-Field "Type"
+$typeId     = $typeNode.id
+
+# ── 1.5. Resolve repo ID (needed for draft conversion) ────────────────────────
+# repository(owner,name) is owner-type-agnostic (works for user AND org repos).
+$repoParts = $Repo -split "/"
+$repoOwner = $repoParts[0]
+$repoName  = $repoParts[1]
+
+$repoData = gh api graphql -f query='
+query($owner:String!, $name:String!) {
+  repository(owner:$owner, name:$name) { id }
+}' -F "owner=$repoOwner" -F "name=$repoName" | ConvertFrom-Json
+$repoId = $repoData.data.repository.id
+if (-not $repoId) {
+    throw "No pude resolver el repo '$Repo' (no existe o el token ($TokenVar) no tiene acceso). Aborto."
 }
 
 # ── 3. Convert any drafts to real issues ──────────────────────────────────────
