@@ -67,6 +67,12 @@
     each briefed to work its own issue to a PR + review gate. With -DryRun it
     only previews the launch commands.
 
+.PARAMETER Sessions
+    Monitor mode: list the LIVE parallel-session fleet from
+    .agentic-bi-ops/sessions.json (branch, worktree, launch method, and the
+    PR opened for each branch). Dead-PID entries are pruned on read. Needs no
+    -ProjectNum.
+
 .PARAMETER ToReview
     Issue number to move into the "In Review" Status column (requires
     -ProjectNum). The work flow calls this after opening the PR: the change is
@@ -97,6 +103,7 @@
     .\Board-Work.ps1 -ProjectNum 13 -Parallel 12,14,15
     .\Board-Work.ps1 -ProjectNum 13 -Parallel 12,14,15 -Launch
     .\Board-Work.ps1 -ProjectNum 13 -Parallel 12,14,15 -Launch -DryRun
+    .\Board-Work.ps1 -Sessions
     .\Board-Work.ps1 -ProjectNum 13 -ToReview 12
 #>
 [CmdletBinding()]
@@ -108,6 +115,7 @@ param(
     [int]   $Start      = 0,
     [int[]] $Parallel   = @(),
     [switch]$Launch,
+    [switch]$Sessions,
     [int]   $ToReview   = 0,
     [switch]$DryRun,
     [switch]$Branch,
@@ -166,18 +174,36 @@ function Read-SessionRegistry {
     return $alive
 }
 
-function Write-SessionRegistryEntry([int]$issueNum, [string]$branch, [string]$workPath) {
+function Write-SessionRegistryEntry {
+    param(
+        [int]$IssueNum, [string]$Branch, [string]$WorkPath, [string]$Repo = "",
+        [int]$SessionPid = 0, [string]$Via = ""
+    )
     $p = Get-SessionRegistryPath
     if (-not $p) { return }
-    $parentPid = $null
-    try { $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId } catch { }
-    if (-not $parentPid) { return }
-    $entries = @(Read-SessionRegistry | Where-Object { $_.issue -ne $issueNum })
+    # PID identity: an explicit spawned-session PID wins (a parallel launch tracks the
+    # actual worktree session, not the launcher); otherwise the PARENT of this script
+    # (the long-lived host session, since the script's own PID dies on return).
+    $trackPid = $SessionPid
+    if ($trackPid -le 0) {
+        try { $trackPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId } catch { }
+    }
+    if (-not $trackPid) { return }
+    # Preserve fields already recorded for this issue (e.g. repo set at start time)
+    # when a later launch updates only the PID/via.
+    $prev = @(Read-SessionRegistry | Where-Object { $_.issue -eq $IssueNum }) | Select-Object -First 1
+    if (-not $Repo -and $prev) { $Repo = $prev.repo }
+    if (-not $Branch -and $prev) { $Branch = $prev.branch }
+    if (-not $WorkPath -and $prev) { $WorkPath = $prev.workPath }
+    if (-not $Via -and $prev) { $Via = $prev.via }
+    $entries = @(Read-SessionRegistry | Where-Object { $_.issue -ne $IssueNum })
     $entries += [PSCustomObject]@{
-        issue      = $issueNum
-        branch     = $branch
-        workPath   = $workPath
-        sessionPid = $parentPid
+        issue      = $IssueNum
+        repo       = $Repo
+        branch     = $Branch
+        workPath   = $WorkPath
+        sessionPid = $trackPid
+        via        = $Via
         host       = $env:COMPUTERNAME
         started    = (Get-Date -Format "yyyy-MM-dd HH:mm")
     }
@@ -451,7 +477,7 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
             }
         }
         if ($result.workPath) {
-            Write-SessionRegistryEntry -issueNum $IssueNum -branch $branchName -workPath $result.workPath
+            Write-SessionRegistryEntry -IssueNum $IssueNum -Branch $branchName -WorkPath $result.workPath -Repo $repo
             Write-Host "  OK  Sesion registrada en .agentic-bi-ops/sessions.json" -ForegroundColor Green
         }
     }
@@ -554,15 +580,57 @@ function Start-WorktreeSession {
     }
     # Persist the briefing so the spawned session reads it without command-line quoting.
     Set-Content -LiteralPath $briefingFile -Value (Get-SessionBriefing $IssueNum $Repo $Branch $WorkPath) -Encoding UTF8
+    $proc = $null
     try {
-        if ($plan.usesWt) { Start-Process $plan.launcher -ArgumentList $plan.args | Out-Null }
-        else              { Start-Process $plan.launcher -ArgumentList $plan.args -WorkingDirectory $WorkPath | Out-Null }
+        if ($plan.usesWt) { $proc = Start-Process $plan.launcher -ArgumentList $plan.args -PassThru }
+        else              { $proc = Start-Process $plan.launcher -ArgumentList $plan.args -WorkingDirectory $WorkPath -PassThru }
         $how = if ($plan.usesWt) { "WT tab 'issue-$IssueNum'" } else { "ventana pwsh" }
         Write-Host ("  OK  #{0}: sesion Claude lanzada ({1}) en {2}" -f $IssueNum, $how, $WorkPath) -ForegroundColor Green
     } catch {
         Write-Host "  FAIL #${IssueNum}: no se pudo lanzar la sesion: $_" -ForegroundColor Red
     }
+    # Attach the spawned process so the caller can track its real PID in the registry.
+    # NOTE: a 'wt' process forks the terminal host and exits fast, so its PID is not a
+    # reliable liveness signal - only the standalone pwsh window's PID is tracked.
+    $plan | Add-Member -NotePropertyName process -NotePropertyValue $proc -Force
     return $plan
+}
+
+# Monitor the local parallel-session fleet: list every LIVE registered session
+# (Read-SessionRegistry prunes dead-PID entries on the way in) with its branch,
+# worktree, launch method and - best-effort - the PR opened for its branch.
+function Show-SessionFleet {
+    $sessions = @(Read-SessionRegistry)
+    Write-Host "=== Flota de sesiones activas (esta maquina) ===" -ForegroundColor Cyan
+    Write-Host ""
+    if ($sessions.Count -eq 0) {
+        Write-Host "No hay sesiones vivas registradas en .agentic-bi-ops/sessions.json." -ForegroundColor DarkGray
+        return
+    }
+    foreach ($s in ($sessions | Sort-Object issue)) {
+        $via = if ($s.via) { $s.via } else { "-" }
+        Write-Host ("  #{0,-4} {1}" -f $s.issue, $s.branch) -ForegroundColor Yellow
+        Write-Host ("        PID {0} via {1} | host {2} | desde {3}" -f $s.sessionPid, $via, $s.host, $s.started) -ForegroundColor DarkGray
+        if ($s.workPath) { Write-Host ("        {0}" -f $s.workPath) -ForegroundColor DarkGray }
+        if ($s.repo -and $s.branch) {
+            try {
+                $pr = @(gh pr list --repo $s.repo --head $s.branch --state all --json number,state,url --limit 1 2>$null | ConvertFrom-Json)
+                if ($pr.Count -gt 0) {
+                    Write-Host ("        PR #{0} [{1}] {2}" -f $pr[0].number, $pr[0].state, $pr[0].url) -ForegroundColor DarkCyan
+                }
+            } catch { }
+        }
+    }
+    Write-Host ""
+    Write-Host ("Total: {0} sesion(es) viva(s). Las de PID muerto se podaron automaticamente." -f $sessions.Count) -ForegroundColor Cyan
+}
+
+# ==============================================================================
+# MODE 0: -Sessions  -> monitor the local parallel-session fleet
+# ==============================================================================
+if ($Sessions) {
+    Show-SessionFleet
+    exit 0
 }
 
 # ==============================================================================
@@ -839,8 +907,16 @@ if ($Parallel.Count -gt 0) {
             $launched = 0
             foreach ($r in $started) {
                 if ($r.workPath) {
-                    Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $r.workPath | Out-Null
+                    $spawn = Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $r.workPath
                     $launched++
+                    # Track the spawned session's own PID (pwsh window is reliable; a wt
+                    # launcher forks and exits, so keep the host PID there).
+                    $via = if ($spawn.usesWt) { "wt" } else { "pwsh" }
+                    if ($spawn.process -and -not $spawn.usesWt) {
+                        Write-SessionRegistryEntry -IssueNum $r.issue -SessionPid $spawn.process.Id -Via $via
+                    } else {
+                        Write-SessionRegistryEntry -IssueNum $r.issue -Via $via
+                    }
                 }
             }
             Write-Host ""
