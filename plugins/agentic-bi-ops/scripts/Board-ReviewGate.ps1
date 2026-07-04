@@ -137,9 +137,10 @@ try {
 if (-not $copilotRequested) {
     # Eventual consistency: the reviewer may take a moment to surface (also covers a
     # re-run where the bot was already requested and the POST returned no fresh body).
+    # Don't sleep after the final attempt - there is no re-check after it.
     foreach ($attempt in 1..3) {
         if (Test-CopilotPending) { $copilotRequested = $true; break }
-        Start-Sleep -Seconds 2
+        if ($attempt -lt 3) { Start-Sleep -Seconds 2 }
     }
 }
 
