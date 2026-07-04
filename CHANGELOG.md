@@ -1,5 +1,19 @@
 # Changelog
 
+
+## [0.15.0] - 2026-07-03
+### Added
+- **feat(work): parallel Claude sessions from /board work** (#98)
+- **work parallel: -Parallel batch start (reusable start fn, worktrees, batch safety, dry-run)** (#99)
+- **work parallel: docs, /board menu option, and projects-admin reference** (#102)
+- **work parallel: launcher spawns a visible Claude session per worktree (Windows Terminal + briefing)** (#100)
+- **work parallel: Pester tests for batch parsing, dry-run plan, and safety refusals** (#103)
+- **work parallel: register and monitor the spawned session fleet in sessions.json** (#101)
+### Changed
+- **fix(work): merge step must handle the pr-before-merge ruleset (auto --admin bypass)** (#113)
+### Fixed
+- **fix(work): review gate false-negative on Copilot review detection** (#115)
+
 ## [0.14.1] - 2026-07-03
 ### Added
 - **skills-audit passive Stop hook** (#95, Phase 2): `scripts/SkillAudit-StopHook.ps1` is an
