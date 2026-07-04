@@ -112,19 +112,40 @@ Write-Host "=== Review gate  $Repo  PR #$PR ===" -ForegroundColor Cyan
 Write-Host ""
 
 # ── 1. Request a Copilot code review (best-effort) ────────────────────────────
+# Confirming the request used to false-negative: an immediate re-query can miss the
+# freshly added reviewer (eventual consistency), printing "no disponible" even when
+# Copilot WAS added. Instead we trust the POST response body (its requested_reviewers
+# is authoritative and immediate) and fall back to a short GET retry.
 $copilotRequested = $false
+
+function Test-CopilotPending {
+    # GET the current requested reviewers; the Copilot bot shows up under .users as
+    # login "Copilot". Returns $true when it is present.
+    $rr = gh api "repos/$Repo/pulls/$PR/requested_reviewers" 2>$null | ConvertFrom-Json
+    return [bool](@($rr.users) | Where-Object { $_.login -match '(?i)copilot' })
+}
+
 try {
-    gh api "repos/$Repo/pulls/$PR/requested_reviewers" -X POST `
-        -f "reviewers[]=copilot-pull-request-reviewer[bot]" 2>$null | Out-Null
-    # The POST can return 200 WITHOUT adding the bot (Copilot code review not enabled for the
-    # account). Verify the reviewer is really pending before committing to the review wait.
-    $pending = gh pr view $PR --repo $Repo --json reviewRequests -q '.reviewRequests[].login' 2>$null
-    if ($pending -match '(?i)copilot') {
+    $postResp = gh api "repos/$Repo/pulls/$PR/requested_reviewers" -X POST `
+        -f "reviewers[]=copilot-pull-request-reviewer[bot]" 2>$null | ConvertFrom-Json
+    # A failed POST (Copilot not enabled) yields an error object with no requested_reviewers.
+    if ($postResp -and (@($postResp.requested_reviewers) | Where-Object { $_.login -match '(?i)copilot' })) {
         $copilotRequested = $true
-        Write-Host "  OK  Review de Copilot solicitado (reviewer pendiente confirmado)" -ForegroundColor Green
     }
 } catch { }
+
 if (-not $copilotRequested) {
+    # Eventual consistency: the reviewer may take a moment to surface (also covers a
+    # re-run where the bot was already requested and the POST returned no fresh body).
+    foreach ($attempt in 1..3) {
+        if (Test-CopilotPending) { $copilotRequested = $true; break }
+        Start-Sleep -Seconds 2
+    }
+}
+
+if ($copilotRequested) {
+    Write-Host "  OK  Review de Copilot solicitado (reviewer pendiente confirmado)" -ForegroundColor Green
+} else {
     Write-Host "  WARN Copilot code review no disponible en esta cuenta/repo." -ForegroundColor DarkYellow
     Write-Host "       Fallback obligatorio: self-review explicito de 'gh pr diff $PR' antes de mergear," -ForegroundColor DarkYellow
     Write-Host "       y si la skill second-opinion esta disponible, usala como segundo revisor." -ForegroundColor DarkYellow
