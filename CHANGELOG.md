@@ -9,7 +9,7 @@
   child spawned under the Claude Desktop host gets no usable OAuth (401). Each unattended
   session now launches HEADLESS — `claude -p ... --permission-mode bypassPermissions
   --no-session-persistence --verbose` — and authenticates with a credential read at runtime
-  from the Windows USER env var named by the new `-ClaudeAuthVar` (default `ANTHROPIC_API_KEY`;
+  from a user-scoped Windows environment variable named by the new `-ClaudeAuthVar` (default `ANTHROPIC_API_KEY`;
   set `CLAUDE_CODE_OAUTH_TOKEN` to bill the subscription). Only the var NAME touches the command
   line — the secret never does — and `-ClaudeAuthVar` is validated as a plain identifier. A
   preflight warns and refuses to spawn if the auth var is unset. NOTE: run `-Launch` from a
