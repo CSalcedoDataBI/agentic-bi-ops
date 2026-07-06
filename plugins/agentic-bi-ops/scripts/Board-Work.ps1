@@ -121,7 +121,11 @@ param(
     [switch]$Branch,
     [switch]$IgnoreBlocked,
     [switch]$TakeOver,
-    [string]$TokenVar   = "GITHUB_TOKEN_PERSONAL"
+    [string]$TokenVar      = "GITHUB_TOKEN_PERSONAL",
+    # Only a plain env-var identifier - it gets interpolated into the spawned
+    # -Command string, so reject anything that could inject (';', quotes, spaces).
+    [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
+    [string]$ClaudeAuthVar = "ANTHROPIC_API_KEY"
 )
 
 $ErrorActionPreference = "Stop"
@@ -558,16 +562,39 @@ function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [st
 # and to preview under -DryRun. Windows Terminal tab when 'wt' exists (grouped in
 # a named window), else a standalone pwsh window. The briefing is passed via a
 # file (written by the caller) so no long/quoted text ever hits the command line.
-function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel") {
+function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY") {
     $tabTitle  = "issue-$issueNum"
-    # --dangerously-skip-permissions: the spawned session is UNATTENDED, so it must
-    # run without stopping - this bypasses BOTH the new-worktree trust dialog and the
-    # per-tool permission prompts. Without it the tab opens but stalls forever waiting
-    # for a human to approve the first tool call (the "opens but never finishes" bug).
+    # Defense-in-depth: this name is interpolated into the spawned -Command string,
+    # so it MUST be a bare env-var identifier - never let ';'/quotes/spaces through.
+    if ($claudeAuthVar -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+        throw "ClaudeAuthVar '$claudeAuthVar' is not a valid environment variable name."
+    }
+    # The spawned session is UNATTENDED, so it must never block on an interactive
+    # prompt. Headless -p is the only mode that clears ALL of them: it skips the
+    # new-worktree trust dialog AND the one-time "Bypass Permissions mode" accept
+    # (both are interactive-only). --permission-mode bypassPermissions then keeps it
+    # from pausing on per-tool approvals, --no-session-persistence stops parallel
+    # sessions colliding on session state, and --verbose streams progress into the
+    # tab so it visibly works instead of looking frozen. (An interactive
+    # --dangerously-skip-permissions launch still stops at the one-time bypass
+    # accept, which is why the tabs opened but never finished.)
+    #
+    # AUTH: a `claude` child gets no usable OAuth when spawned under the Claude
+    # Desktop host (the host holds/refreshes the token in memory and strips the env),
+    # so each tab authenticates with an explicit credential read at RUNTIME from the
+    # Windows USER env var named by $claudeAuthVar (default ANTHROPIC_API_KEY; set it
+    # to CLAUDE_CODE_OAUTH_TOKEN to bill the subscription instead). Only the var NAME
+    # touches the command line - the secret never does. Re-reading from the registry
+    # also RESTORES the value even when the launching context (Desktop) has stripped
+    # it. We drop the inherited CLAUDE_CODE_* session markers so the child starts as
+    # a clean top-level session.
     # Double any single quote so a repo path containing ' (valid on Windows, e.g. an
     # O'Brien user folder) can't break out of the literal or inject into -Command.
     $safeBrief = $briefingFile -replace "'", "''"
-    $claudeCmd = "claude --dangerously-skip-permissions (Get-Content -Raw -LiteralPath '$safeBrief')"
+    $auth  = '$env:{0}=[Environment]::GetEnvironmentVariable(''{0}'',''User''); ' -f $claudeAuthVar
+    $clean = 'Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue; '
+    $run   = 'claude -p (Get-Content -Raw -LiteralPath ''{0}'') --permission-mode bypassPermissions --no-session-persistence --verbose' -f $safeBrief
+    $claudeCmd = $auth + $clean + $run
     if (Get-Command wt -ErrorAction SilentlyContinue) {
         return [PSCustomObject]@{
             launcher     = "wt"
@@ -589,11 +616,12 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
 function Start-WorktreeSession {
     param(
         [int]$IssueNum, [string]$Repo, [string]$Branch, [string]$WorkPath,
+        [string]$ClaudeAuthVar = "ANTHROPIC_API_KEY",
         [switch]$Preview
     )
     $abios = Get-AbiosDir
     $briefingFile = if ($abios) { Join-Path $abios "briefing-$IssueNum.txt" } else { Join-Path $WorkPath "briefing-$IssueNum.txt" }
-    $plan  = Build-WorktreeLaunch $IssueNum $WorkPath $briefingFile
+    $plan  = Build-WorktreeLaunch $IssueNum $WorkPath $briefingFile "abios-parallel" $ClaudeAuthVar
 
     if ($Preview) {
         Write-Host ("  [preview] #{0}: {1} {2}" -f $IssueNum, $plan.launcher, ($plan.args -join ' ')) -ForegroundColor Gray
@@ -942,10 +970,27 @@ if ($Parallel.Count -gt 0) {
             }
         } else {
             Write-Host "----- LANZANDO SESIONES CLAUDE -----" -ForegroundColor Cyan
+            # Preflight: unattended headless sessions need an explicit credential in
+            # the Windows USER env (the Desktop host's OAuth is not shared with child
+            # processes). Without it every tab would 401 silently - warn and don't spawn.
+            $claudeAuth = [System.Environment]::GetEnvironmentVariable($ClaudeAuthVar, "User")
+            if (-not $claudeAuth) {
+                Write-Host ""
+                Write-Host ("  AUTH REQUERIDA - las sesiones headless necesitan '{0}' en tus variables de usuario." -f $ClaudeAuthVar) -ForegroundColor Red
+                Write-Host "  (El login del Desktop NO se comparte con procesos hijos, darian 401.)" -ForegroundColor DarkYellow
+                Write-Host "  Opcion A (API key, facturacion por consumo a tu cuenta de consola):" -ForegroundColor Yellow
+                Write-Host "    setx ANTHROPIC_API_KEY <tu-api-key>" -ForegroundColor Gray
+                Write-Host "  Opcion B (suscripcion Claude): genera un token y apunta el launcher a el:" -ForegroundColor Yellow
+                Write-Host "    claude setup-token   ; setx CLAUDE_CODE_OAUTH_TOKEN <token>   ; luego -ClaudeAuthVar CLAUDE_CODE_OAUTH_TOKEN" -ForegroundColor Gray
+                Write-Host "  Reinicia la terminal y re-lanza con -Launch (los worktrees ya estan listos; monitorea con -Sessions)." -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+                exit 0
+            }
             $launched = 0
             foreach ($r in $started) {
                 if ($r.workPath) {
-                    $spawn = Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $r.workPath
+                    $spawn = Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $r.workPath -ClaudeAuthVar $ClaudeAuthVar
                     $launched++
                     # Track the spawned session's own PID (pwsh window is reliable; a wt
                     # launcher forks and exits, so keep the host PID there).

@@ -124,10 +124,31 @@ Describe 'Build-WorktreeLaunch' {
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
         ($p.args -join ' ') | Should -Match 'brief\.txt'
     }
-    It 'runs the spawned session unattended (skips permission + trust prompts)' {
+    It 'runs the spawned session unattended headless (no interactive prompt can stall it)' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
-        ($p.args -join ' ') | Should -Match '--dangerously-skip-permissions'
+        $joined = ($p.args -join ' ')
+        $joined | Should -Match 'claude -p '                          # headless: skips trust + bypass-accept prompts
+        $joined | Should -Match '--permission-mode bypassPermissions' # no per-tool approval stalls
+        $joined | Should -Match '--no-session-persistence'            # parallel sessions don't collide
+    }
+    It 'injects the child auth credential by env-var NAME (secret never on the command line)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'MY_AUTH_VAR'
+        $joined = ($p.args -join ' ')
+        # same-name injection: $env:MY_AUTH_VAR = [Environment]::GetEnvironmentVariable('MY_AUTH_VAR','User')
+        $joined | Should -Match '\$env:MY_AUTH_VAR='                       # sets the child's credential
+        $joined | Should -Match "GetEnvironmentVariable\('MY_AUTH_VAR','User'"  # read at runtime, by NAME, from registry
+        $joined | Should -Match 'Remove-Item Env:CLAUDECODE'              # drop inherited host session markers
+    }
+    It 'defaults the auth credential to ANTHROPIC_API_KEY' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
+        ($p.args -join ' ') | Should -Match '\$env:ANTHROPIC_API_KEY='
+    }
+    It 'rejects an auth-var name that could inject into the spawned command' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        { Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt' 'abios-parallel' "X'); rm -rf /; #" } | Should -Throw
     }
     It 'escapes single quotes in the briefing path (no literal break / injection)' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
