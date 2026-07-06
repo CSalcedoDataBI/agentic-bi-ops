@@ -539,13 +539,18 @@ query($o:String!, $r:String!, $n:Int!) {
 
 # The one-line first message a spawned Claude session receives. Pure -> testable.
 function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [string]$workPath) {
-    return ("Pick up GitHub issue #$issueNum in $repo. It is already In Progress and claimed, " +
+    return ("You are running AUTONOMOUSLY - permissions are pre-approved, so work this " +
+            "task end-to-end WITHOUT stopping to ask for confirmation. " +
+            "Pick up GitHub issue #$issueNum in $repo. It is already In Progress and claimed, " +
             "on branch $branch in this worktree ($workPath). Steps: " +
             "(1) read it with: gh issue view $issueNum --repo $repo ; " +
-            "(2) implement it fully in this worktree; " +
-            "(3) open the PR with: plugins/agentic-bi-ops/scripts/New-BoardPR.ps1 -Issue $issueNum ; " +
-            "(4) pass the review gate with Board-ReviewGate.ps1, address feedback, then squash-merge. " +
-            "Work ONLY this issue - do not touch other worktrees or issues.")
+            "(2) implement it fully in this worktree and commit your changes ; " +
+            "(3) open the PR with: pwsh plugins/agentic-bi-ops/scripts/New-BoardPR.ps1 -Issue $issueNum " +
+            "and note the PR number it prints ; " +
+            "(4) pass the review gate: pwsh plugins/agentic-bi-ops/scripts/Board-ReviewGate.ps1 -PR <pr> ; " +
+            "address any feedback and re-run until it is green ; " +
+            "(5) merge it (ruleset-safe): pwsh plugins/agentic-bi-ops/scripts/Board-Merge.ps1 -PR <pr> . " +
+            "Work ONLY this issue - never touch other worktrees or issues. When the PR is merged, you are done.")
 }
 
 # Build the exact launch command for a worktree session. Returns an object
@@ -555,7 +560,14 @@ function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [st
 # file (written by the caller) so no long/quoted text ever hits the command line.
 function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel") {
     $tabTitle  = "issue-$issueNum"
-    $claudeCmd = "claude (Get-Content -Raw -LiteralPath '$briefingFile')"
+    # --dangerously-skip-permissions: the spawned session is UNATTENDED, so it must
+    # run without stopping - this bypasses BOTH the new-worktree trust dialog and the
+    # per-tool permission prompts. Without it the tab opens but stalls forever waiting
+    # for a human to approve the first tool call (the "opens but never finishes" bug).
+    # Double any single quote so a repo path containing ' (valid on Windows, e.g. an
+    # O'Brien user folder) can't break out of the literal or inject into -Command.
+    $safeBrief = $briefingFile -replace "'", "''"
+    $claudeCmd = "claude --dangerously-skip-permissions (Get-Content -Raw -LiteralPath '$safeBrief')"
     if (Get-Command wt -ErrorAction SilentlyContinue) {
         return [PSCustomObject]@{
             launcher     = "wt"

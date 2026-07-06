@@ -93,6 +93,12 @@ Describe 'Get-SessionBriefing' {
         $script:Brief | Should -Match 'New-BoardPR\.ps1 -Issue 42'
         $script:Brief | Should -Match 'review gate'
     }
+    It 'tells the session it is autonomous (do not stop to ask)' {
+        $script:Brief | Should -Match 'AUTONOMOUSLY'
+    }
+    It 'finishes the merge through the ruleset-safe Board-Merge.ps1' {
+        $script:Brief | Should -Match 'Board-Merge\.ps1'
+    }
 }
 
 Describe 'Build-WorktreeLaunch' {
@@ -117,6 +123,16 @@ Describe 'Build-WorktreeLaunch' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
         ($p.args -join ' ') | Should -Match 'brief\.txt'
+    }
+    It 'runs the spawned session unattended (skips permission + trust prompts)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
+        ($p.args -join ' ') | Should -Match '--dangerously-skip-permissions'
+    }
+    It 'escapes single quotes in the briefing path (no literal break / injection)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        $p = Build-WorktreeLaunch 12 'C:\wt' "C:\O'Brien\brief.txt"
+        ($p.args -join ' ') | Should -Match "O''Brien"
     }
 }
 
