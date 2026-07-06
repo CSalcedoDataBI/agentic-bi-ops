@@ -101,6 +101,18 @@ Describe 'Get-SessionBriefing' {
     }
 }
 
+Describe 'Resolve-ClaudeAuthVar' {
+    It 'honors an explicit -ClaudeAuthVar even when the OAuth token exists' {
+        Resolve-ClaudeAuthVar $true 'ANTHROPIC_API_KEY' $true | Should -Be 'ANTHROPIC_API_KEY'
+    }
+    It 'auto-prefers the subscription OAuth token when not explicit and it is present' {
+        Resolve-ClaudeAuthVar $false 'ANTHROPIC_API_KEY' $true | Should -Be 'CLAUDE_CODE_OAUTH_TOKEN'
+    }
+    It 'falls back to the default when not explicit and no OAuth token' {
+        Resolve-ClaudeAuthVar $false 'ANTHROPIC_API_KEY' $false | Should -Be 'ANTHROPIC_API_KEY'
+    }
+}
+
 Describe 'Build-WorktreeLaunch' {
     It 'builds a Windows Terminal tab command when wt is present' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }

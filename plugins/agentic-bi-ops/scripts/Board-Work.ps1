@@ -616,6 +616,16 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
     }
 }
 
+# Pick which Windows USER env var each spawned session authenticates with. Pure ->
+# testable. An EXPLICIT -ClaudeAuthVar always wins; otherwise prefer the subscription
+# OAuth token (CLAUDE_CODE_OAUTH_TOKEN, billed to the plan) when it is present, else
+# fall back to the given default (ANTHROPIC_API_KEY, per-token console billing).
+function Resolve-ClaudeAuthVar([bool]$explicit, [string]$chosen, [bool]$oauthTokenPresent) {
+    if ($explicit) { return $chosen }
+    if ($oauthTokenPresent) { return 'CLAUDE_CODE_OAUTH_TOKEN' }
+    return $chosen
+}
+
 # Spawn (or -Preview) ONE visible Claude session for a started worktree.
 function Start-WorktreeSession {
     param(
@@ -966,11 +976,10 @@ if ($Parallel.Count -gt 0) {
     if ($Launch) {
         Write-Host ""
         # Auto-prefer the subscription OAuth token when the caller did not pick an
-        # auth var explicitly: CLAUDE_CODE_OAUTH_TOKEN (billed to the Claude plan) is
-        # cheaper than the per-token ANTHROPIC_API_KEY, so use it when it is present.
-        if (-not $PSBoundParameters.ContainsKey('ClaudeAuthVar') -and
-            [System.Environment]::GetEnvironmentVariable('CLAUDE_CODE_OAUTH_TOKEN', 'User')) {
-            $ClaudeAuthVar = 'CLAUDE_CODE_OAUTH_TOKEN'
+        # auth var explicitly (see Resolve-ClaudeAuthVar).
+        $oauthPresent  = [bool][System.Environment]::GetEnvironmentVariable('CLAUDE_CODE_OAUTH_TOKEN', 'User')
+        $ClaudeAuthVar = Resolve-ClaudeAuthVar $PSBoundParameters.ContainsKey('ClaudeAuthVar') $ClaudeAuthVar $oauthPresent
+        if ($ClaudeAuthVar -eq 'CLAUDE_CODE_OAUTH_TOKEN') {
             Write-Host "  Auth: usando CLAUDE_CODE_OAUTH_TOKEN (suscripcion)." -ForegroundColor DarkGray
         }
         if ($DryRun) {
