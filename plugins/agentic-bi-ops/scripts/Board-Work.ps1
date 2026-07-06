@@ -586,12 +586,16 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
     # to CLAUDE_CODE_OAUTH_TOKEN to bill the subscription instead). Only the var NAME
     # touches the command line - the secret never does. Re-reading from the registry
     # also RESTORES the value even when the launching context (Desktop) has stripped
-    # it. We drop the inherited CLAUDE_CODE_* session markers so the child starts as
-    # a clean top-level session.
+    # it. We FIRST clear every competing Anthropic credential so the chosen one is
+    # authoritative regardless of auth precedence - ANTHROPIC_API_KEY outranks
+    # CLAUDE_CODE_OAUTH_TOKEN, so an inherited API key would otherwise silently
+    # override a subscription token (or 401 if stale). We also drop the inherited
+    # CLAUDE_CODE_* session markers so the child starts as a clean top-level session.
     # Double any single quote so a repo path containing ' (valid on Windows, e.g. an
     # O'Brien user folder) can't break out of the literal or inject into -Command.
-    $safeBrief = $briefingFile -replace "'", "''"
-    $auth  = '$env:{0}=[Environment]::GetEnvironmentVariable(''{0}'',''User''); ' -f $claudeAuthVar
+    $safeBrief  = $briefingFile -replace "'", "''"
+    $clearAuth  = 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue; '
+    $auth  = $clearAuth + ('$env:{0}=[Environment]::GetEnvironmentVariable(''{0}'',''User''); ' -f $claudeAuthVar)
     $clean = 'Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue; '
     $run   = 'claude -p (Get-Content -Raw -LiteralPath ''{0}'') --permission-mode bypassPermissions --no-session-persistence --verbose' -f $safeBrief
     $claudeCmd = $auth + $clean + $run
@@ -610,6 +614,16 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
         briefingFile = $briefingFile
         usesWt       = $false
     }
+}
+
+# Pick which Windows USER env var each spawned session authenticates with. Pure ->
+# testable. An EXPLICIT -ClaudeAuthVar always wins; otherwise prefer the subscription
+# OAuth token (CLAUDE_CODE_OAUTH_TOKEN, billed to the plan) when it is present, else
+# fall back to the given default (ANTHROPIC_API_KEY, per-token console billing).
+function Resolve-ClaudeAuthVar([bool]$explicit, [string]$chosen, [bool]$oauthTokenPresent) {
+    if ($explicit) { return $chosen }
+    if ($oauthTokenPresent) { return 'CLAUDE_CODE_OAUTH_TOKEN' }
+    return $chosen
 }
 
 # Spawn (or -Preview) ONE visible Claude session for a started worktree.
@@ -961,12 +975,19 @@ if ($Parallel.Count -gt 0) {
     # -- Launch: one visible Claude session per worktree (-Launch) --------------
     if ($Launch) {
         Write-Host ""
+        # Auto-prefer the subscription OAuth token when the caller did not pick an
+        # auth var explicitly (see Resolve-ClaudeAuthVar).
+        $oauthPresent  = [bool][System.Environment]::GetEnvironmentVariable('CLAUDE_CODE_OAUTH_TOKEN', 'User')
+        $ClaudeAuthVar = Resolve-ClaudeAuthVar $PSBoundParameters.ContainsKey('ClaudeAuthVar') $ClaudeAuthVar $oauthPresent
+        if ($ClaudeAuthVar -eq 'CLAUDE_CODE_OAUTH_TOKEN') {
+            Write-Host "  Auth: usando CLAUDE_CODE_OAUTH_TOKEN (suscripcion)." -ForegroundColor DarkGray
+        }
         if ($DryRun) {
             Write-Host "----- LAUNCH (preview, -DryRun no lanza nada) -----" -ForegroundColor Cyan
             foreach ($r in $planned) {
                 $repoName    = ($r.repo -split '/')[1]
                 $previewPath = Join-Path (Split-Path (Get-Location) -Parent) "$repoName--issue-$($r.issue)"
-                Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $previewPath -Preview | Out-Null
+                Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $previewPath -ClaudeAuthVar $ClaudeAuthVar -Preview | Out-Null
             }
         } else {
             Write-Host "----- LANZANDO SESIONES CLAUDE -----" -ForegroundColor Cyan
