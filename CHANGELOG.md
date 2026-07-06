@@ -1,6 +1,21 @@
 # Changelog
 
 
+## [0.15.1] - 2026-07-06
+### Fixed
+- **fix(work): parallel `-Launch` sessions now actually finish the task** (#121, #122, #125).
+  The launcher opened tabs that stalled forever: an interactive session blocks on the
+  new-worktree trust dialog and the one-time "Bypass Permissions mode" accept, and a `claude`
+  child spawned under the Claude Desktop host gets no usable OAuth (401). Each unattended
+  session now launches HEADLESS — `claude -p ... --permission-mode bypassPermissions
+  --no-session-persistence --verbose` — and authenticates with a credential read at runtime
+  from the Windows USER env var named by the new `-ClaudeAuthVar` (default `ANTHROPIC_API_KEY`;
+  set `CLAUDE_CODE_OAUTH_TOKEN` to bill the subscription). Only the var NAME touches the command
+  line — the secret never does — and `-ClaudeAuthVar` is validated as a plain identifier. A
+  preflight warns and refuses to spawn if the auth var is unset. NOTE: run `-Launch` from a
+  normal terminal, not the Desktop host, which cannot spawn authenticated `claude` children.
+- **fix(fill): Board-Fill false 'no gaps' on user-account boards (GraphQL owner resolution)** (#119)
+
 ## [0.15.0] - 2026-07-03
 ### Added
 - **feat(work): parallel Claude sessions from /board work** (#98)
