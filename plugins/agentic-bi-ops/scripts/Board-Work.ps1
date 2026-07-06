@@ -122,6 +122,9 @@ param(
     [switch]$IgnoreBlocked,
     [switch]$TakeOver,
     [string]$TokenVar      = "GITHUB_TOKEN_PERSONAL",
+    # Only a plain env-var identifier - it gets interpolated into the spawned
+    # -Command string, so reject anything that could inject (';', quotes, spaces).
+    [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
     [string]$ClaudeAuthVar = "ANTHROPIC_API_KEY"
 )
 
@@ -561,6 +564,11 @@ function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [st
 # file (written by the caller) so no long/quoted text ever hits the command line.
 function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY") {
     $tabTitle  = "issue-$issueNum"
+    # Defense-in-depth: this name is interpolated into the spawned -Command string,
+    # so it MUST be a bare env-var identifier - never let ';'/quotes/spaces through.
+    if ($claudeAuthVar -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+        throw "ClaudeAuthVar '$claudeAuthVar' is not a valid environment variable name."
+    }
     # The spawned session is UNATTENDED, so it must never block on an interactive
     # prompt. Headless -p is the only mode that clears ALL of them: it skips the
     # new-worktree trust dialog AND the one-time "Bypass Permissions mode" accept

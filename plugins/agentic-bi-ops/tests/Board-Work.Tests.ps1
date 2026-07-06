@@ -146,6 +146,10 @@ Describe 'Build-WorktreeLaunch' {
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
         ($p.args -join ' ') | Should -Match '\$env:ANTHROPIC_API_KEY='
     }
+    It 'rejects an auth-var name that could inject into the spawned command' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        { Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt' 'abios-parallel' "X'); rm -rf /; #" } | Should -Throw
+    }
     It 'escapes single quotes in the briefing path (no literal break / injection)' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         $p = Build-WorktreeLaunch 12 'C:\wt' "C:\O'Brien\brief.txt"
