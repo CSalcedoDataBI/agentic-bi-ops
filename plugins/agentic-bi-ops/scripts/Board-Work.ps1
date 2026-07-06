@@ -113,7 +113,11 @@ param(
     [string]$Repo     = "",
     [int]   $ProjectNum = 0,
     [int]   $Start      = 0,
-    [int[]] $Parallel   = @(),
+    # Accept as strings, not [int[]]: when the script is invoked via `pwsh -File`,
+    # `-Parallel 129,130` arrives as the single string "129,130" (comma read as a
+    # thousands separator -> 129130), NOT a 2-element array. Get-ParallelQueue
+    # splits each token on ',' so both `-File` and native-array calls work.
+    [string[]] $Parallel = @(),
     [switch]$Launch,
     [switch]$Sessions,
     [int]   $ToReview   = 0,
@@ -227,11 +231,22 @@ function Get-IssueSlugBranch([int]$num, [string]$title) {
     return "issue-$num-$slug"
 }
 
-# Normalize a -Parallel request into the batch queue: drop non-positive numbers and
-# de-duplicate while preserving the requested order. Pure -> unit-testable.
-function Get-ParallelQueue([int[]]$nums) {
+# Normalize a -Parallel request into the batch queue: split comma-separated tokens
+# (so `pwsh -File ... -Parallel 129,130` -> "129,130" splits into 129 and 130),
+# drop non-positive/non-numeric values, and de-duplicate while preserving the
+# requested order. Pure -> unit-testable.
+function Get-ParallelQueue([string[]]$nums) {
     $queue = @()
-    foreach ($n in $nums) { if ($n -gt 0 -and $queue -notcontains $n) { $queue += $n } }
+    foreach ($tok in $nums) {
+        if ($null -eq $tok) { continue }
+        foreach ($part in ($tok -split ',')) {
+            $part = $part.Trim()
+            if ($part -eq '') { continue }
+            $n = 0
+            if (-not [int]::TryParse($part, [ref]$n)) { continue }
+            if ($n -gt 0 -and $queue -notcontains $n) { $queue += $n }
+        }
+    }
     # No unary-comma wrap: it would turn an empty queue into a 1-element array
     # (an array holding @()). Callers wrap with @() to normalize the single case.
     return $queue
@@ -558,13 +573,22 @@ function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [st
 }
 
 # Build the exact launch command for a worktree session. Returns an object
-# { launcher, args, briefingFile } WITHOUT spawning - pure enough to unit-test
-# and to preview under -DryRun. Windows Terminal tab when 'wt' exists (grouped in
-# a named window), else a standalone pwsh window. The briefing is passed via a
-# file (written by the caller) so no long/quoted text ever hits the command line.
+# { launcher, args, briefingFile, launchScriptFile, launchScript } WITHOUT spawning -
+# pure enough to unit-test and to preview under -DryRun. Windows Terminal tab when
+# 'wt' exists (grouped in a named window), else a standalone pwsh window.
+#
+# CRITICAL - why the setup runs from a .ps1 FILE, not an inline `-Command`:
+# Windows Terminal's `wt` command line uses ';' as its OWN sub-command separator
+# (new-tab ; split-pane ; ...). A `pwsh -Command "a; b; c"` passed to `wt` therefore
+# had its ';' eaten by wt, which split ONE intended tab into FOUR (one per segment) -
+# 2 issues -> 8 stray tabs, and the real `claude -p` landed in a bare tab with no
+# auth setup, so no session actually worked its issue. Writing the setup+run to
+# launch-<issue>.ps1 and launching `pwsh -NoExit -File <script>` puts ZERO ';' on
+# wt's command line, so wt opens exactly one tab. The briefing is likewise passed by
+# file so no long/quoted text ever hits the command line.
 function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY") {
     $tabTitle  = "issue-$issueNum"
-    # Defense-in-depth: this name is interpolated into the spawned -Command string,
+    # Defense-in-depth: this name is interpolated into the spawned launch script,
     # so it MUST be a bare env-var identifier - never let ';'/quotes/spaces through.
     if ($claudeAuthVar -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
         throw "ClaudeAuthVar '$claudeAuthVar' is not a valid environment variable name."
@@ -594,25 +618,34 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
     # Double any single quote so a repo path containing ' (valid on Windows, e.g. an
     # O'Brien user folder) can't break out of the literal or inject into -Command.
     $safeBrief  = $briefingFile -replace "'", "''"
-    $clearAuth  = 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue; '
-    $auth  = $clearAuth + ('$env:{0}=[Environment]::GetEnvironmentVariable(''{0}'',''User''); ' -f $claudeAuthVar)
-    $clean = 'Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue; '
-    $run   = 'claude -p (Get-Content -Raw -LiteralPath ''{0}'') --permission-mode bypassPermissions --no-session-persistence --verbose' -f $safeBrief
-    $claudeCmd = $auth + $clean + $run
+    # Each step on its OWN line (a .ps1 file), so no ';' is ever needed - which is the
+    # whole point: ';' on wt's command line would split the tab (see the header note).
+    $clearAuth  = 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue'
+    $setAuth    = '$env:{0}=[Environment]::GetEnvironmentVariable(''{0}'',''User'')' -f $claudeAuthVar
+    $clean      = 'Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue'
+    $run        = 'claude -p (Get-Content -Raw -LiteralPath ''{0}'') --permission-mode bypassPermissions --no-session-persistence --verbose' -f $safeBrief
+    $launchScript = ($clearAuth, $setAuth, $clean, $run) -join "`r`n"
+    # The launch script lives next to the briefing (same dir the caller chose).
+    $launchScriptFile = Join-Path (Split-Path -Parent $briefingFile) "launch-$issueNum.ps1"
+    $safeScriptPath   = $launchScriptFile   # a plain path arg (its own arg element -> Start-Process quotes it)
     if (Get-Command wt -ErrorAction SilentlyContinue) {
         return [PSCustomObject]@{
-            launcher     = "wt"
-            args         = @('-w', $windowName, 'new-tab', '--title', $tabTitle,
-                             '--startingDirectory', $workPath, 'pwsh', '-NoExit', '-Command', $claudeCmd)
-            briefingFile = $briefingFile
-            usesWt       = $true
+            launcher         = "wt"
+            args             = @('-w', $windowName, 'new-tab', '--title', $tabTitle,
+                                 '--startingDirectory', $workPath, 'pwsh', '-NoExit', '-File', $safeScriptPath)
+            briefingFile     = $briefingFile
+            launchScriptFile = $launchScriptFile
+            launchScript     = $launchScript
+            usesWt           = $true
         }
     }
     return [PSCustomObject]@{
-        launcher     = "pwsh"
-        args         = @('-NoExit', '-Command', $claudeCmd)
-        briefingFile = $briefingFile
-        usesWt       = $false
+        launcher         = "pwsh"
+        args             = @('-NoExit', '-File', $safeScriptPath)
+        briefingFile     = $briefingFile
+        launchScriptFile = $launchScriptFile
+        launchScript     = $launchScript
+        usesWt           = $false
     }
 }
 
@@ -639,6 +672,8 @@ function Start-WorktreeSession {
 
     if ($Preview) {
         Write-Host ("  [preview] #{0}: {1} {2}" -f $IssueNum, $plan.launcher, ($plan.args -join ' ')) -ForegroundColor Gray
+        Write-Host ("  [preview] #{0} launch script ({1}):" -f $IssueNum, $plan.launchScriptFile) -ForegroundColor DarkGray
+        foreach ($ln in ($plan.launchScript -split "`r?`n")) { Write-Host ("             $ln") -ForegroundColor DarkGray }
         return $plan
     }
 
@@ -648,6 +683,9 @@ function Start-WorktreeSession {
     }
     # Persist the briefing so the spawned session reads it without command-line quoting.
     Set-Content -LiteralPath $briefingFile -Value (Get-SessionBriefing $IssueNum $Repo $Branch $WorkPath) -Encoding UTF8
+    # Persist the launch script so wt/pwsh runs it via -File (no ';' on wt's command
+    # line -> no stray tab-splitting). See Build-WorktreeLaunch header for the why.
+    Set-Content -LiteralPath $plan.launchScriptFile -Value $plan.launchScript -Encoding UTF8
     $proc = $null
     try {
         if ($plan.usesWt) { $proc = Start-Process $plan.launcher -ArgumentList $plan.args -PassThru }
