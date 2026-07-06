@@ -129,6 +129,11 @@ Describe 'Build-WorktreeLaunch' {
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
         ($p.args -join ' ') | Should -Match '--dangerously-skip-permissions'
     }
+    It 'escapes single quotes in the briefing path (no literal break / injection)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        $p = Build-WorktreeLaunch 12 'C:\wt' "C:\O'Brien\brief.txt"
+        ($p.args -join ' ') | Should -Match "O''Brien"
+    }
 }
 
 Describe 'Invoke-IssueStart safety refusals + dry-run' {

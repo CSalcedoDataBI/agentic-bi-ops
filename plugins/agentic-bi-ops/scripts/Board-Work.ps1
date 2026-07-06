@@ -564,7 +564,10 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
     # run without stopping - this bypasses BOTH the new-worktree trust dialog and the
     # per-tool permission prompts. Without it the tab opens but stalls forever waiting
     # for a human to approve the first tool call (the "opens but never finishes" bug).
-    $claudeCmd = "claude --dangerously-skip-permissions (Get-Content -Raw -LiteralPath '$briefingFile')"
+    # Double any single quote so a repo path containing ' (valid on Windows, e.g. an
+    # O'Brien user folder) can't break out of the literal or inject into -Command.
+    $safeBrief = $briefingFile -replace "'", "''"
+    $claudeCmd = "claude --dangerously-skip-permissions (Get-Content -Raw -LiteralPath '$safeBrief')"
     if (Get-Command wt -ErrorAction SilentlyContinue) {
         return [PSCustomObject]@{
             launcher     = "wt"
