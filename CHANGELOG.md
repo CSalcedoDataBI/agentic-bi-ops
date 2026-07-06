@@ -1,6 +1,15 @@
 # Changelog
 
 
+## [0.15.2] - 2026-07-06
+### Fixed
+- **fix(work): the chosen parallel-launch credential is now authoritative** (#127).
+  `ANTHROPIC_API_KEY` outranks `CLAUDE_CODE_OAUTH_TOKEN` in Claude Code's auth precedence,
+  so picking `-ClaudeAuthVar CLAUDE_CODE_OAUTH_TOKEN` (to bill the subscription) was silently
+  overridden by an inherited API key. The launcher now clears every competing Anthropic
+  credential before setting the chosen one, and when `-ClaudeAuthVar` is not passed it
+  auto-prefers `CLAUDE_CODE_OAUTH_TOKEN` (subscription) when present, else `ANTHROPIC_API_KEY`.
+
 ## [0.15.1] - 2026-07-06
 ### Fixed
 - **fix(work): parallel `-Launch` sessions now actually finish the task** (#121, #122, #125).
