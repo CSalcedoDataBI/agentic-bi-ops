@@ -146,6 +146,18 @@ Describe 'Build-WorktreeLaunch' {
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
         ($p.args -join ' ') | Should -Match '\$env:ANTHROPIC_API_KEY='
     }
+    It 'clears competing Anthropic credentials so the chosen one is authoritative' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        # with CLAUDE_CODE_OAUTH_TOKEN chosen, the inherited ANTHROPIC_API_KEY must be cleared
+        # first (it outranks the OAuth token in auth precedence) or it would win silently.
+        $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'CLAUDE_CODE_OAUTH_TOKEN'
+        $joined = ($p.args -join ' ')
+        $joined | Should -Match 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN'
+        # ...and the clear happens BEFORE the chosen credential is set
+        $clearIdx = $joined.IndexOf('Remove-Item Env:ANTHROPIC_API_KEY')
+        $setIdx   = $joined.IndexOf('$env:CLAUDE_CODE_OAUTH_TOKEN=')
+        $clearIdx | Should -BeLessThan $setIdx
+    }
     It 'rejects an auth-var name that could inject into the spawned command' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         { Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt' 'abios-parallel' "X'); rm -rf /; #" } | Should -Throw
