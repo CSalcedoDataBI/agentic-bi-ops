@@ -57,8 +57,10 @@ have as the persistence layer.
   local mirror.
 - **No board link** (ad-hoc work): fall back to a local `HANDOFF.md` only; `save` suggests committing
   it (or `--commit`) so it travels, since there is no issue to hold it.
-- Previous snapshots rotate to `.handoffs/<ISO-8601>-handoff.md` (gitignored local history). The
-  issue comment keeps only the latest; the edit history of the comment is the remote history.
+- Previous snapshots rotate to `.handoffs/<yyyyMMddTHHmmssZ>-handoff.md` (gitignored local history) —
+  a **colon-free** basic-format ISO-8601 UTC timestamp, since `:` is invalid in Windows filenames and
+  this is a PowerShell feature. The issue comment keeps only the latest; the edit history of the
+  comment is the remote history.
 
 `HANDOFF.md` and `.handoffs/` are added to the repo `.gitignore` by `save` (idempotent); the board
 comment — not a committed file — is what makes it portable. (Note: this repo already gitignores
@@ -76,7 +78,7 @@ repo: CSalcedoDataBI/agentic-bi-ops
 branch: issue-138-design-handoff-md-schema-verification
 pr: 145            # null when no PR yet
 board: 13
-saved: 2026-07-07 14:32
+saved: 2026-07-07T14:32:00Z   # RFC3339 UTC (always Z) — unambiguous cross-machine
 host: DESKTOP-XYZ
 verified: 8/10     # [V] claims / total claims
 ---
@@ -103,8 +105,10 @@ verified: 8/10     # [V] claims / total claims
 ```
 
 Frontmatter autofill maps directly from the `sessions.json` entry written by `Board-Work.ps1`
-(`issue`, `repo`, `branch`, `workPath`, `host`) plus the PR resolved from the branch
-(`gh pr view --json number`), and the board number from the resolved board.
+(`issue`, `repo`, `branch`, `workPath`, `host`) plus the PR resolved from the branch with the
+repo-consistent form `gh pr list --repo <repo> --head <branch> --state open --json number`
+(the repo's other `gh pr view` calls take a PR *number* + `--repo`, never a positional branch),
+and the board number from the resolved board. `saved` is stamped as RFC3339 UTC (`...Z`).
 
 ## Verification protocol ([V] / [?])
 
@@ -113,7 +117,8 @@ On `save`, the routine **actively re-runs** the checks and tags each claim:
 
 - `[V]` **verified** — confirmed by a command or file read *during this save run*:
   `git status --porcelain`, `git log --oneline -5`, `git branch --show-current`,
-  `gh pr view <branch>`, reading a named file, or running the project's test command.
+  `gh pr list --head <branch> --state open --json number`, reading a named file, or running the
+  project's test command.
 - `[?]` **unverified** — recalled from session memory, not re-checked this run.
 
 The frontmatter `verified: N/M` ratio surfaces how much of the handoff is grounded. `resume`
