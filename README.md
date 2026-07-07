@@ -70,8 +70,8 @@ it back:
   comment on the linked issue (no `main` noise), mirrored to a gitignored `HANDOFF.md`.
 - **Verified, not hand-waved.** Every claim is tagged `[V]` (re-checked live this run) or `[?]`
   (from memory); resume reports **drift** (branch gone, PR merged) and carries **traps** forward.
-- **Surfaces itself.** `-Save` drops a self-cleaning `MEMORY.md` pointer; an opt-in SessionStart
-  hook (`references/handoff-hook.md`) announces the handoff when you resume.
+- **Surfaces itself.** `/board handoff save` drops a self-cleaning `MEMORY.md` pointer; an opt-in
+  SessionStart hook (`references/handoff-hook.md`) announces the handoff when you resume.
 - **Heavy case, done safely.** For persistent *semantic* memory, `Suggest-HeavyMemory.ps1`
   proposes installing **Basic Memory** (upstream, AGPL) under a full security gate — never
   vendored. The lightweight `HANDOFF.md` stays the default. See `references/heavy-memory.md`.
