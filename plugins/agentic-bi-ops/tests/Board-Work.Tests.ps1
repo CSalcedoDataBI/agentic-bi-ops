@@ -88,6 +88,22 @@ Describe 'Get-IssueSlugBranch (branch naming)' {
     }
 }
 
+Describe 'Get-IssueWorktreePath (grouped worktree layout)' {
+    It 'groups worktrees under <repo>--worktrees/issue-<n> (not scattered siblings)' {
+        Get-IssueWorktreePath 'owner/agentic-bi-ops' 129 'C:\Repos' |
+            Should -Be 'C:\Repos\agentic-bi-ops--worktrees\issue-129'
+    }
+    It 'uses only the repo name, dropping the owner' {
+        Get-IssueWorktreePath 'CSalcedoDataBI/my-repo' 7 'D:\work' |
+            Should -Be 'D:\work\my-repo--worktrees\issue-7'
+    }
+    It 'places every issue in the SAME grouping folder' {
+        $a = Get-IssueWorktreePath 'o/r' 1 'C:\p'
+        $b = Get-IssueWorktreePath 'o/r' 2 'C:\p'
+        (Split-Path $a -Parent) | Should -Be (Split-Path $b -Parent)
+    }
+}
+
 Describe 'Get-SessionBriefing' {
     BeforeAll { $script:Brief = Get-SessionBriefing 42 'owner/repo' 'issue-42-x' 'C:\wt\path' }
     It 'is a single line (safe to pass on a command line)' {
