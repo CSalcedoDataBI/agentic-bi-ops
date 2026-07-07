@@ -63,6 +63,7 @@
 [CmdletBinding()]
 param(
     [switch]  $Save,
+    [switch]  $Resume,
     [string]  $NextStep = "",
     [string[]]$Done = @(),
     [string[]]$OpenThreads = @(),
@@ -169,6 +170,49 @@ function Add-GitignoreEntries([string]$body, [string[]]$patterns) {
     return "$block`n"
 }
 
+# -- Resume-side pure helpers (parse a handoff back out) ------------------------
+
+# Extract the HANDOFF.md content from an issue comment body: the text between the
+# ```md opening fence and its closing ``` fence. Returns "" when there is no fence.
+function Get-HandoffBodyFromComment([string]$commentBody) {
+    $lines = @($commentBody -split "`r?`n")
+    $start = -1; $end = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($start -lt 0) {
+            if ($lines[$i].Trim() -eq '```md') { $start = $i + 1 }
+        } elseif ($lines[$i].Trim() -eq '```') { $end = $i; break }
+    }
+    if ($start -lt 0 -or $end -lt 0 -or $end -le $start) { return "" }
+    return (($lines[$start..($end - 1)]) -join "`n")
+}
+
+# Read a single frontmatter field from a handoff markdown (the first `key: value`
+# inside the leading --- ... --- block). Returns "" when absent.
+function Get-HandoffFrontmatterField([string]$markdown, [string]$key) {
+    $lines = @($markdown -split "`r?`n")
+    if ($lines.Count -eq 0 -or $lines[0].Trim() -ne '---') { return "" }
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].Trim() -eq '---') { break }
+        if ($lines[$i] -match "^\s*$([regex]::Escape($key))\s*:\s*(.+?)\s*$") { return $Matches[1].Trim() }
+    }
+    return ""
+}
+
+# Return the bullet lines under a `## <title>` section (until the next `## ` or EOF).
+# Used to carry unresolved traps forward into the resumed session.
+function Get-HandoffSection([string]$markdown, [string]$title) {
+    $lines = @($markdown -split "`r?`n")
+    $out = @(); $inSection = $false
+    foreach ($ln in $lines) {
+        if ($ln -match '^\s*##\s+(.+?)\s*$') {
+            $inSection = ($Matches[1].Trim() -eq $title.Trim())
+            continue
+        }
+        if ($inSection -and $ln.Trim() -ne "") { $out += $ln }
+    }
+    return $out
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: the test harness sets ABIOS_HANDOFF_DOTSOURCE to
 # load the helpers above without running any of the side-effecting code below.
@@ -177,7 +221,8 @@ if ($env:ABIOS_HANDOFF_DOTSOURCE) { return }
 
 $ErrorActionPreference = "Stop"
 
-if (-not $Save) { throw "Board-Handoff.ps1 currently implements -Save (resume arrives in #140). Pass -Save." }
+if ($Save -and $Resume) { throw "Pass either -Save or -Resume, not both." }
+if (-not ($Save -or $Resume)) { throw "Pass an action: -Save (snapshot) or -Resume (rehydrate)." }
 
 if (-not $env:GH_TOKEN) { $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User") }
 if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
@@ -212,6 +257,103 @@ if ($sp -and (Test-Path $sp)) {
 # -- Resolve the linked issue --------------------------------------------------
 if ($Issue -le 0 -and $session) { $Issue = [int]$session.issue }
 if ($Issue -le 0)               { $Issue = Get-HandoffBranchIssue $branch }
+
+$repoRoot = (git rev-parse --show-toplevel 2>$null)
+if (-not $repoRoot) { throw "Not inside a git working tree." }
+$handoffPath = Join-Path $repoRoot "HANDOFF.md"
+$archiveDir  = Join-Path $repoRoot ".handoffs"
+
+# ==============================================================================
+# RESUME - read the latest handoff back, regenerate the local mirror, re-verify
+# the [V] anchors, surface unresolved traps, and offer to continue.
+# ==============================================================================
+if ($Resume) {
+    Write-Host "=== /board handoff resume  ($Repo)  branch $branch ===" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Source of truth = the [abios-handoff] comment on the linked issue (cross-machine).
+    $body = ""; $source = ""
+    if ($Issue -gt 0) {
+        try {
+            $comments = gh api --paginate "repos/$Repo/issues/$Issue/comments?per_page=100" 2>$null | ConvertFrom-Json
+            $marker = @($comments | Where-Object { $_.body -like "*$script:HandoffMarker*" }) | Select-Object -Last 1
+            if ($marker) {
+                $body = Get-HandoffBodyFromComment $marker.body
+                if ($body) { $source = "issue comment on $Repo#$Issue" }
+            }
+        } catch { $body = "" }
+    }
+    # Fallback: the local mirror (offline / no linked issue).
+    if (-not $body -and (Test-Path $handoffPath)) {
+        $body = Get-Content $handoffPath -Raw
+        $source = "local HANDOFF.md"
+    }
+    if (-not $body) {
+        throw "No handoff found$(if ($Issue -gt 0) { " for $Repo#$Issue" }) - no [abios-handoff] comment and no local HANDOFF.md."
+    }
+
+    # Regenerate the local mirror when the source was the remote comment (machine B).
+    if ($source -ne "local HANDOFF.md") {
+        if ($DryRun) {
+            Write-Host "DRY-RUN - would regenerate local HANDOFF.md from the $source." -ForegroundColor Yellow
+        } else {
+            Set-Content -Path $handoffPath -Value $body -Encoding UTF8 -NoNewline
+            $gitignorePath = Join-Path $repoRoot ".gitignore"
+            $giBody = if (Test-Path $gitignorePath) { Get-Content $gitignorePath -Raw } else { "" }
+            $giNew  = Add-GitignoreEntries $giBody @("/HANDOFF.md", "/.handoffs/")
+            if ($giNew -ne $giBody) { Set-Content -Path $gitignorePath -Value $giNew -Encoding UTF8 -NoNewline }
+            Write-Host "  OK  Local HANDOFF.md regenerated from the $source" -ForegroundColor DarkGray
+        }
+    }
+
+    Write-Host "  Source : $source" -ForegroundColor DarkCyan
+    $savedAt = Get-HandoffFrontmatterField $body "saved"
+    $verOf   = Get-HandoffFrontmatterField $body "verified"
+    if ($savedAt) { Write-Host "  Saved  : $savedAt  (verified $verOf)" -ForegroundColor DarkCyan }
+    Write-Host ""
+    Write-Host $body
+    Write-Host ""
+
+    # Re-verify the [V] anchors (branch + PR) still hold; report drift.
+    $drift = @()
+    $hoBranch = Get-HandoffFrontmatterField $body "branch"
+    if ($hoBranch -and $hoBranch -ne "null") {
+        git rev-parse --verify --quiet "refs/heads/$hoBranch" 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $drift += "branch '$hoBranch' no longer exists locally (deleted after merge, or needs a fetch)."
+        } elseif ($branch -ne $hoBranch) {
+            $drift += "you are on '$branch'; the handoff was saved on '$hoBranch' (git checkout $hoBranch to continue there)."
+        }
+    }
+    $hoPr = Get-HandoffFrontmatterField $body "pr"
+    if ($hoPr -and $hoPr -ne "null") {
+        try {
+            $prState = (gh pr view $hoPr --repo $Repo --json state 2>$null | ConvertFrom-Json).state
+            if ($prState -and $prState -ne "OPEN") { $drift += "PR #$hoPr is now $prState (the work may already be merged/closed)." }
+        } catch { }
+    }
+    if ($drift.Count) {
+        Write-Host "  DRIFT since the handoff was saved:" -ForegroundColor Yellow
+        $drift | ForEach-Object { Write-Host "    ! $_" -ForegroundColor Yellow }
+        Write-Host ""
+    }
+
+    # Carry unresolved traps forward, front and center.
+    $traps = Get-HandoffSection $body "Traps / failed approaches (do NOT repeat)"
+    if ($traps.Count) {
+        Write-Host "  CARRY FORWARD - traps to NOT repeat:" -ForegroundColor Magenta
+        $traps | ForEach-Object { Write-Host "    $_" -ForegroundColor Magenta }
+        Write-Host ""
+    }
+
+    if ($Issue -gt 0) {
+        Write-Host "Continue this work with:  /board work  then start #$Issue  (Board-Work.ps1 -Start $Issue)" -ForegroundColor Cyan
+        if ($hoBranch -and $hoBranch -ne "null") {
+            Write-Host "                          or resume its branch:  git checkout $hoBranch" -ForegroundColor Cyan
+        }
+    }
+    return
+}
 
 # -- Resolve the open PR for this branch (repo-consistent form) -----------------
 $pr = $null
@@ -259,12 +401,7 @@ $heading = if ($Issue -gt 0) { "Handoff - #$Issue" } else { "Handoff - $branch" 
 $markdown = Format-HandoffMarkdown -Frontmatter $frontmatter -Heading $heading -GitBlock $gitBlock `
     -NextStep $NextStep -Done $Done -OpenThreads $OpenThreads -Traps $Traps -KeyFiles $KeyFiles
 
-# -- Locate the repo root (top-level worktree dir) -----------------------------
-$repoRoot = (git rev-parse --show-toplevel 2>$null)
-if (-not $repoRoot) { throw "Not inside a git working tree." }
-$handoffPath = Join-Path $repoRoot "HANDOFF.md"
-$archiveDir  = Join-Path $repoRoot ".handoffs"
-
+# ($repoRoot / $handoffPath / $archiveDir were resolved above, shared with resume.)
 Write-Host "=== /board handoff save  ($Repo)  branch $branch ===" -ForegroundColor Cyan
 Write-Host ""
 
@@ -337,7 +474,7 @@ _Last saved $($fm.saved)._
         Write-Host "  WARN could not upsert the issue comment - the local HANDOFF.md is still written." -ForegroundColor DarkYellow
     }
     Write-Host ""
-    Write-Host "Resume later with:  /board handoff resume  (reads $Repo#$Issue)  [arrives in #140]" -ForegroundColor Cyan
+    Write-Host "Resume later with:  Board-Handoff.ps1 -Resume  (reads $Repo#$Issue - even on another machine)" -ForegroundColor Cyan
 } else {
     Write-Host ""
     Write-Host "  No linked issue - wrote a LOCAL HANDOFF.md only. It is gitignored, so to use it on" -ForegroundColor DarkYellow
