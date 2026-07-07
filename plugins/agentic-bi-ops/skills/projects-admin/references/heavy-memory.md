@@ -30,15 +30,20 @@ pwsh -File scripts/Suggest-HeavyMemory.ps1
    floating range), the proposed `.mcp.json` entry (runs the pinned version via `uvx`), and
    the reversible uninstall.
 
-**Guarded install** (explicit human gate - both flags required):
+**Guarded install** (every control enforced before touching the system):
 
 ```powershell
-pwsh -File scripts/Suggest-HeavyMemory.ps1 -Install -AcceptAgpl [-Version x.y.z]
+pwsh -File scripts/Suggest-HeavyMemory.ps1 -Install -AcceptAgpl -Version x.y.z
 ```
 
-- Refuses without `-AcceptAgpl`. Refuses if no exact version is resolved. Requires an
-  isolated env manager (`uv` or `pipx`) - no global `pip`.
-- Installs the pinned version and writes the `basic-memory` MCP entry to `.mcp.json`.
+The install **refuses** unless ALL hold:
+- `-AcceptAgpl` is passed (the human gate) - no silent install.
+- `-Version` is passed explicitly - **no blind `latest`**; pin the version the proposal showed.
+- Provenance + AGPL were verified against PyPI *this run* (refuses if PyPI is unreachable).
+- An isolated env manager (`uv` or `pipx`) is available - no global `pip`.
+
+It installs the pinned version and writes a `basic-memory` MCP entry to `.mcp.json` whose
+command **matches the manager used** (`uvx …` for uv, `pipx run --spec …` for pipx).
 
 ## Security checklist (the 5 controls)
 

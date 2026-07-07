@@ -33,24 +33,42 @@ Describe 'Test-BasicMemoryProvenance' {
     }
 }
 
-Describe 'Get-HeavyMemoryInstallCommand (pinned, never floating)' {
-    It 'pins an exact version with uv by default' {
-        Get-HeavyMemoryInstallCommand '0.13.2' | Should -BeExactly 'uv tool install "basic-memory==0.13.2"'
+Describe 'Get-HeavyMemoryInstallInvocation (explicit args, no quotes-as-literals)' {
+    It 'uv: exe + args with the pinned spec unquoted (so the tool gets a clean package name)' {
+        $inv = Get-HeavyMemoryInstallInvocation '0.13.2'
+        $inv.exe | Should -Be 'uv'
+        $inv.args | Should -Be @('tool', 'install', 'basic-memory==0.13.2')
+        ($inv.args -join '') | Should -Not -Match '"'
     }
-    It 'pins with pipx when requested' {
-        Get-HeavyMemoryInstallCommand '0.13.2' 'pipx' | Should -BeExactly 'pipx install "basic-memory==0.13.2"'
+    It 'pipx: exe + args' {
+        $inv = Get-HeavyMemoryInstallInvocation '0.13.2' 'pipx'
+        $inv.exe | Should -Be 'pipx'
+        $inv.args | Should -Be @('install', 'basic-memory==0.13.2')
     }
-    It 'returns empty when no version is given (refuse to build a floating install)' {
-        Get-HeavyMemoryInstallCommand '' | Should -BeExactly ''
+    It 'returns null when no version is given (refuse to build a floating install)' {
+        Get-HeavyMemoryInstallInvocation '' | Should -Be $null
     }
 }
 
-Describe 'New-BasicMemoryMcpEntry' {
-    It 'runs the PINNED version via uvx' {
+Describe 'Get-HeavyMemoryInstallCommand (display, pinned)' {
+    It 'quotes the spec for display only' {
+        Get-HeavyMemoryInstallCommand '0.13.2' | Should -BeExactly 'uv tool install "basic-memory==0.13.2"'
+    }
+}
+
+Describe 'New-BasicMemoryMcpEntry (matches the manager)' {
+    It 'uv default: runs the PINNED version via uvx' {
         $e = New-BasicMemoryMcpEntry '0.13.2'
         $e.command | Should -Be 'uvx'
         ($e.args -join ' ') | Should -Match 'basic-memory==0.13.2'
         $e.args | Should -Contain 'mcp'
+    }
+    It 'pipx: runs via "pipx run --spec" so the entry matches a pipx install' {
+        $e = New-BasicMemoryMcpEntry '0.13.2' 'pipx'
+        $e.command | Should -Be 'pipx'
+        $e.args | Should -Contain 'run'
+        $e.args | Should -Contain '--spec'
+        ($e.args -join ' ') | Should -Match 'basic-memory==0.13.2'
     }
 }
 
