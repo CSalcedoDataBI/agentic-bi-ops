@@ -61,6 +61,15 @@ Describe 'Get-ParallelQueue (batch parsing)' {
     It 'returns an empty array for an empty input' {
         @(Get-ParallelQueue @()).Count | Should -Be 0
     }
+    It 'splits a single comma-joined string (the `pwsh -File` case: "129,130" not @(129,130))' {
+        (Get-ParallelQueue '129,130') | Should -Be @(129,130)
+    }
+    It 'splits comma tokens and trims whitespace' {
+        (Get-ParallelQueue '129, 130 ,131') | Should -Be @(129,130,131)
+    }
+    It 'drops non-numeric junk tokens' {
+        (Get-ParallelQueue 'abc,12x,7') | Should -Be @(7)
+    }
 }
 
 Describe 'Get-IssueSlugBranch (branch naming)' {
@@ -122,7 +131,24 @@ Describe 'Build-WorktreeLaunch' {
         $p.args     | Should -Contain 'new-tab'
         $p.args     | Should -Contain '--startingDirectory'
         $p.args     | Should -Contain 'C:\wt'
-        ($p.args -join ' ') | Should -Match 'briefingFile|brief\.txt|Get-Content'
+    }
+    It 'launches via a -File script, never an inline -Command (so wt cannot split the tab)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
+        $p.args | Should -Contain '-File'
+        $p.args | Should -Not -Contain '-Command'
+        $p.args | Should -Contain $p.launchScriptFile
+    }
+    It 'REGRESSION: puts no semicolon on the wt command line (a ; there splits one tab into many)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
+        ($p.args -join ' ') | Should -Not -Match ';'
+    }
+    It 'names the launch script per issue, alongside the briefing' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        $p = Build-WorktreeLaunch 12 'C:\abios\brief.txt' 'C:\brief.txt'
+        # launchScriptFile sits in the briefing's directory, keyed by issue number
+        $p.launchScriptFile | Should -Match 'launch-12\.ps1$'
     }
     It 'falls back to a pwsh window when wt is absent' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
@@ -130,44 +156,43 @@ Describe 'Build-WorktreeLaunch' {
         $p.launcher | Should -Be 'pwsh'
         $p.usesWt   | Should -BeFalse
         $p.args     | Should -Contain '-NoExit'
+        $p.args     | Should -Contain '-File'
     }
     It 'passes the briefing by file, never inline' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
-        ($p.args -join ' ') | Should -Match 'brief\.txt'
+        $p.launchScript | Should -Match 'brief\.txt'
     }
     It 'runs the spawned session unattended headless (no interactive prompt can stall it)' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
-        $joined = ($p.args -join ' ')
-        $joined | Should -Match 'claude -p '                          # headless: skips trust + bypass-accept prompts
-        $joined | Should -Match '--permission-mode bypassPermissions' # no per-tool approval stalls
-        $joined | Should -Match '--no-session-persistence'            # parallel sessions don't collide
+        $p.launchScript | Should -Match 'claude -p '                          # headless: skips trust + bypass-accept prompts
+        $p.launchScript | Should -Match '--permission-mode bypassPermissions' # no per-tool approval stalls
+        $p.launchScript | Should -Match '--no-session-persistence'            # parallel sessions don't collide
     }
     It 'injects the child auth credential by env-var NAME (secret never on the command line)' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'MY_AUTH_VAR'
-        $joined = ($p.args -join ' ')
         # same-name injection: $env:MY_AUTH_VAR = [Environment]::GetEnvironmentVariable('MY_AUTH_VAR','User')
-        $joined | Should -Match '\$env:MY_AUTH_VAR='                       # sets the child's credential
-        $joined | Should -Match "GetEnvironmentVariable\('MY_AUTH_VAR','User'"  # read at runtime, by NAME, from registry
-        $joined | Should -Match 'Remove-Item Env:CLAUDECODE'              # drop inherited host session markers
+        $p.launchScript | Should -Match '\$env:MY_AUTH_VAR='                       # sets the child's credential
+        $p.launchScript | Should -Match "GetEnvironmentVariable\('MY_AUTH_VAR','User'"  # read at runtime, by NAME, from registry
+        $p.launchScript | Should -Match 'Remove-Item Env:CLAUDECODE'              # drop inherited host session markers
     }
     It 'defaults the auth credential to ANTHROPIC_API_KEY' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
-        ($p.args -join ' ') | Should -Match '\$env:ANTHROPIC_API_KEY='
+        $p.launchScript | Should -Match '\$env:ANTHROPIC_API_KEY='
     }
     It 'clears competing Anthropic credentials so the chosen one is authoritative' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         # with CLAUDE_CODE_OAUTH_TOKEN chosen, the inherited ANTHROPIC_API_KEY must be cleared
         # first (it outranks the OAuth token in auth precedence) or it would win silently.
         $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'CLAUDE_CODE_OAUTH_TOKEN'
-        $joined = ($p.args -join ' ')
-        $joined | Should -Match 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN'
+        $s = $p.launchScript
+        $s | Should -Match 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN'
         # ...and the clear happens BEFORE the chosen credential is set
-        $clearIdx = $joined.IndexOf('Remove-Item Env:ANTHROPIC_API_KEY')
-        $setIdx   = $joined.IndexOf('$env:CLAUDE_CODE_OAUTH_TOKEN=')
+        $clearIdx = $s.IndexOf('Remove-Item Env:ANTHROPIC_API_KEY')
+        $setIdx   = $s.IndexOf('$env:CLAUDE_CODE_OAUTH_TOKEN=')
         $clearIdx | Should -BeLessThan $setIdx
     }
     It 'rejects an auth-var name that could inject into the spawned command' {
@@ -177,7 +202,7 @@ Describe 'Build-WorktreeLaunch' {
     It 'escapes single quotes in the briefing path (no literal break / injection)' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         $p = Build-WorktreeLaunch 12 'C:\wt' "C:\O'Brien\brief.txt"
-        ($p.args -join ' ') | Should -Match "O''Brien"
+        $p.launchScript | Should -Match "O''Brien"
     }
 }
 
