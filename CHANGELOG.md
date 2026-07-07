@@ -1,6 +1,28 @@
 # Changelog
 
 
+## [0.16.0] - 2026-07-07
+### Added
+- **Session-handoff module — `/board handoff` (save/resume)** (#137). Stop mid-task and resume in
+  a fresh session days later, even on another machine, without re-typing context.
+  - **`Board-Handoff.ps1 -Save`** (#139) writes a verified snapshot: frontmatter autofilled from
+    git + `.agentic-bi-ops/sessions.json`, a live "Verified git state" block, a `[V]`/`[?]`
+    verified-claim ratio, a gitignored `HANDOFF.md` (previous rotated to `.handoffs/`), and a
+    durable `[abios-handoff]` comment upserted on the linked issue (the cross-machine source of
+    truth). Spec + `[V]`/`[?]` protocol + CREATE-vs-RESUME detection in `references/handoff.md` (#138).
+  - **`-Resume`** (#140) reads the latest `[abios-handoff]` comment (or local mirror), rehydrates,
+    reports branch/PR **drift**, carries **traps** forward, and offers to start the linked issue.
+  - **Auto-memory pointer** (#141): `-Save` drops a self-cleaning `MEMORY.md` pointer (opt-out
+    `-NoMemo`) so a new session surfaces the handoff; `-Resume` consumes it.
+  - **Opt-in SessionStart hook** (#142, `Handoff-SessionStartHook.ps1`) announces a saved handoff
+    on `source: resume`. See `references/handoff-hook.md`.
+  - **Security-gated heavy-memory escalation** (#143, `Suggest-HeavyMemory.ps1`): for persistent
+    semantic memory, proposes installing **Basic Memory** from upstream (PyPI provenance check,
+    pinned exact version, AGPL gate, manager-matched `.mcp.json` entry, reversible uninstall) —
+    **never vendored**. See `references/heavy-memory.md`.
+  - Docs, `/board` menu option 16, and upstream attribution (Cline Memory Bank Apache-2.0,
+    ostikwhy handoff skill MIT) (#144).
+
 ## [0.15.3] - 2026-07-06
 ### Fixed
 - **fix(work): parallel `-Launch` opened 8 tabs and mis-parsed comma issue lists** (#131).

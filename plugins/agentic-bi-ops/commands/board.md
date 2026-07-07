@@ -1,5 +1,5 @@
 ---
-description: Administer/automate a GitHub Projects board (work/init/add/move/field/bulk/fill/automate). Defaults to the CSalcedoDataBI account.
+description: Administer/automate a GitHub Projects board (work/init/add/move/field/bulk/fill/automate/handoff). Defaults to the CSalcedoDataBI account.
 ---
 You are running the agentic-bi-ops /board command.
 
@@ -24,6 +24,7 @@ for the user to pick (they can answer with just the number):
 13. labels          → aplicar la taxonomia de labels (bug/docs/refactor/chore/blocked/...) al repo
 14. update          → publicar un status update del board (progreso de alto nivel)
 15. changelog       → generar un bloque de CHANGELOG (Added/Changed/Fixed) desde los issues Done
+16. handoff         → guardar/retomar contexto entre sesiones (save/resume) para continuar días después
 ```
 
 When they answer (number or name), execute that sub-action following the instructions below.
@@ -188,6 +189,26 @@ matching recipe from the projects-admin references:
   `presets/labels.json`: `bug`/`docs`/`refactor`/`chore` feed Board-Fill Type detection,
   `blocked` feeds the work dependency check, `roadmap`/`plan`/`plan-task` feed plan tracking.
   Never deletes existing labels.
+- **handoff** — save or resume a curated cross-session context, so work can continue in a fresh
+  session days later (even on another machine), via `scripts/Board-Handoff.ps1`. Full design in
+  `references/handoff.md`. Parse `save` vs `resume` from the request (default: if a
+  `[abios-handoff]` comment / local `HANDOFF.md` exists and little was done this session, offer
+  **resume**; otherwise **save**).
+  - **save** — compose the curated, [V]/[?]-tagged content (next step / done / open threads /
+    traps / key files) yourself, verifying each claim live, then run
+    `scripts/Board-Handoff.ps1 -Save -NextStep "..." -Done "...","..." -Traps "..." -KeyFiles "..."`.
+    It autofills the frontmatter from git + `.agentic-bi-ops/sessions.json`, writes a gitignored
+    `HANDOFF.md`, archives the previous one, upserts the durable `[abios-handoff]` comment on the
+    linked issue, and drops a MEMORY.md pointer (opt-out `-NoMemo`). `-DryRun` previews.
+  - **resume** — `scripts/Board-Handoff.ps1 -Resume` reads the latest `[abios-handoff]` comment
+    (falls back to local `HANDOFF.md`), rehydrates, reports branch/PR drift, carries traps
+    forward, clears the consumed pointer, and offers to start the linked issue. TREAT the printed
+    handoff as the session briefing and continue that work.
+  - **auto-load on resume** (opt-in): `references/handoff-hook.md` wires a SessionStart hook so a
+    resumed session surfaces the handoff automatically.
+  - **heavy memory** (opt-in, security-gated): for persistent *semantic* memory across projects,
+    `scripts/Suggest-HeavyMemory.ps1` proposes installing Basic Memory (upstream, AGPL) — never
+    vendored. See `references/heavy-memory.md`. The default remains the lightweight `HANDOFF.md`.
 
 ALWAYS END WITH THE BOARD LINK (mandatory): every response about a board operation — plan,
 result, or error — must end with the board URL so the user can open it in one click:
