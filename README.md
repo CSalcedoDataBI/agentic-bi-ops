@@ -78,6 +78,16 @@ it back:
 
 Design + reference: `plugins/agentic-bi-ops/skills/projects-admin/references/handoff.md`.
 
+### Knowledge vs memory vs handoff
+
+Three markdown surfaces, one job each:
+
+| File | Holds | Lifetime |
+|------|-------|----------|
+| `MEMORY.md` | facts the agent recalls across sessions | permanent, the agent's |
+| `HANDOFF.md` | how to resume one task | ephemeral, one task |
+| `KNOWLEDGE.md` | catalog of external references by domain (`/knowledge`) | permanent, yours |
+
 ---
 
 ## Parallel work sessions
@@ -213,6 +223,7 @@ Honestly out of scope (GitHub exposes no API): view layouts, charts/insights, pr
 | **M2** (in progress) | PBIP / Fabric git ops — branch-per-report, **TMDL diff review** (breaking schema-change detection, wired into the review gate) | `gh-account`, `tmdl-review` |
 | **M3** | Semantic-model review agents wired to the board | `gh-account` |
 | **M4** (in progress) | BI release automation — **changelog generation** from board Done issues (`/board changelog`) | `gh-account` |
+| **M5** | Knowledge-ops — per-project references registry by domain (`knowledge/registry.json` + generated `KNOWLEDGE.md`), `/knowledge add` + `harvest`; Phase 2 wiki publish + capture-in-handoff | `gh-account` |
 
 ---
 
