@@ -54,6 +54,10 @@
 .PARAMETER TokenVar
     Windows USER env var holding the PAT. Default GITHUB_TOKEN_PERSONAL.
 
+.PARAMETER NoMemo
+    Skip the machine-local Claude Code auto-memory pointer that -Save otherwise drops
+    (active-handoff.md + a MEMORY.md index line) so a fresh session surfaces the handoff.
+
 .PARAMETER DryRun
     Print the handoff and the intended comment action without writing or posting.
 
@@ -292,8 +296,10 @@ $archiveDir  = Join-Path $repoRoot ".handoffs"
 # internals. The pointer makes a plain NEW session (not just a resume) surface the
 # handoff via MEMORY.md, without the user remembering the command.
 function Get-ProjectMemoryDir {
+    if (-not $HOME) { return $null }
     $slug = Get-AutoMemorySlug $repoRoot
-    $dir  = Join-Path $HOME ".claude/projects/$slug/memory"
+    # Nested Join-Path (no embedded slashes) keeps the path separator-correct on Windows.
+    $dir  = Join-Path (Join-Path (Join-Path (Join-Path $HOME ".claude") "projects") $slug) "memory"
     if (Test-Path $dir) { return $dir }
     return $null
 }
@@ -302,7 +308,7 @@ function Write-HandoffMemoPointer {
     param([int]$IssueNum, [string]$RepoName, [string]$BranchName, [string]$Saved, [string]$Next)
     $dir = Get-ProjectMemoryDir
     if (-not $dir) { return $false }
-    $nextClean = ($Next -replace '^\s*\[[V?]\]\s*', '').Trim()
+    $nextClean = (($Next -replace '^\s*\[[V?]\]\s*', '').Trim()).TrimEnd('.')
     if ($nextClean.Length -gt 140) { $nextClean = $nextClean.Substring(0, 137) + "..." }
     $memo = @"
 ---
@@ -311,28 +317,35 @@ description: A /board handoff is saved for issue #$IssueNum ($RepoName) - resume
 metadata:
   type: project
 ---
-Saved $Saved on branch ``$BranchName``. Resume with ``Board-Handoff.ps1 -Resume`` (reads the [abios-handoff] comment on $RepoName#$IssueNum). Next step: $nextClean See [[session-handoff-plan]].
+Saved $Saved on branch ``$BranchName``. Resume with ``Board-Handoff.ps1 -Resume`` (reads the [abios-handoff] comment on $RepoName#$IssueNum). Next step: $nextClean. See [[session-handoff-plan]].
 "@
-    Set-Content -Path (Join-Path $dir "active-handoff.md") -Value $memo -Encoding UTF8
-    $indexPath = Join-Path $dir "MEMORY.md"
-    $idxBody = if (Test-Path $indexPath) { Get-Content $indexPath -Raw } else { "# Memory index`n" }
-    $line = "- [Active handoff]($($script:MemoMarker.Trim('()'))) - resume issue #$IssueNum with ``Board-Handoff.ps1 -Resume``."
-    Set-Content -Path $indexPath -Value (Set-MemoryIndexLine $idxBody $script:MemoMarker $line) -Encoding UTF8 -NoNewline
-    return $true
+    # Best-effort: an IO/permissions failure in the local memory dir must NOT abort
+    # the handoff save (which is the real work), so swallow and report not-written.
+    try {
+        Set-Content -Path (Join-Path $dir "active-handoff.md") -Value $memo -Encoding UTF8
+        $indexPath = Join-Path $dir "MEMORY.md"
+        $idxBody = if (Test-Path $indexPath) { Get-Content $indexPath -Raw } else { "# Memory index`n" }
+        $line = "- [Active handoff]($($script:MemoMarker.Trim('()'))) - resume issue #$IssueNum with ``Board-Handoff.ps1 -Resume``."
+        Set-Content -Path $indexPath -Value (Set-MemoryIndexLine $idxBody $script:MemoMarker $line) -Encoding UTF8 -NoNewline
+        return $true
+    } catch { return $false }
 }
 function Clear-HandoffMemoPointer {
     $dir = Get-ProjectMemoryDir
     if (-not $dir) { return $false }
-    $memoFile = Join-Path $dir "active-handoff.md"
-    if (Test-Path $memoFile) { Remove-Item -Force $memoFile }
-    $indexPath = Join-Path $dir "MEMORY.md"
-    if (Test-Path $indexPath) {
-        $idxBody = Get-Content $indexPath -Raw
-        if ($idxBody -match [regex]::Escape($script:MemoMarker)) {
-            Set-Content -Path $indexPath -Value (Remove-MemoryIndexLine $idxBody $script:MemoMarker) -Encoding UTF8 -NoNewline
-            return $true
+    # Best-effort cleanup: a readonly/permission error must NOT fail -Resume.
+    try {
+        $memoFile = Join-Path $dir "active-handoff.md"
+        if (Test-Path $memoFile) { Remove-Item -Force $memoFile }
+        $indexPath = Join-Path $dir "MEMORY.md"
+        if (Test-Path $indexPath) {
+            $idxBody = Get-Content $indexPath -Raw
+            if ($idxBody -match [regex]::Escape($script:MemoMarker)) {
+                Set-Content -Path $indexPath -Value (Remove-MemoryIndexLine $idxBody $script:MemoMarker) -Encoding UTF8 -NoNewline
+                return $true
+            }
         }
-    }
+    } catch { return $false }
     return $false
 }
 
