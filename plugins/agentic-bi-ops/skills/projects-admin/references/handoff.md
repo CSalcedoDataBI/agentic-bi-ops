@@ -165,3 +165,18 @@ verified-save re-run and the resume rehydration are agentic (driven by the sub-a
 
 - Proactive degradation nudge (Phase 2).
 - `--commit` mode to version `HANDOFF.md` in-repo for ad-hoc (non-board) work.
+
+## Attribution
+
+This module **borrows design patterns** from prior art; it does **not** copy or vendor any of
+their code (all implementation here is original PowerShell, MIT like the rest of the plugin):
+
+- **Cline Memory Bank** (Apache-2.0) — the minimal committed-Markdown memory convention
+  (`activeContext` / `progress`). We took the *idea* of a small, human-readable, always-read file
+  set. <https://docs.cline.bot/prompting/cline-memory-bank>
+- **ostikwhy-blip/claude-code-handoff-skill** (MIT) — the `[V]`/`[?]` verification tagging, the
+  CREATE-vs-RESUME mode selection, and the archive-previous-handoff idea.
+  <https://github.com/ostikwhy-blip/claude-code-handoff-skill>
+- **Serena** (MIT) — the write-on-demand filesystem-memory model.
+- **Basic Memory** (AGPL-3.0) — suggested-and-installed from upstream for the heavy case only,
+  never vendored (see `heavy-memory.md`).
