@@ -304,12 +304,24 @@ if ($giNew -ne $giBody) {
 
 # -- Upsert the durable [abios-handoff] comment on the linked issue -------------
 if ($Issue -gt 0) {
-    $commentBody = "$script:HandoffMarker`n``````md`n$markdown`n```````n_Posted by /board handoff save._"
-    $ownerPart = ($Repo -split "/")[0]
-    $namePart  = ($Repo -split "/")[1]
+    # Build via a here-string with a fence VARIABLE (no fragile backtick escaping),
+    # and carry both the hidden HTML marker (for exact find) and the visible
+    # [abios-handoff] tag (matches the spec / aids discovery).
+    $fence = '```'
+    $commentBody = @"
+$script:HandoffMarker
+**[abios-handoff]** session handoff - upserted by /board handoff save.
+
+${fence}md
+$markdown
+${fence}
+_Last saved $($fm.saved)._
+"@
+    # --paginate so the marker is found even on issues with >100 comments (else a
+    # missed marker would post a DUPLICATE instead of editing the existing one).
     $existingId = $null
     try {
-        $comments = gh api "repos/$Repo/issues/$Issue/comments?per_page=100" 2>$null | ConvertFrom-Json
+        $comments = gh api --paginate "repos/$Repo/issues/$Issue/comments?per_page=100" 2>$null | ConvertFrom-Json
         $existingId = (@($comments | Where-Object { $_.body -like "*$script:HandoffMarker*" }) | Select-Object -Last 1).id
     } catch { $existingId = $null }
 
@@ -328,6 +340,7 @@ if ($Issue -gt 0) {
     Write-Host "Resume later with:  /board handoff resume  (reads $Repo#$Issue)  [arrives in #140]" -ForegroundColor Cyan
 } else {
     Write-Host ""
-    Write-Host "  No linked issue - wrote a LOCAL HANDOFF.md only. It is gitignored; commit it if you" -ForegroundColor DarkYellow
-    Write-Host "  need it on another machine (there is no board issue to carry it)." -ForegroundColor DarkYellow
+    Write-Host "  No linked issue - wrote a LOCAL HANDOFF.md only. It is gitignored, so to use it on" -ForegroundColor DarkYellow
+    Write-Host "  another machine either copy it out of the repo, or force-commit it with" -ForegroundColor DarkYellow
+    Write-Host "  'git add -f HANDOFF.md' (there is no board issue to carry it for you)." -ForegroundColor DarkYellow
 }

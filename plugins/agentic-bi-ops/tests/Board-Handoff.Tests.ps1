@@ -31,7 +31,7 @@ Describe 'New-HandoffArchiveName (Windows-safe, colon-free)' {
         $name | Should -Not -Match ':'
         $name | Should -BeExactly '20260707T143205Z-handoff.md'
     }
-    It 'normalizes a local DateTime to UTC' {
+    It 'keeps an explicit UTC DateTime stable (no double-conversion, timezone-independent)' {
         $utc  = New-HandoffArchiveName ([datetime]::new(2026,7,7,14,0,0,[DateTimeKind]::Utc))
         $utc | Should -BeExactly '20260707T140000Z-handoff.md'
     }
