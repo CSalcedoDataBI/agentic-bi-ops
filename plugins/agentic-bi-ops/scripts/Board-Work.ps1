@@ -615,8 +615,9 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
     # CLAUDE_CODE_OAUTH_TOKEN, so an inherited API key would otherwise silently
     # override a subscription token (or 401 if stale). We also drop the inherited
     # CLAUDE_CODE_* session markers so the child starts as a clean top-level session.
-    # Double any single quote so a repo path containing ' (valid on Windows, e.g. an
-    # O'Brien user folder) can't break out of the literal or inject into -Command.
+    # Double any single quote so a briefing path containing ' (valid on Windows, e.g. an
+    # O'Brien user folder) can't break out of the single-quoted literal it is embedded in
+    # inside the generated launch script (the Get-Content -LiteralPath '...' arg below).
     $safeBrief  = $briefingFile -replace "'", "''"
     # Each step on its OWN line (a .ps1 file), so no ';' is ever needed - which is the
     # whole point: ';' on wt's command line would split the tab (see the header note).
