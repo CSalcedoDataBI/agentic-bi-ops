@@ -1,10 +1,11 @@
 <#  Handoff-SessionStartHook.ps1 - surface a saved handoff when a session begins.
 
     Meant to be wired as a Claude Code SessionStart hook (OPT-IN - see
-    skills/projects-admin/references/handoff-hook.md). On a new/resumed session it looks
-    for a local HANDOFF.md at the current repo root and, if present, emits a one-line
-    `additionalContext` so the assistant immediately knows there is a handoff to resume -
-    without the user remembering the command.
+    skills/projects-admin/references/handoff-hook.md). When RESUMING a prior session
+    (source == "resume") it looks for a local HANDOFF.md at the current repo root and, if
+    present, emits a one-line `additionalContext` so the assistant immediately knows there
+    is a handoff to resume - without the user remembering the command. (A fresh startup is
+    covered by the self-cleaning MEMORY.md pointer from -Save; see #141.)
 
     Read-only and OFFLINE by design: a SessionStart hook runs on every session, so it must
     be fast. It only reads the local HANDOFF.md mirror (never hits the network); the durable
@@ -50,14 +51,20 @@ function Get-HandoffSessionContext([string]$body) {
 if ($env:ABIOS_HANDOFF_HOOK_DOTSOURCE) { return }
 
 try {
+    # If stdin is not redirected (e.g. the script was run by hand), there is no hook
+    # payload to read and ReadToEnd() would block forever - bail out immediately.
+    if (-not [Console]::IsInputRedirected) { exit 0 }
+
     $raw = ""
     try { $raw = [Console]::In.ReadToEnd() } catch { $raw = "" }
     $in = $null
     if ($raw) { try { $in = $raw | ConvertFrom-Json } catch { $in = $null } }
 
     $source = if ($in -and $in.source) { [string]$in.source } else { "" }
-    # Only surface on a genuine new/resumed session - not on clear/compact.
-    if ($source -and @('clear', 'compact') -contains $source) { exit 0 }
+    # Surface ONLY when resuming a prior session (source == "resume"). A fresh
+    # startup is covered by the self-cleaning MEMORY.md pointer (see #141), and
+    # gating to resume avoids re-announcing a stale HANDOFF.md on every new session.
+    if ($source -ne 'resume') { exit 0 }
 
     $cwd = if ($in -and $in.cwd) { [string]$in.cwd } else { (Get-Location).Path }
     $root = git -C $cwd rev-parse --show-toplevel 2>$null
