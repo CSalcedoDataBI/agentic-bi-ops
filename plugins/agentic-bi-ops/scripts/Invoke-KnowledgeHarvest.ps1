@@ -7,6 +7,8 @@ param(
     [switch]$Json
 )
 $ErrorActionPreference = 'Stop'
+# Resolve to an absolute path so relative refs are computed correctly when called with -Root . (the documented usage).
+$Root = (Resolve-Path -LiteralPath $Root).Path
 
 $seen = [System.Collections.Generic.HashSet[string]]::new()
 $regPath = Join-Path $Root 'knowledge' 'registry.json'
@@ -22,7 +24,7 @@ function Add-Candidate { param($type,$title,$ref)
 $docsDir = Join-Path $Root 'docs'
 if (Test-Path -LiteralPath $docsDir) {
     Get-ChildItem -LiteralPath $docsDir -Recurse -File -Filter *.md -ErrorAction SilentlyContinue | ForEach-Object {
-        $rel = $_.FullName.Substring($Root.Length).TrimStart('\','/') -replace '\\','/'
+        $rel = [System.IO.Path]::GetRelativePath($Root, $_.FullName) -replace '\\','/'
         $h = Get-Content -LiteralPath $_.FullName -TotalCount 30 | Where-Object { $_ -match '^#\s+(.+)' } | Select-Object -First 1
         $title = if ($h -match '^#\s+(.+)') { $Matches[1].Trim() } else { $_.BaseName }
         Add-Candidate 'md' $title $rel

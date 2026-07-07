@@ -30,4 +30,10 @@ Describe 'Invoke-KnowledgeHarvest' {
         (Get-Content -LiteralPath (Join-Path $script:Root 'knowledge' 'registry.json') -Raw) | Should -Match 'kn_001'
         (Get-ChildItem -LiteralPath (Join-Path $script:Root 'knowledge')).Name | Should -Not -Contain 'KNOWLEDGE.md'
     }
+    It 'relativizes docs refs correctly when called with a relative -Root (the documented "-Root ." usage)' {
+        Push-Location $script:Root
+        try { $res = & $script:Engine -Root '.' }
+        finally { Pop-Location }
+        ($res.candidates | Where-Object ref -eq 'docs/cap.md').title | Should -Be 'Fabric Capacity'
+    }
 }
