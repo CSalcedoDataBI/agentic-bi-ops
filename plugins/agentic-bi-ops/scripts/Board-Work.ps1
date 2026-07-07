@@ -36,6 +36,12 @@
          anything. Blocked / claimed / closed issues are skipped with a reason,
          never aborting the batch.
 
+    Branch-drift guard: on the read-only entry points (-Sessions and the pending
+    listing) the flow warns - never blocks - when the current working copy's HEAD
+    has drifted away from the branch this session started work on here (e.g. a
+    foreign Stop hook ran `git checkout`/`git switch` mid-session). agentic-bi-ops'
+    own hooks never switch branches; this only surfaces a move made from outside.
+
     Same conventions as Board-Fill.ps1: token from the Windows USER registry
     (unless GH_TOKEN is already set by gh-account), pure-ASCII source, and
     the board URL always printed at the end.
@@ -214,6 +220,58 @@ function Write-SessionRegistryEntry {
         started    = (Get-Date -Format "yyyy-MM-dd HH:mm")
     }
     $entries | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
+}
+
+# -- Branch-drift guard ---------------------------------------------------------
+# Warn (NEVER block) when the current working copy's HEAD has drifted away from the
+# branch this session started work on HERE - e.g. a foreign Stop hook ran
+# `git checkout`/`git switch` mid-session and silently left you on another branch
+# (the confusing case the tool itself does NOT cause: our hooks are read-only).
+# Pure -> unit-testable. Returns a warning string, or $null when there is no matching
+# in-place session for this working copy, or no drift.
+#
+# It matches the registry entry by BOTH the session PID and the exact working path,
+# so a worktree started elsewhere never triggers a false alarm in the main clone,
+# and the most-recently-started in-place issue is the expected branch.
+function Get-BranchDriftWarning {
+    param(
+        [object[]] $Sessions,      # Read-SessionRegistry output (live entries)
+        [int]      $SessionPid,    # this session's tracking PID (parent of the script)
+        [string]   $CurrentBranch, # git branch --show-current in the cwd
+        [string]   $CurrentPath    # cwd
+    )
+    # Detached HEAD or not a git repo -> no branch to compare, nothing to warn about.
+    if (-not $CurrentBranch) { return $null }
+    $trim = { param($p) if ($p) { $p.TrimEnd('\', '/') } else { $p } }
+    $here = & $trim $CurrentPath
+    $mine = @($Sessions | Where-Object {
+        $_.sessionPid -eq $SessionPid -and $_.branch -and ((& $trim $_.workPath) -ieq $here)
+    })
+    if ($mine.Count -eq 0) { return $null }
+    # started is "yyyy-MM-dd HH:mm" (lexically sortable) -> newest in-place start wins.
+    $entry = $mine | Sort-Object -Property started -Descending | Select-Object -First 1
+    if ($entry.branch -ieq $CurrentBranch) { return $null }
+    return ("HEAD esta en '{0}' pero empezaste el issue #{1} en la rama '{2}' aqui. " -f `
+                $CurrentBranch, $entry.issue, $entry.branch) +
+           "Algo te movio de rama (posible hook Stop ajeno que hace git checkout). " +
+           ("Vuelve con: git checkout {0}" -f $entry.branch)
+}
+
+# Emit the branch-drift warning (side-effecting wrapper around Get-BranchDriftWarning).
+# Never throws: a diagnostic must not break the /board work flow.
+function Show-BranchDrift {
+    try {
+        $curBr = git branch --show-current 2>$null
+        $trackPid = 0
+        try { $trackPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId } catch { }
+        if (-not $trackPid) { return }
+        $warn = Get-BranchDriftWarning -Sessions (Read-SessionRegistry) -SessionPid $trackPid `
+                                       -CurrentBranch $curBr -CurrentPath (Get-Location).Path
+        if ($warn) {
+            Write-Host ""
+            Write-Host "  WARN $warn" -ForegroundColor Yellow
+        }
+    } catch { }
 }
 
 # ==============================================================================
@@ -762,6 +820,7 @@ if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (
 # MODE 0: -Sessions  -> monitor the local parallel-session fleet
 # ==============================================================================
 if ($Sessions) {
+    Show-BranchDrift
     Show-SessionFleet
     exit 0
 }
@@ -850,6 +909,9 @@ $boardUrl = Get-BoardUrl $ProjectNum
 if ($Start -le 0 -and $ToReview -le 0 -and $Parallel.Count -eq 0) {
     Write-Host "=== Pendientes del board #$ProjectNum de $Owner ===" -ForegroundColor Cyan
     Write-Host ""
+
+    # Guard: if a foreign checkout moved this session off its work branch, say so up front.
+    Show-BranchDrift
 
     $items   = (gh project item-list $ProjectNum --owner $Owner --format json --limit 200 | ConvertFrom-Json).items
     $pending = @($items | Where-Object { Test-Pending $_ })
