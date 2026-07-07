@@ -1,6 +1,21 @@
 # Changelog
 
 
+## [0.15.3] - 2026-07-06
+### Fixed
+- **fix(work): parallel `-Launch` opened 8 tabs and mis-parsed comma issue lists** (#131).
+  `pwsh -File ... -Parallel 129,130` passed `129,130` as the single string `"129,130"` (cast to
+  `[int]` it became `129130`, comma read as a thousands separator), so the batch looked for a
+  nonexistent issue. And the launcher fed `pwsh -Command "a; b; c"` to `wt`, which treats `;` as
+  its OWN sub-command separator — splitting one intended tab into four (2 issues → 8 stray tabs).
+  `-Parallel` is now `[string[]]` split on `,`, and each session launches via a generated
+  `launch-<issue>.ps1` run with `pwsh -File` (zero `;` on the `wt` command line).
+### Changed
+- **Grouped worktree layout.** Parallel sessions now create their worktrees under a single
+  `<repo>--worktrees/issue-<n>` folder instead of scattered siblings `<repo>--issue-<n>`, keeping
+  the repo's parent directory clean and letting you clean the whole fleet by removing one folder.
+- **README** now documents the parallel `/board work` sessions (worktree + Claude session per issue).
+
 ## [0.15.2] - 2026-07-06
 ### Fixed
 - **fix(work): the chosen parallel-launch credential is now authoritative** (#127).

@@ -343,13 +343,22 @@ function Get-LastClaim([string]$repo, [int]$issueNum) {
     return (gh api "repos/$repo/issues/$issueNum/comments" --jq '[.[] | select(.body | startswith("[abios-claim]"))] | last | .body' 2>$null)
 }
 
-# Create an isolated worktree ../<repo>--issue-<n> for a branch. Returns the path
-# or $null. $baseRef (e.g. origin/main) is used only when creating a NEW branch:
-# parallel starts each independent issue off a fresh main; single start passes ""
-# to keep branching off the current HEAD.
-function New-IssueWorktree([string]$repo, [int]$issueNum, [string]$branchName, [string]$baseRef = "") {
+# Where an issue's worktree lives: <parent>/<repo>--worktrees/issue-<n>. Pure ->
+# unit-testable. All worktrees are GROUPED under one `<repo>--worktrees` folder
+# (instead of scattered siblings `<repo>--issue-<n>`), which keeps the repo's parent
+# directory clean, makes `git worktree list` read grouped, and lets you clean the
+# whole fleet by removing a single folder.
+function Get-IssueWorktreePath([string]$repo, [int]$issueNum, [string]$parentDir) {
     $repoName = ($repo -split '/')[1]
-    $wtPath   = Join-Path (Split-Path (Get-Location) -Parent) "$repoName--issue-$issueNum"
+    return (Join-Path (Join-Path $parentDir "$repoName--worktrees") "issue-$issueNum")
+}
+
+# Create an isolated worktree <parent>/<repo>--worktrees/issue-<n> for a branch.
+# Returns the path or $null. $baseRef (e.g. origin/main) is used only when creating a
+# NEW branch: parallel starts each independent issue off a fresh main; single start
+# passes "" to keep branching off the current HEAD.
+function New-IssueWorktree([string]$repo, [int]$issueNum, [string]$branchName, [string]$baseRef = "") {
+    $wtPath   = Get-IssueWorktreePath $repo $issueNum (Split-Path (Get-Location) -Parent)
     # Reuse: is the branch already checked out in some worktree?
     $wtList = git worktree list --porcelain 2>$null | Out-String
     if ($wtList -match "(?m)^worktree (.+)\r?\n(?:.*\r?\n)?branch refs/heads/$([regex]::Escape($branchName))") {
@@ -362,6 +371,10 @@ function New-IssueWorktree([string]$repo, [int]$issueNum, [string]$branchName, [
         Write-Host "  WARN la carpeta $wtPath existe pero no es worktree de $branchName - resuelvelo manualmente." -ForegroundColor DarkYellow
         return $null
     }
+    # Ensure the grouping folder (<repo>--worktrees) exists before adding into it.
+    # `git worktree add` creates leading dirs, but this keeps the intent explicit.
+    $wtParent = Split-Path $wtPath -Parent
+    if (-not (Test-Path $wtParent)) { New-Item -ItemType Directory -Path $wtParent -Force | Out-Null }
     git rev-parse --verify --quiet $branchName 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0)     { git worktree add $wtPath $branchName 2>&1 | Out-Null }
     elseif ($baseRef)            { git worktree add $wtPath -b $branchName $baseRef 2>&1 | Out-Null }

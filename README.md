@@ -54,6 +54,43 @@ After installing, use the `/board` command or just ask:
 
 ---
 
+## Parallel work sessions
+
+`/board work` can start **several independent issues at once**, each in full isolation — the
+official multi-session pattern built on **git worktrees**:
+
+```
+/board work                      # pick MORE THAN ONE pending issue to batch-start
+# or drive the script directly:
+scripts/Board-Work.ps1 -ProjectNum <n> -Parallel 12,14,15 -Launch
+```
+
+For each issue the batch:
+
+1. Moves it to **In Progress**, assigns you, and posts a `[abios-claim]` fingerprint.
+2. Creates a **git worktree** on its own branch `issue-<n>-<slug>`, branched off a fresh
+   `origin/main`. All worktrees are grouped under one sibling folder so the parent dir stays clean:
+
+   ```
+   Repos/
+     agentic-bi-ops/                     ← your main working copy (untouched)
+     agentic-bi-ops--worktrees/          ← one folder holds the whole fleet
+       issue-129/   [issue-129-…]         ← session A
+       issue-130/   [issue-130-…]         ← session B
+   ```
+
+   They share a single `.git`, so N working directories edit in parallel without colliding.
+3. With `-Launch`, opens **one Windows Terminal tab per worktree** running an autonomous headless
+   `claude -p` session, each briefed to take its issue all the way through **PR → review gate →
+   merge**.
+
+Monitor the fleet with `Board-Work.ps1 -Sessions` (dead-PID entries are pruned automatically).
+Use `-DryRun` to preview without mutating or spawning. After a PR merges, clean its worktree with
+`git worktree remove`. Only parallelize issues that don't depend on each other. Tabs require
+Windows Terminal (`wt`); without it, each session opens in a standalone `pwsh` window.
+
+---
+
 ## Setup
 
 1. Install and authenticate the [`gh` CLI](https://cli.github.com/).
