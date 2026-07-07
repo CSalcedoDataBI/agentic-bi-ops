@@ -222,6 +222,56 @@ Describe 'Build-WorktreeLaunch' {
     }
 }
 
+Describe 'Get-BranchDriftWarning (foreign-checkout guard)' {
+    BeforeAll {
+        # Build a session-registry entry shaped like Write-SessionRegistryEntry writes.
+        function New-Session {
+            param([int]$Issue, [string]$Branch, [string]$WorkPath, [int]$SessPid, [string]$Started = '2026-07-07 10:00')
+            [pscustomobject]@{ issue = $Issue; repo = 'o/r'; branch = $Branch; workPath = $WorkPath; sessionPid = $SessPid; started = $Started }
+        }
+    }
+
+    It 'returns null when the registry has no session for this PID' {
+        Get-BranchDriftWarning -Sessions @() -SessionPid 100 -CurrentBranch 'issue-1-x' -CurrentPath 'C:\repo' | Should -BeNullOrEmpty
+    }
+    It 'returns null on a detached HEAD (no current branch to compare)' {
+        $s = @(New-Session 1 'issue-1-x' 'C:\repo' 100)
+        Get-BranchDriftWarning -Sessions $s -SessionPid 100 -CurrentBranch '' -CurrentPath 'C:\repo' | Should -BeNullOrEmpty
+    }
+    It 'returns null when HEAD still matches the branch the session started here' {
+        $s = @(New-Session 1 'issue-1-x' 'C:\repo' 100)
+        Get-BranchDriftWarning -Sessions $s -SessionPid 100 -CurrentBranch 'issue-1-x' -CurrentPath 'C:\repo' | Should -BeNullOrEmpty
+    }
+    It 'WARNS when HEAD drifted away from the started branch (the foreign-hook case)' {
+        $s = @(New-Session 163 'issue-163-guard' 'C:\repo' 100)
+        $w = Get-BranchDriftWarning -Sessions $s -SessionPid 100 -CurrentBranch 'issue-180-other' -CurrentPath 'C:\repo'
+        $w | Should -Match '#163'
+        $w | Should -Match 'issue-163-guard'          # names the branch to return to
+        $w | Should -Match 'git checkout issue-163-guard'
+    }
+    It 'ignores entries belonging to a different session PID' {
+        $s = @(New-Session 1 'issue-1-x' 'C:\repo' 999)
+        Get-BranchDriftWarning -Sessions $s -SessionPid 100 -CurrentBranch 'main' -CurrentPath 'C:\repo' | Should -BeNullOrEmpty
+    }
+    It 'ignores a session started in a DIFFERENT working copy (a worktree elsewhere)' {
+        $s = @(New-Session 1 'issue-1-x' 'C:\repo--worktrees\issue-1' 100)
+        Get-BranchDriftWarning -Sessions $s -SessionPid 100 -CurrentBranch 'main' -CurrentPath 'C:\repo' | Should -BeNullOrEmpty
+    }
+    It 'picks the most-recently-started in-place issue when several share the working copy' {
+        $s = @(
+            New-Session 1 'issue-1-old' 'C:\repo' 100 '2026-07-07 09:00'
+            New-Session 2 'issue-2-new' 'C:\repo' 100 '2026-07-07 11:00'
+        )
+        $w = Get-BranchDriftWarning -Sessions $s -SessionPid 100 -CurrentBranch 'main' -CurrentPath 'C:\repo'
+        $w | Should -Match '#2'
+        $w | Should -Not -Match '#1'
+    }
+    It 'matches the working path tolerant of trailing slash and case' {
+        $s = @(New-Session 1 'issue-1-x' 'C:\Repo\' 100)
+        Get-BranchDriftWarning -Sessions $s -SessionPid 100 -CurrentBranch 'issue-1-x' -CurrentPath 'c:\repo' | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Invoke-IssueStart safety refusals + dry-run' {
     BeforeEach {
         Mock Get-IssueBlockers { @() }          # not blocked unless a test overrides
