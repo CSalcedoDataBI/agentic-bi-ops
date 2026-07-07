@@ -61,8 +61,8 @@ official multi-session pattern built on **git worktrees**:
 
 ```
 /board work                      # pick MORE THAN ONE pending issue to batch-start
-# or drive the script directly:
-scripts/Board-Work.ps1 -ProjectNum <n> -Parallel 12,14,15 -Launch
+# or drive the script directly (path relative to a repo checkout):
+plugins/agentic-bi-ops/scripts/Board-Work.ps1 -ProjectNum <n> -Parallel 12,14,15 -Launch
 ```
 
 For each issue the batch:
@@ -84,7 +84,8 @@ For each issue the batch:
    `claude -p` session, each briefed to take its issue all the way through **PR → review gate →
    merge**.
 
-Monitor the fleet with `Board-Work.ps1 -Sessions` (dead-PID entries are pruned automatically).
+Monitor the fleet with `plugins/agentic-bi-ops/scripts/Board-Work.ps1 -Sessions` (dead-PID entries
+are pruned automatically).
 Use `-DryRun` to preview without mutating or spawning. After a PR merges, clean its worktree with
 `git worktree remove`. Only parallelize issues that don't depend on each other. Tabs require
 Windows Terminal (`wt`); without it, each session opens in a standalone `pwsh` window.

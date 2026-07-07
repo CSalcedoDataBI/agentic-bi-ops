@@ -1037,8 +1037,9 @@ if ($Parallel.Count -gt 0) {
         if ($DryRun) {
             Write-Host "----- LAUNCH (preview, -DryRun no lanza nada) -----" -ForegroundColor Cyan
             foreach ($r in $planned) {
-                $repoName    = ($r.repo -split '/')[1]
-                $previewPath = Join-Path (Split-Path (Get-Location) -Parent) "$repoName--issue-$($r.issue)"
+                # Use the SAME path logic as real creation so the preview matches (see
+                # New-IssueWorktree / Get-IssueWorktreePath - the grouped-worktree layout).
+                $previewPath = Get-IssueWorktreePath $r.repo $r.issue (Split-Path (Get-Location) -Parent)
                 Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $previewPath -ClaudeAuthVar $ClaudeAuthVar -Preview | Out-Null
             }
         } else {
