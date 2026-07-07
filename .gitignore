@@ -15,3 +15,5 @@ Thumbs.db
 *.items.json
 *.project.json
 *.fields.json
+/HANDOFF.md
+/.handoffs/
