@@ -347,7 +347,10 @@ if ($Resume) {
     }
 
     if ($Issue -gt 0) {
-        Write-Host "Continue this work with:  /board work -> Start #$Issue  (or: git checkout $hoBranch)" -ForegroundColor Cyan
+        Write-Host "Continue this work with:  /board work  then start #$Issue  (Board-Work.ps1 -Start $Issue)" -ForegroundColor Cyan
+        if ($hoBranch -and $hoBranch -ne "null") {
+            Write-Host "                          or resume its branch:  git checkout $hoBranch" -ForegroundColor Cyan
+        }
     }
     return
 }
