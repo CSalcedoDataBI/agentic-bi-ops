@@ -174,6 +174,45 @@ Describe 'Get-HandoffSection' {
     }
 }
 
+Describe 'Get-AutoMemorySlug' {
+    It 'replaces every non-alphanumeric char with a dash (matches CC project slug)' {
+        Get-AutoMemorySlug 'C:\Users\Cristobal\Repos\agentic-bi-ops' | Should -BeExactly 'C--Users-Cristobal-Repos-agentic-bi-ops'
+    }
+    It 'leaves an all-alphanumeric string untouched' {
+        Get-AutoMemorySlug 'abc123' | Should -BeExactly 'abc123'
+    }
+}
+
+Describe 'Set-MemoryIndexLine (upsert)' {
+    It 'appends the line when the marker is absent, preserving other lines' {
+        $body = "# Memory index`n- [Other](other.md) - hook`n"
+        $out = Set-MemoryIndexLine $body '(active-handoff.md)' '- [Active handoff](active-handoff.md) - resume.'
+        $out | Should -Match '# Memory index'
+        $out | Should -Match '\[Other\]\(other.md\)'
+        $out | Should -Match '\[Active handoff\]\(active-handoff.md\)'
+    }
+    It 'replaces the existing marker line instead of duplicating it' {
+        $body = "# Memory index`n- [Active handoff](active-handoff.md) - resume issue #1.`n"
+        $out = Set-MemoryIndexLine $body '(active-handoff.md)' '- [Active handoff](active-handoff.md) - resume issue #2.'
+        ([regex]::Matches($out, 'active-handoff\.md')).Count | Should -Be 1
+        $out | Should -Match 'issue #2'
+        $out | Should -Not -Match 'issue #1'
+    }
+}
+
+Describe 'Remove-MemoryIndexLine' {
+    It 'drops the marker line and keeps the rest' {
+        $body = "# Memory index`n- [Active handoff](active-handoff.md) - resume.`n- [Other](other.md) - hook`n"
+        $out = Remove-MemoryIndexLine $body '(active-handoff.md)'
+        $out | Should -Not -Match 'active-handoff.md'
+        $out | Should -Match '\[Other\]\(other.md\)'
+    }
+    It 'is a no-op (content-preserving) when the marker is absent' {
+        $body = "# Memory index`n- [Other](other.md) - hook`n"
+        (Remove-MemoryIndexLine $body '(active-handoff.md)') | Should -Match '\[Other\]\(other.md\)'
+    }
+}
+
 Describe 'Add-GitignoreEntries (idempotent)' {
     It 'appends missing patterns' {
         $out = Add-GitignoreEntries "node_modules/`n" @('/HANDOFF.md', '/.handoffs/')

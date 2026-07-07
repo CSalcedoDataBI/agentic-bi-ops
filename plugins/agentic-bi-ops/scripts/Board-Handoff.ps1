@@ -54,6 +54,10 @@
 .PARAMETER TokenVar
     Windows USER env var holding the PAT. Default GITHUB_TOKEN_PERSONAL.
 
+.PARAMETER NoMemo
+    Skip the machine-local Claude Code auto-memory pointer that -Save otherwise drops
+    (active-handoff.md + a MEMORY.md index line) so a fresh session surfaces the handoff.
+
 .PARAMETER DryRun
     Print the handoff and the intended comment action without writing or posting.
 
@@ -74,6 +78,7 @@ param(
     [string]  $Owner = "",
     [int]     $ProjectNum = 0,
     [string]  $TokenVar = "GITHUB_TOKEN_PERSONAL",
+    [switch]  $NoMemo,
     [switch]  $DryRun
 )
 
@@ -213,6 +218,28 @@ function Get-HandoffSection([string]$markdown, [string]$title) {
     return $out
 }
 
+# -- Auto-memory pointer helpers (surface the handoff on the NEXT session) ------
+# Claude Code auto-memory lives at ~/.claude/projects/<slug>/memory/, where <slug>
+# is the session's working directory with every non-alphanumeric char replaced by
+# '-'. Deriving the slug lets save drop a pointer that MEMORY.md auto-loads.
+function Get-AutoMemorySlug([string]$path) {
+    return ($path -replace '[^A-Za-z0-9]', '-')
+}
+
+# Upsert a single index line into a MEMORY.md body: drop any existing line
+# containing $marker, then append $line. Idempotent, preserves other lines.
+function Set-MemoryIndexLine([string]$body, [string]$marker, [string]$line) {
+    $kept = @($body -split "`r?`n" | Where-Object { $_ -notmatch [regex]::Escape($marker) })
+    $joined = (($kept -join "`n").TrimEnd())
+    return "$joined`n$line`n"
+}
+
+# Remove any index line containing $marker (used by resume to consume the pointer).
+function Remove-MemoryIndexLine([string]$body, [string]$marker) {
+    $kept = @($body -split "`r?`n" | Where-Object { $_ -notmatch [regex]::Escape($marker) })
+    return (($kept -join "`n").TrimEnd() + "`n")
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: the test harness sets ABIOS_HANDOFF_DOTSOURCE to
 # load the helpers above without running any of the side-effecting code below.
@@ -262,6 +289,65 @@ $repoRoot = (git rev-parse --show-toplevel 2>$null)
 if (-not $repoRoot) { throw "Not inside a git working tree." }
 $handoffPath = Join-Path $repoRoot "HANDOFF.md"
 $archiveDir  = Join-Path $repoRoot ".handoffs"
+
+# -- Auto-memory pointer (best-effort, machine-local) --------------------------
+# Resolve the Claude Code auto-memory dir for THIS project. Returns $null when it
+# does not exist - we only ever augment an existing memory dir, never create CC
+# internals. The pointer makes a plain NEW session (not just a resume) surface the
+# handoff via MEMORY.md, without the user remembering the command.
+function Get-ProjectMemoryDir {
+    if (-not $HOME) { return $null }
+    $slug = Get-AutoMemorySlug $repoRoot
+    # Nested Join-Path (no embedded slashes) keeps the path separator-correct on Windows.
+    $dir  = Join-Path (Join-Path (Join-Path (Join-Path $HOME ".claude") "projects") $slug) "memory"
+    if (Test-Path $dir) { return $dir }
+    return $null
+}
+$script:MemoMarker = "(active-handoff.md)"
+function Write-HandoffMemoPointer {
+    param([int]$IssueNum, [string]$RepoName, [string]$BranchName, [string]$Saved, [string]$Next)
+    $dir = Get-ProjectMemoryDir
+    if (-not $dir) { return $false }
+    $nextClean = (($Next -replace '^\s*\[[V?]\]\s*', '').Trim()).TrimEnd('.')
+    if ($nextClean.Length -gt 140) { $nextClean = $nextClean.Substring(0, 137) + "..." }
+    $memo = @"
+---
+name: active-handoff
+description: A /board handoff is saved for issue #$IssueNum ($RepoName) - resume with Board-Handoff.ps1 -Resume.
+metadata:
+  type: project
+---
+Saved $Saved on branch ``$BranchName``. Resume with ``Board-Handoff.ps1 -Resume`` (reads the [abios-handoff] comment on $RepoName#$IssueNum). Next step: $nextClean. See [[session-handoff-plan]].
+"@
+    # Best-effort: an IO/permissions failure in the local memory dir must NOT abort
+    # the handoff save (which is the real work), so swallow and report not-written.
+    try {
+        Set-Content -Path (Join-Path $dir "active-handoff.md") -Value $memo -Encoding UTF8
+        $indexPath = Join-Path $dir "MEMORY.md"
+        $idxBody = if (Test-Path $indexPath) { Get-Content $indexPath -Raw } else { "# Memory index`n" }
+        $line = "- [Active handoff]($($script:MemoMarker.Trim('()'))) - resume issue #$IssueNum with ``Board-Handoff.ps1 -Resume``."
+        Set-Content -Path $indexPath -Value (Set-MemoryIndexLine $idxBody $script:MemoMarker $line) -Encoding UTF8 -NoNewline
+        return $true
+    } catch { return $false }
+}
+function Clear-HandoffMemoPointer {
+    $dir = Get-ProjectMemoryDir
+    if (-not $dir) { return $false }
+    # Best-effort cleanup: a readonly/permission error must NOT fail -Resume.
+    try {
+        $memoFile = Join-Path $dir "active-handoff.md"
+        if (Test-Path $memoFile) { Remove-Item -Force $memoFile }
+        $indexPath = Join-Path $dir "MEMORY.md"
+        if (Test-Path $indexPath) {
+            $idxBody = Get-Content $indexPath -Raw
+            if ($idxBody -match [regex]::Escape($script:MemoMarker)) {
+                Set-Content -Path $indexPath -Value (Remove-MemoryIndexLine $idxBody $script:MemoMarker) -Encoding UTF8 -NoNewline
+                return $true
+            }
+        }
+    } catch { return $false }
+    return $false
+}
 
 # ==============================================================================
 # RESUME - read the latest handoff back, regenerate the local mirror, re-verify
@@ -344,6 +430,12 @@ if ($Resume) {
         Write-Host "  CARRY FORWARD - traps to NOT repeat:" -ForegroundColor Magenta
         $traps | ForEach-Object { Write-Host "    $_" -ForegroundColor Magenta }
         Write-Host ""
+    }
+
+    # Consume the auto-memory pointer - it has served its purpose now that the
+    # handoff is rehydrated (save re-creates it on the next snapshot).
+    if (-not $DryRun) {
+        if (Clear-HandoffMemoPointer) { Write-Host "  OK  Cleared the MEMORY.md handoff pointer (consumed)" -ForegroundColor DarkGray; Write-Host "" }
     }
 
     if ($Issue -gt 0) {
@@ -480,4 +572,13 @@ _Last saved $($fm.saved)._
     Write-Host "  No linked issue - wrote a LOCAL HANDOFF.md only. It is gitignored, so to use it on" -ForegroundColor DarkYellow
     Write-Host "  another machine either copy it out of the repo, or force-commit it with" -ForegroundColor DarkYellow
     Write-Host "  'git add -f HANDOFF.md' (there is no board issue to carry it for you)." -ForegroundColor DarkYellow
+}
+
+# -- Auto-memory pointer: make the NEXT session surface this handoff -----------
+# Best-effort + opt-out. Only augments an EXISTING Claude Code memory dir for this
+# project; silently does nothing otherwise. Resume consumes it.
+if (-not $NoMemo -and $Issue -gt 0) {
+    if (Write-HandoffMemoPointer -IssueNum $Issue -RepoName $Repo -BranchName $branch -Saved $fm.saved -Next $NextStep) {
+        Write-Host "  OK  MEMORY.md pointer written - your next session in this repo will surface it" -ForegroundColor DarkGray
+    }
 }
