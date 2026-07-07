@@ -103,6 +103,77 @@ Describe 'Format-HandoffMarkdown' {
     }
 }
 
+Describe 'Get-HandoffBodyFromComment' {
+    It 'extracts the markdown between the ```md fence and its closing ```' {
+        $comment = @'
+<!-- abios-handoff -->
+**[abios-handoff]** session handoff.
+
+```md
+---
+issue: 139
+---
+# Handoff
+[V] next step
+```
+_Last saved 2026-07-07T14:00:00Z._
+'@
+        $body = Get-HandoffBodyFromComment $comment
+        $body | Should -Match '(?m)^issue: 139$'
+        $body | Should -Match '\[V\] next step'
+        $body | Should -Not -Match 'Last saved'
+        $body | Should -Not -Match 'abios-handoff'
+    }
+    It 'returns empty when there is no fenced block' {
+        Get-HandoffBodyFromComment 'just some text, no fence' | Should -BeExactly ''
+    }
+}
+
+Describe 'Get-HandoffFrontmatterField' {
+    BeforeAll {
+        $script:Md = "---`nissue: 139`nbranch: issue-139-x`npr: null`n---`n# Handoff`nbody"
+    }
+    It 'reads a present field' {
+        Get-HandoffFrontmatterField $script:Md 'branch' | Should -Be 'issue-139-x'
+    }
+    It 'returns empty for an absent field' {
+        Get-HandoffFrontmatterField $script:Md 'nope' | Should -BeExactly ''
+    }
+    It 'does not read past the closing fence (body is not frontmatter)' {
+        Get-HandoffFrontmatterField $script:Md 'body' | Should -BeExactly ''
+    }
+    It 'returns empty when the text has no frontmatter' {
+        Get-HandoffFrontmatterField "# no frontmatter`ntext" 'issue' | Should -BeExactly ''
+    }
+}
+
+Describe 'Get-HandoffSection' {
+    BeforeAll {
+        $script:Md = @'
+# Handoff
+## Next concrete step
+[V] do the thing
+## Traps / failed approaches (do NOT repeat)
+- [V] trap one
+- [?] trap two
+## Key files
+- a.ps1
+'@
+    }
+    It 'returns the lines under the requested heading only' {
+        $t = Get-HandoffSection $script:Md 'Traps / failed approaches (do NOT repeat)'
+        $t.Count | Should -Be 2
+        $t[0] | Should -Match 'trap one'
+        $t[1] | Should -Match 'trap two'
+    }
+    It 'stops at the next heading' {
+        (Get-HandoffSection $script:Md 'Traps / failed approaches (do NOT repeat)') -join "`n" | Should -Not -Match 'a.ps1'
+    }
+    It 'returns empty for a missing section' {
+        @(Get-HandoffSection $script:Md 'Nonexistent').Count | Should -Be 0
+    }
+}
+
 Describe 'Add-GitignoreEntries (idempotent)' {
     It 'appends missing patterns' {
         $out = Add-GitignoreEntries "node_modules/`n" @('/HANDOFF.md', '/.handoffs/')
