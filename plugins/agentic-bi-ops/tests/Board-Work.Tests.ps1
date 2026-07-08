@@ -354,3 +354,19 @@ Describe 'Get-CliAdapters' {
         @(Get-CliAdapters | Where-Object { $_.IsDefault }).Count | Should -Be 1
     }
 }
+
+Describe 'Get-CliProbeStatus' {
+    It 'returns ok on exit 0' {
+        Get-CliProbeStatus -ExitCode 0 -Stderr "" | Should -Be 'ok'
+    }
+    It 'returns no-quota on a rate-limit/quota message' {
+        Get-CliProbeStatus -ExitCode 1 -Stderr "Error: 429 rate limit exceeded" | Should -Be 'no-quota'
+        Get-CliProbeStatus -ExitCode 1 -Stderr "quota exceeded for this project" | Should -Be 'no-quota'
+    }
+    It 'returns auth on a 401/authentication message' {
+        Get-CliProbeStatus -ExitCode 1 -Stderr "401 Unauthorized: please login" | Should -Be 'auth'
+    }
+    It 'returns error on any other non-zero exit' {
+        Get-CliProbeStatus -ExitCode 1 -Stderr "some unexpected failure" | Should -Be 'error'
+    }
+}

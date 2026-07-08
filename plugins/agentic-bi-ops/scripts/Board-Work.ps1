@@ -859,6 +859,16 @@ function Get-CliAdapters {
     )
 }
 
+# Classify a probe outcome into one status word. Pure -> unit-testable.
+# Order matters: quota/rate-limit and auth are more specific than the generic error.
+function Get-CliProbeStatus([int]$ExitCode, [string]$Stderr) {
+    if ($ExitCode -eq 0) { return 'ok' }
+    $s = "$Stderr".ToLower()
+    if ($s -match 'rate.?limit|quota|429|resource.?exhausted|too many requests') { return 'no-quota' }
+    if ($s -match '401|403|unauthor|authenticat|not logged in|login required')   { return 'auth' }
+    return 'error'
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
