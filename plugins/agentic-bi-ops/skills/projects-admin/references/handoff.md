@@ -134,6 +134,22 @@ re-verifies `[V]` items are still true (branch exists, PR still open) and flags 
   notices it contradicted itself or re-explored settled ground, it may proactively offer
   `/board handoff save`, then stop for confirmation — never auto-saves.
 
+## Capture-in-handoff (knowledge anti-rot)
+
+The knowledge registry (M5) rots if it depends on the user remembering to feed it. So `save`
+closes the loop: after writing the handoff, it proposes the **knowledge references touched this
+session** that are not yet catalogued —
+
+- every `http(s)` URL mentioned in the narrative (Next step / Done / Open threads / Traps), and
+- **doc-like** key files that exist on disk (a `.md` or a folder — code files are skipped),
+  normalized to repo-relative forward-slash refs,
+
+deduped against `knowledge/registry.json`. It only **proposes** ready-to-run `/knowledge add`
+lines — it never auto-adds (the "never invent references" rule); the skill asks which to keep and
+the user picks a domain for each. Best-effort: a missing or unreadable registry never fails the
+save. Opt out with `-NoKnowledge`. This reuses the existing session-close flow so references get
+captured at the exact moment they are still fresh, instead of being re-found later.
+
 ## Security
 
 - The suggest-and-install of Basic Memory is gated by the full checklist in #143 (pinned version,
