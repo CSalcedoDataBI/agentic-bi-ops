@@ -459,3 +459,26 @@ Describe 'Resolve-LaunchCli' {
         Resolve-LaunchCli -Chosen 'codex' -Availability @{ claude='ok' } | Should -Be 'claude'
     }
 }
+
+Describe 'Resolve-IssueCliMap' {
+    It 'keeps a valid available choice' {
+        $map = Resolve-IssueCliMap -Issues @(12,14) -Choices @{ 12='gemini'; 14='claude' } -Availability @{ gemini='ok'; claude='ok' }
+        $map[12] | Should -Be 'gemini'
+        $map[14] | Should -Be 'claude'
+    }
+    It 'coerces an unavailable choice to claude' {
+        $map = Resolve-IssueCliMap -Issues @(12) -Choices @{ 12='codex' } -Availability @{ claude='ok' }
+        $map[12] | Should -Be 'claude'
+    }
+    It 'defaults an unspecified issue to claude' {
+        $map = Resolve-IssueCliMap -Issues @(99) -Choices @{} -Availability @{ claude='ok' }
+        $map[99] | Should -Be 'claude'
+    }
+}
+Describe 'Show-CliAvailability' {
+    It 'renders one line per CLI with its status' {
+        $out = Show-CliAvailability -Availability @{ claude='ok'; gemini='no-quota' } | Out-String
+        $out | Should -Match 'claude'
+        $out | Should -Match 'no-quota'
+    }
+}

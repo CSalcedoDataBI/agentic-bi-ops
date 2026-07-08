@@ -928,6 +928,52 @@ function Resolve-LaunchCli([string]$Chosen, [hashtable]$Availability) {
     return 'claude'
 }
 
+# Pure core of the picker: given issues + raw choices + live availability, resolve each
+# issue to an available CLI (Resolve-LaunchCli enforces fallback). Unit-testable.
+function Resolve-IssueCliMap([int[]]$Issues, [hashtable]$Choices, [hashtable]$Availability) {
+    $map = @{}
+    foreach ($i in $Issues) {
+        $chosen = if ($Choices.ContainsKey($i)) { $Choices[$i] } else { 'claude' }
+        $map[$i] = Resolve-LaunchCli -Chosen $chosen -Availability $Availability
+    }
+    return $map
+}
+
+# Render the availability table: one colored line per CLI on the console, and the
+# same plain line emitted to the pipeline so callers (and tests, via Out-String) can
+# capture the rendered text. Green ok / yellow otherwise.
+function Show-CliAvailability([hashtable]$Availability) {
+    foreach ($cli in ($Availability.Keys | Sort-Object)) {
+        $st = $Availability[$cli]
+        $color = if ($st -eq 'ok') { 'Green' } else { 'DarkYellow' }
+        $line = "  {0,-8} {1}" -f $cli, $st
+        Write-Host $line -ForegroundColor $color
+        $line
+    }
+}
+
+# Install a not-installed CLI after explicit user approval, then re-probe. Impure.
+function Install-CliOnApproval([object]$Adapter) {
+    Write-Host ("  {0} no esta instalada. Comando: {1}" -f $Adapter.Name, $Adapter.InstallCmd) -ForegroundColor Yellow
+    $ans = Read-Host "  Instalar ahora? (s/N)"
+    if ($ans -notmatch '^[sSyY]') { Write-Host "  Omitida." -ForegroundColor DarkGray; return $false }
+    Invoke-Expression $Adapter.InstallCmd
+    return ($LASTEXITCODE -eq 0)
+}
+
+# Interactive per-issue picker: prints availability, prompts a CLI per issue, then
+# resolves through the pure core. Returns the issue->cli map.
+function Select-CliPerIssue([int[]]$Issues, [hashtable]$Availability) {
+    Show-CliAvailability $Availability | Out-Null
+    $available = @($Availability.Keys | Where-Object { $Availability[$_] -eq 'ok' })
+    $choices = @{}
+    foreach ($i in $Issues) {
+        $ans = Read-Host ("  CLI para #{0} [{1}] (enter=claude)" -f $i, ($available -join '/'))
+        if ($ans) { $choices[$i] = $ans.Trim().ToLower() }
+    }
+    return Resolve-IssueCliMap -Issues $Issues -Choices $choices -Availability $Availability
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
