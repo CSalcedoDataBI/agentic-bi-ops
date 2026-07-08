@@ -1,6 +1,6 @@
 ---
 name: knowledge-registry
-description: Use to capture and read a project's knowledge references by domain — add a research MD, repo, doc folder, URL, NotebookLM notebook or video to knowledge/registry.json and regenerate the KNOWLEDGE.md table. Distinct from MEMORY.md (agent facts) and HANDOFF.md (task resume). Triggers — "guarda esta referencia", "agrega a knowledge", "registra este link/doc/repo", "muéstrame la tabla de conocimiento", "/knowledge add", "/knowledge list", "/knowledge gen".
+description: Use to capture and read a project's knowledge references by domain — add a research MD, repo, doc folder, URL, NotebookLM notebook or video to knowledge/registry.json, regenerate the KNOWLEDGE.md table, or publish it to the repo's GitHub Wiki. Distinct from MEMORY.md (agent facts) and HANDOFF.md (task resume). Triggers — "guarda esta referencia", "agrega a knowledge", "registra este link/doc/repo", "muéstrame la tabla de conocimiento", "publica el knowledge al wiki", "/knowledge add", "/knowledge list", "/knowledge gen", "/knowledge wiki".
 ---
 
 # knowledge-registry
@@ -33,3 +33,17 @@ orphan domains, missing notes) — report, do not block.
 ```
 pwsh -File ${CLAUDE_PLUGIN_ROOT}/scripts/Write-KnowledgeTable.ps1 -Root .
 ```
+
+## Publish to the GitHub Wiki (`/knowledge wiki`)
+Publishes a Home index plus one page per domain to the repo's wiki (`<repo>.wiki.git`) —
+the layer that anchors the registry to GitHub. The account is resolved from the repo owner
+(CSalcedoDataBI → personal PAT, PAL-Devs → business PAT); the token travels only through a
+one-shot credential helper, never the stored remote.
+```
+pwsh -File ${CLAUDE_PLUGIN_ROOT}/scripts/Publish-KnowledgeWiki.ps1 -Root .
+```
+- Requires the repo's **Wiki** feature enabled (Settings → Features → Wikis); the engine says
+  so if it is off. An empty wiki is initialized on the first publish.
+- `-DryRun` resolves + reports without pushing; `-PagesOnly -OutDir <dir>` writes the pages
+  locally for preview without touching git.
+- Wiki pages are generated — the source of truth stays `knowledge/registry.json` in the repo.
