@@ -121,7 +121,10 @@ matching recipe from the projects-admin references:
     Add `-Launch` to open one visible Claude session per worktree — a Windows Terminal (`wt`)
     tab when available, else a `pwsh` window — each briefed to take its issue through step 5
     (PR + review gate). `-DryRun` plans (and previews the launch commands) without mutating or
-    spawning. Monitor the fleet with `scripts/Board-Work.ps1 -Sessions`. Only parallelize issues
+    spawning. Add `-Parallel <nums> -Fleet` instead of `-Launch` to probe the available AI CLIs,
+    pick one per issue (auto-fallback to `claude` when a choice is unavailable), and launch each
+    in its worktree; `-DryRun` shows the probe table without prompting or spawning.
+    Monitor the fleet with `scripts/Board-Work.ps1 -Sessions`. Only parallelize issues
     that DON'T depend on each other; clean each worktree with `git worktree remove` after its PR
     merges. Requires Windows Terminal for tabs (Windows-only launcher).
   - If many pending items lack Priority/Size, suggest `/board fill` to triage them first.

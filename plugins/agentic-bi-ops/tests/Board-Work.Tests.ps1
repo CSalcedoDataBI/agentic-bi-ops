@@ -482,3 +482,20 @@ Describe 'Show-CliAvailability' {
         $out | Should -Match 'no-quota'
     }
 }
+
+Describe 'Build-FleetPlan' {
+    It 'pairs each started issue with its resolved CLI' {
+        $started = @(
+            [PSCustomObject]@{ issue=12; repo='o/r'; branch='issue-12-x'; workPath='C:\wt\12' }
+            [PSCustomObject]@{ issue=14; repo='o/r'; branch='issue-14-y'; workPath='C:\wt\14' }
+        )
+        $map = @{ 12='gemini'; 14='claude' }
+        $plan = Build-FleetPlan -Started $started -CliMap $map
+        ($plan | Where-Object issue -eq 12).cli | Should -Be 'gemini'
+        ($plan | Where-Object issue -eq 14).cli | Should -Be 'claude'
+    }
+    It 'defaults to claude when an issue is absent from the map' {
+        $started = @([PSCustomObject]@{ issue=7; repo='o/r'; branch='b'; workPath='C:\wt\7' })
+        (Build-FleetPlan -Started $started -CliMap @{})[0].cli | Should -Be 'claude'
+    }
+}
