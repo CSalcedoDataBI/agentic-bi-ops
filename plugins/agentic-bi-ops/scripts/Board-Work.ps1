@@ -125,6 +125,7 @@ param(
     # splits each token on ',' so both `-File` and native-array calls work.
     [string[]] $Parallel = @(),
     [switch]$Launch,
+    [switch]$Fleet,
     [switch]$Sessions,
     [int]   $ToReview   = 0,
     [switch]$DryRun,
@@ -189,7 +190,7 @@ function Read-SessionRegistry {
 function Write-SessionRegistryEntry {
     param(
         [int]$IssueNum, [string]$Branch, [string]$WorkPath, [string]$Repo = "",
-        [int]$SessionPid = 0, [string]$Via = ""
+        [int]$SessionPid = 0, [string]$Via = "", [string]$Cli = 'claude'
     )
     $p = Get-SessionRegistryPath
     if (-not $p) { return }
@@ -216,6 +217,7 @@ function Write-SessionRegistryEntry {
         workPath   = $WorkPath
         sessionPid = $trackPid
         via        = $Via
+        cli        = $Cli
         host       = $env:COMPUTERNAME
         started    = (Get-Date -Format "yyyy-MM-dd HH:mm")
     }
@@ -628,7 +630,17 @@ query($o:String!, $r:String!, $n:Int!) {
 # ==============================================================================
 
 # The one-line first message a spawned Claude session receives. Pure -> testable.
-function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [string]$workPath) {
+# -Cli is threaded (default 'claude') so Phase-2 adapters can specialize the leading
+# autonomy sentence per CLI without another signature change; Phase 1 keeps the
+# body text identical for every repl CLI.
+function Get-SessionBriefing {
+    param(
+        [int]$issueNum,
+        [string]$repo,
+        [string]$branch,
+        [string]$workPath,
+        [string]$Cli = 'claude'
+    )
     return ("You are running AUTONOMOUSLY - permissions are pre-approved, so work this " +
             "task end-to-end WITHOUT stopping to ask for confirmation. " +
             "Pick up GitHub issue #$issueNum in $repo. It is already In Progress and claimed, " +
@@ -657,7 +669,7 @@ function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [st
 # launch-<issue>.ps1 and launching `pwsh -NoExit -File <script>` puts ZERO ';' on
 # wt's command line, so wt opens exactly one tab. The briefing is likewise passed by
 # file so no long/quoted text ever hits the command line.
-function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY") {
+function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY", [string]$Cli = 'claude') {
     $tabTitle  = "issue-$issueNum"
     # Defense-in-depth: this name is interpolated into the spawned launch script,
     # so it MUST be a bare env-var identifier - never let ';'/quotes/spaces through.
@@ -686,17 +698,20 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
     # CLAUDE_CODE_OAUTH_TOKEN, so an inherited API key would otherwise silently
     # override a subscription token (or 401 if stale). We also drop the inherited
     # CLAUDE_CODE_* session markers so the child starts as a clean top-level session.
-    # Double any single quote so a briefing path containing ' (valid on Windows, e.g. an
-    # O'Brien user folder) can't break out of the single-quoted literal it is embedded in
-    # inside the generated launch script (the Get-Content -LiteralPath '...' arg below).
-    $safeBrief  = $briefingFile -replace "'", "''"
-    # Each step on its OWN line (a .ps1 file), so no ';' is ever needed - which is the
-    # whole point: ';' on wt's command line would split the tab (see the header note).
-    $clearAuth  = 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue'
-    $setAuth    = '$env:{0}=[Environment]::GetEnvironmentVariable(''{0}'',''User'')' -f $claudeAuthVar
-    $clean      = 'Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue'
-    $run        = 'claude -p (Get-Content -Raw -LiteralPath ''{0}'') --permission-mode bypassPermissions --no-session-persistence --verbose' -f $safeBrief
-    $launchScript = ($clearAuth, $setAuth, $clean, $run) -join "`r`n"
+    # Delegate the launch-script construction to the chosen CLI's adapter. The adapter
+    # receives a context object and RETURNS the launch-script string; the claude adapter
+    # reproduces the exact lines this function used to build inline (byte-identical).
+    $ctx = @{
+        IssueNum     = $issueNum
+        WorkPath     = $workPath
+        BriefingFile = $briefingFile
+        TabTitle     = $tabTitle
+        WindowName   = $windowName
+        AuthVar      = $claudeAuthVar
+    }
+    $adapter = Get-CliAdapters | Where-Object { $_.Name -eq $Cli } | Select-Object -First 1
+    if (-not $adapter) { throw "Unknown CLI adapter '$Cli'." }
+    $launchScript = & $adapter.BuildLaunch $ctx
     # The launch script lives next to the briefing (same dir the caller chose).
     $launchScriptFile = Join-Path (Split-Path -Parent $briefingFile) "launch-$issueNum.ps1"
     $safeScriptPath   = $launchScriptFile   # a plain path arg (its own arg element -> Start-Process quotes it)
@@ -736,11 +751,12 @@ function Start-WorktreeSession {
     param(
         [int]$IssueNum, [string]$Repo, [string]$Branch, [string]$WorkPath,
         [string]$ClaudeAuthVar = "ANTHROPIC_API_KEY",
+        [string]$Cli = 'claude',
         [switch]$Preview
     )
     $abios = Get-AbiosDir
     $briefingFile = if ($abios) { Join-Path $abios "briefing-$IssueNum.txt" } else { Join-Path $WorkPath "briefing-$IssueNum.txt" }
-    $plan  = Build-WorktreeLaunch $IssueNum $WorkPath $briefingFile "abios-parallel" $ClaudeAuthVar
+    $plan  = Build-WorktreeLaunch $IssueNum $WorkPath $briefingFile "abios-parallel" $ClaudeAuthVar $Cli
 
     if ($Preview) {
         Write-Host ("  [preview] #{0}: {1} {2}" -f $IssueNum, $plan.launcher, ($plan.args -join ' ')) -ForegroundColor Gray
@@ -754,7 +770,7 @@ function Start-WorktreeSession {
         return $null
     }
     # Persist the briefing so the spawned session reads it without command-line quoting.
-    Set-Content -LiteralPath $briefingFile -Value (Get-SessionBriefing $IssueNum $Repo $Branch $WorkPath) -Encoding UTF8
+    Set-Content -LiteralPath $briefingFile -Value (Get-SessionBriefing $IssueNum $Repo $Branch $WorkPath $Cli) -Encoding UTF8
     # Persist the launch script so wt/pwsh runs it via -File (no ';' on wt's command
     # line -> no stray tab-splitting). See Build-WorktreeLaunch header for the why.
     Set-Content -LiteralPath $plan.launchScriptFile -Value $plan.launchScript -Encoding UTF8
@@ -801,6 +817,199 @@ function Show-SessionFleet {
     }
     Write-Host ""
     Write-Host ("Total: {0} sesion(es) viva(s). Las de PID muerto se podaron automaticamente." -f $sessions.Count) -ForegroundColor Cyan
+}
+
+# ==============================================================================
+# CLI adapter registry: one record per launchable AI CLI. Generalizes the
+# previously Claude-only launch path (Build-WorktreeLaunch / Get-SessionBriefing).
+# Kind: 'repl' = live tab in the worktree; 'async' = dispatches a cloud task.
+# Hooks are scriptblocks so they stay pure/testable and are invoked with &.
+# ==============================================================================
+function Get-CliAdapters {
+    @(
+        [PSCustomObject]@{
+            Name         = 'claude'
+            Command      = 'claude'
+            Kind         = 'repl'
+            IsDefault    = $true
+            InstallCmd   = ''
+            # claude is the host CLI running this very script -> always available.
+            Probe        = { param($ctx) 'ok' }
+            # Build the per-worktree claude launch script. $ctx carries at least
+            # BriefingFile + AuthVar. This is the SAME construction Build-WorktreeLaunch
+            # used inline before the adapter refactor - kept byte-identical on purpose
+            # (see the O'Brien single-quote escaping + the -join "`r`n" below).
+            BuildLaunch  = {
+                param($ctx)
+                # Double any single quote so a briefing path containing ' (valid on Windows, e.g. an
+                # O'Brien user folder) can't break out of the single-quoted literal it is embedded in
+                # inside the generated launch script (the Get-Content -LiteralPath '...' arg below).
+                $safeBrief  = $ctx.BriefingFile -replace "'", "''"
+                # Each step on its OWN line (a .ps1 file), so no ';' is ever needed - which is the
+                # whole point: ';' on wt's command line would split the tab (see the header note).
+                $clearAuth  = 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue'
+                $setAuth    = '$env:{0}=[Environment]::GetEnvironmentVariable(''{0}'',''User'')' -f $ctx.AuthVar
+                $clean      = 'Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue'
+                $run        = 'claude -p (Get-Content -Raw -LiteralPath ''{0}'') --permission-mode bypassPermissions --no-session-persistence --verbose' -f $safeBrief
+                ($clearAuth, $setAuth, $clean, $run) -join "`r`n"
+            }
+        }
+        [PSCustomObject]@{
+            Name         = 'gemini'
+            Command      = 'gemini'
+            Kind         = 'repl'
+            IsDefault    = $false
+            InstallCmd   = 'npm i -g @google/gemini-cli'
+            # One-token probe prompt with the SAME autonomous flags as the real launch, so
+            # an auth/quota failure classifies correctly (see Get-CliProbeStatus).
+            Probe        = { param($ctx) Invoke-CliProbe @('gemini', '-p', 'reply OK', '--approval-mode', 'yolo', '--skip-trust') }
+            BuildLaunch  = {
+                param($ctx)
+                # Same single-quote doubling as the claude adapter (see its BuildLaunch
+                # comment) so a briefing path containing ' (e.g. an O'Brien user folder)
+                # can't break out of the generated script's single-quoted literal.
+                $b = $ctx.BriefingFile -replace "'", "''"
+                'gemini -p (Get-Content -Raw -LiteralPath ''{0}'') --approval-mode yolo --skip-trust' -f $b
+            }
+        }
+        [PSCustomObject]@{
+            Name         = 'jules'
+            Command      = 'jules'
+            Kind         = 'async'
+            IsDefault    = $false
+            InstallCmd   = 'npm i -g @google/jules'
+            # jules is an ASYNC cloud agent: 'jules new' dispatches a session that operates
+            # on the REMOTE repo, not this local worktree/branch. Phase-1 limitation: this
+            # dispatch is best-effort - there is no local worktree/PR integration yet (the
+            # cloud session runs independently of the branch this script checked out). Full
+            # worktree/PR round-trip integration is deferred to a later phase.
+            Probe        = { param($ctx) Invoke-CliProbe @('jules', 'remote', 'list') }
+            BuildLaunch  = {
+                param($ctx)
+                $b = $ctx.BriefingFile -replace "'", "''"
+                'jules new (Get-Content -Raw -LiteralPath ''{0}'')' -f $b
+            }
+        }
+        [PSCustomObject]@{
+            Name         = 'codex'
+            Command      = 'codex'
+            Kind         = 'repl'
+            IsDefault    = $false
+            InstallCmd   = 'npm i -g @openai/codex'
+            Probe        = { param($ctx) Invoke-CliProbe @('codex', 'exec', 'reply OK', '--dangerously-bypass-approvals-and-sandbox') }
+            BuildLaunch  = {
+                param($ctx)
+                $b = $ctx.BriefingFile -replace "'", "''"
+                'codex exec (Get-Content -Raw -LiteralPath ''{0}'') --dangerously-bypass-approvals-and-sandbox' -f $b
+            }
+        }
+        [PSCustomObject]@{
+            Name         = 'copilot'
+            Command      = 'copilot'
+            Kind         = 'repl'
+            IsDefault    = $false
+            InstallCmd   = 'npm i -g @github/copilot'
+            Probe        = { param($ctx) Invoke-CliProbe @('copilot', '-p', 'reply OK', '--allow-all') }
+            BuildLaunch  = {
+                param($ctx)
+                $b = $ctx.BriefingFile -replace "'", "''"
+                'copilot -p (Get-Content -Raw -LiteralPath ''{0}'') --allow-all' -f $b
+            }
+        }
+    )
+}
+
+# Classify a probe outcome into one status word. Pure -> unit-testable.
+# Order matters: quota/rate-limit and auth are more specific than the generic error.
+function Get-CliProbeStatus([int]$ExitCode, [string]$Stderr) {
+    if ($ExitCode -eq 0) { return 'ok' }
+    $s = "$Stderr".ToLower()
+    if ($s -match 'rate.?limit|quota|429|resource.?exhausted|too many requests') { return 'no-quota' }
+    if ($s -match '401|403|unauthor|authenticat|not logged in|login required')   { return 'auth' }
+    return 'error'
+}
+
+# Shared probe runner for 'repl' CLIs that accept a one-shot prompt: run the
+# adapter's probe command, capture exit code + stderr, classify. Each adapter's
+# Probe scriptblock calls this with its own argument list (filled per CLI in the
+# spike tasks). Kept separate so Test-CliAvailability can be tested with a mock Probe.
+function Invoke-CliProbe([string[]]$CommandLine) {
+    $exe  = $CommandLine[0]
+    $rest = $CommandLine[1..($CommandLine.Count-1)]
+    $err  = & $exe @rest 2>&1 | Out-String
+    return Get-CliProbeStatus $LASTEXITCODE $err
+}
+
+# Availability = installed on PATH AND (for repl CLIs) a live probe. Returns
+# { Cli, Status, Detail }. Status in ok/no-quota/auth/not-installed/error.
+function Test-CliAvailability {
+    param([Parameter(Mandatory)][object]$Adapter)
+    if (-not (Get-Command $Adapter.Command -ErrorAction SilentlyContinue)) {
+        return [PSCustomObject]@{ Cli=$Adapter.Name; Status='not-installed'; Detail="$($Adapter.Command) no esta en PATH" }
+    }
+    $status = & $Adapter.Probe $null
+    return [PSCustomObject]@{ Cli=$Adapter.Name; Status=$status; Detail='' }
+}
+
+# The v1 safety net: an unavailable chosen CLI silently degrades to claude (the
+# always-present default), never aborting the batch. Pure -> unit-testable.
+function Resolve-LaunchCli([string]$Chosen, [hashtable]$Availability) {
+    if ($Chosen -and $Availability[$Chosen] -eq 'ok') { return $Chosen }
+    return 'claude'
+}
+
+# Pure core of the picker: given issues + raw choices + live availability, resolve each
+# issue to an available CLI (Resolve-LaunchCli enforces fallback). Unit-testable.
+function Resolve-IssueCliMap([int[]]$Issues, [hashtable]$Choices, [hashtable]$Availability) {
+    $map = @{}
+    foreach ($i in $Issues) {
+        $chosen = if ($Choices.ContainsKey($i)) { $Choices[$i] } else { 'claude' }
+        $map[$i] = Resolve-LaunchCli -Chosen $chosen -Availability $Availability
+    }
+    return $map
+}
+
+# Render the availability table: one colored line per CLI on the console, and the
+# same plain line emitted to the pipeline so callers (and tests, via Out-String) can
+# capture the rendered text. Green ok / yellow otherwise.
+function Show-CliAvailability([hashtable]$Availability) {
+    foreach ($cli in ($Availability.Keys | Sort-Object)) {
+        $st = $Availability[$cli]
+        $color = if ($st -eq 'ok') { 'Green' } else { 'DarkYellow' }
+        $line = "  {0,-8} {1}" -f $cli, $st
+        Write-Host $line -ForegroundColor $color
+        $line
+    }
+}
+
+# Install a not-installed CLI after explicit user approval, then re-probe. Impure.
+function Install-CliOnApproval([object]$Adapter) {
+    Write-Host ("  {0} no esta instalada. Comando: {1}" -f $Adapter.Name, $Adapter.InstallCmd) -ForegroundColor Yellow
+    $ans = Read-Host "  Instalar ahora? (s/N)"
+    if ($ans -notmatch '^[sSyY]') { Write-Host "  Omitida." -ForegroundColor DarkGray; return $false }
+    Invoke-Expression $Adapter.InstallCmd
+    return ($LASTEXITCODE -eq 0)
+}
+
+# Interactive per-issue picker: prints availability, prompts a CLI per issue, then
+# resolves through the pure core. Returns the issue->cli map.
+function Select-CliPerIssue([int[]]$Issues, [hashtable]$Availability) {
+    Show-CliAvailability $Availability | Out-Null
+    $available = @($Availability.Keys | Where-Object { $Availability[$_] -eq 'ok' })
+    $choices = @{}
+    foreach ($i in $Issues) {
+        $ans = Read-Host ("  CLI para #{0} [{1}] (enter=claude)" -f $i, ($available -join '/'))
+        if ($ans) { $choices[$i] = $ans.Trim().ToLower() }
+    }
+    return Resolve-IssueCliMap -Issues $Issues -Choices $choices -Availability $Availability
+}
+
+# Pair each started worktree with the CLI the picker resolved for it. Pure.
+function Build-FleetPlan([object[]]$Started, [hashtable]$CliMap) {
+    foreach ($r in $Started) {
+        $cli = if ($CliMap.ContainsKey($r.issue)) { $CliMap[$r.issue] } else { 'claude' }
+        [PSCustomObject]@{ issue=$r.issue; repo=$r.repo; branch=$r.branch; workPath=$r.workPath; cli=$cli }
+    }
 }
 
 # ==============================================================================
@@ -1074,7 +1283,7 @@ if ($Parallel.Count -gt 0) {
         Write-Host ("DRY-RUN: {0} se iniciarian, {1} se saltarian. Ningun cambio hecho." -f $planned.Count, $skipped.Count) -ForegroundColor Gray
     } else {
         Write-Host ("Iniciados: {0} / {1}. Worktrees listos, uno por issue." -f $started.Count, $queue.Count) -ForegroundColor Yellow
-        if ($started.Count -gt 0 -and -not $Launch) {
+        if ($started.Count -gt 0 -and -not $Launch -and -not $Fleet) {
             Write-Host ""
             Write-Host "Cada worktree tiene su rama y su claim. Trabaja cada issue en su carpeta:" -ForegroundColor Cyan
             foreach ($r in $started) {
@@ -1086,8 +1295,77 @@ if ($Parallel.Count -gt 0) {
         }
     }
 
-    # -- Launch: one visible Claude session per worktree (-Launch) --------------
-    if ($Launch) {
+    # -- Launch: one visible session per worktree. -Fleet probes CLIs and picks one
+    # per issue (fallback claude); plain -Launch keeps the shipped claude-only path.
+    # -Fleet TAKES OVER the launch (elseif), so the two never both spawn in one run.
+    if ($Fleet) {
+        Write-Host ""
+        Write-Host "----- FLEET (una CLI por issue, fallback claude) -----" -ForegroundColor Cyan
+        # Availability across every adapter. A not-installed CLI is offered for install
+        # (only in a real run); if still unavailable it just stays that way (fallback).
+        $availability = @{}
+        foreach ($adapter in Get-CliAdapters) {
+            $res = Test-CliAvailability -Adapter $adapter
+            if ($res.Status -eq 'not-installed' -and -not $DryRun) {
+                if (Install-CliOnApproval $adapter) { $res = Test-CliAvailability -Adapter $adapter }
+            }
+            $availability[$adapter.Name] = $res.Status
+        }
+
+        if ($DryRun) {
+            # No prompt / install / spawn under -DryRun: just show the probe table and
+            # the default plan (every started issue -> claude; the real picker runs live).
+            Write-Host "  CLIs disponibles (probe):" -ForegroundColor DarkGray
+            Show-CliAvailability $availability | Out-Null
+            $defaultMap = @{}
+            foreach ($r in $planned) { $defaultMap[$r.issue] = 'claude' }
+            $dryPlan = Build-FleetPlan -Started $planned -CliMap $defaultMap
+            Write-Host "  Plan por defecto (el picker por-issue corre en la ejecucion real):" -ForegroundColor DarkGray
+            foreach ($e in $dryPlan) { Write-Host ("    #{0,-4} -> {1}" -f $e.issue, $e.cli) -ForegroundColor Gray }
+        } else {
+            # Auth preflight: a claude fallback session is headless, so it needs an explicit
+            # user-env credential (the Desktop host's OAuth is not shared with children).
+            $oauthPresent  = [bool][System.Environment]::GetEnvironmentVariable('CLAUDE_CODE_OAUTH_TOKEN', 'User')
+            $ClaudeAuthVar = Resolve-ClaudeAuthVar $PSBoundParameters.ContainsKey('ClaudeAuthVar') $ClaudeAuthVar $oauthPresent
+            if ($ClaudeAuthVar -eq 'CLAUDE_CODE_OAUTH_TOKEN') {
+                Write-Host "  Auth: usando CLAUDE_CODE_OAUTH_TOKEN (suscripcion)." -ForegroundColor DarkGray
+            }
+            $claudeAuth = [System.Environment]::GetEnvironmentVariable($ClaudeAuthVar, "User")
+            if (-not $claudeAuth) {
+                Write-Host ""
+                Write-Host ("  AUTH REQUERIDA - las sesiones headless necesitan '{0}' en tus variables de usuario." -f $ClaudeAuthVar) -ForegroundColor Red
+                Write-Host "  (El login del Desktop NO se comparte con procesos hijos, darian 401.)" -ForegroundColor DarkYellow
+                Write-Host "  Opcion A (API key): setx ANTHROPIC_API_KEY <tu-api-key>" -ForegroundColor Gray
+                Write-Host "  Opcion B (suscripcion): claude setup-token ; setx CLAUDE_CODE_OAUTH_TOKEN <token> ; -ClaudeAuthVar CLAUDE_CODE_OAUTH_TOKEN" -ForegroundColor Gray
+                Write-Host "  Reinicia la terminal y re-lanza con -Fleet (los worktrees ya estan listos; monitorea con -Sessions)." -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+                exit 0
+            }
+            # Pick a CLI per issue (interactive), then pair each worktree with its choice.
+            $issueNums = @($started | ForEach-Object { $_.issue })
+            $map       = Select-CliPerIssue -Issues $issueNums -Availability $availability
+            $fleetPlan = Build-FleetPlan -Started $started -CliMap $map
+            $launched  = 0
+            foreach ($entry in $fleetPlan) {
+                if (-not $entry.workPath) { continue }
+                # The picker already resolved through the fallback, but re-resolve at spawn
+                # time so an unavailable CLI never actually launches (defense in depth).
+                $actualCli = Resolve-LaunchCli -Chosen $entry.cli -Availability $availability
+                $spawn = Start-WorktreeSession -IssueNum $entry.issue -Repo $entry.repo -Branch $entry.branch `
+                                               -WorkPath $entry.workPath -ClaudeAuthVar $ClaudeAuthVar -Cli $actualCli
+                $launched++
+                $via = if ($spawn.usesWt) { "wt" } else { "pwsh" }
+                if ($spawn.process -and -not $spawn.usesWt) {
+                    Write-SessionRegistryEntry -IssueNum $entry.issue -SessionPid $spawn.process.Id -Via $via -Cli $actualCli
+                } else {
+                    Write-SessionRegistryEntry -IssueNum $entry.issue -Via $via -Cli $actualCli
+                }
+            }
+            Write-Host ""
+            Write-Host ("Fleet lanzada: {0} sesion(es). CLI resuelto por issue (fallback claude)." -f $launched) -ForegroundColor Yellow
+        }
+    } elseif ($Launch) {
         Write-Host ""
         # Auto-prefer the subscription OAuth token when the caller did not pick an
         # auth var explicitly (see Resolve-ClaudeAuthVar).

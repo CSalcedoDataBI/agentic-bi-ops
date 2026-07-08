@@ -126,6 +126,19 @@ Describe 'Get-SessionBriefing' {
     }
 }
 
+Describe 'Get-SessionBriefing adapter-aware' {
+    It 'keeps the claude briefing unchanged' {
+        (Get-SessionBriefing 5 'o/r' 'issue-5-x' 'C:\wt' -Cli 'claude') | Should -Match 'AUTONOMOUSLY'
+        (Get-SessionBriefing 5 'o/r' 'issue-5-x' 'C:\wt' -Cli 'claude') | Should -Match 'issue #5'
+    }
+    It 'still references the same PR + review-gate steps for any repl CLI' {
+        (Get-SessionBriefing 5 'o/r' 'issue-5-x' 'C:\wt' -Cli 'gemini') | Should -Match 'New-BoardPR.ps1'
+    }
+    It 'defaults to claude behavior when -Cli is omitted' {
+        (Get-SessionBriefing 5 'o/r' 'issue-5-x' 'C:\wt') | Should -Match 'AUTONOMOUSLY'
+    }
+}
+
 Describe 'Resolve-ClaudeAuthVar' {
     It 'honors an explicit -ClaudeAuthVar even when the OAuth token exists' {
         Resolve-ClaudeAuthVar $true 'ANTHROPIC_API_KEY' $true | Should -Be 'ANTHROPIC_API_KEY'
@@ -219,6 +232,56 @@ Describe 'Build-WorktreeLaunch' {
         Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
         $p = Build-WorktreeLaunch 12 'C:\wt' "C:\O'Brien\brief.txt"
         $p.launchScript | Should -Match "O''Brien"
+    }
+}
+
+Describe 'Build-WorktreeLaunch adapter parity' {
+    # GOLDEN fixture captured from the pre-refactor Build-WorktreeLaunch for a claude
+    # launch of issue 42 (brief C:\b\briefing-42.txt). The adapter-driven refactor MUST
+    # keep the claude launchScript + args byte-identical to these constants.
+    BeforeAll {
+        $script:GoldenLaunchScript = @(
+            "Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue"
+            "`$env:ANTHROPIC_API_KEY=[Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY','User')"
+            "Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue"
+            "claude -p (Get-Content -Raw -LiteralPath 'C:\b\briefing-42.txt') --permission-mode bypassPermissions --no-session-persistence --verbose"
+        ) -join "`r`n"
+        $script:GoldenWtArgs = @('-w', 'abios-parallel', 'new-tab', '--title', 'issue-42',
+                                 '--startingDirectory', 'C:\wt\issue-42', 'pwsh', '-NoExit', '-File', 'C:\b\launch-42.ps1')
+    }
+
+    It 'exposes a -Cli parameter (adapter selector) defaulting to claude' {
+        $cmd = Get-Command Build-WorktreeLaunch
+        $cmd.Parameters.ContainsKey('Cli') | Should -BeTrue
+        # the added selector must be appended, keeping the 5 original positionals in order
+        $cmd.Parameters['Cli'].ParameterType | Should -Be ([string])
+    }
+    It 'produces a launchScript byte-identical to the golden when -Cli claude is explicit' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 42 'C:\wt\issue-42' 'C:\b\briefing-42.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude'
+        $p.launchScript | Should -BeExactly $script:GoldenLaunchScript
+    }
+    It 'produces a launchScript byte-identical to the golden when -Cli is omitted (default claude)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 42 'C:\wt\issue-42' 'C:\b\briefing-42.txt' 'abios-parallel' 'ANTHROPIC_API_KEY'
+        $p.launchScript | Should -BeExactly $script:GoldenLaunchScript
+    }
+    It 'produces args byte-identical to the golden wt args (explicit claude)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 42 'C:\wt\issue-42' 'C:\b\briefing-42.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude'
+        $p.args.Count            | Should -Be $script:GoldenWtArgs.Count
+        ($p.args -join "`n")     | Should -BeExactly ($script:GoldenWtArgs -join "`n")
+    }
+    It 'produces args byte-identical to the golden wt args (default claude)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 42 'C:\wt\issue-42' 'C:\b\briefing-42.txt' 'abios-parallel' 'ANTHROPIC_API_KEY'
+        $p.args.Count            | Should -Be $script:GoldenWtArgs.Count
+        ($p.args -join "`n")     | Should -BeExactly ($script:GoldenWtArgs -join "`n")
+    }
+    It 'default (no -Cli) still yields a claude -p launch script' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
+        $p.launchScript | Should -Match 'claude -p '
     }
 }
 
@@ -330,5 +393,138 @@ Describe 'Invoke-IssueStart safety refusals + dry-run' {
         $r.dryRun  | Should -BeTrue
         $r.skipped | Should -Be ''
         $r.branch  | Should -Match '^issue-1-'
+    }
+}
+
+Describe 'Get-CliAdapters' {
+    It "returns claude as the default adapter with all required fields" {
+        $adapters = Get-CliAdapters
+        $claude = $adapters | Where-Object { $_.Name -eq 'claude' }
+        $claude              | Should -Not -BeNullOrEmpty
+        $claude.Command      | Should -Be 'claude'
+        $claude.Kind         | Should -Be 'repl'
+        $claude.IsDefault    | Should -BeTrue
+        $claude.BuildLaunch  | Should -BeOfType ([scriptblock])
+        $claude.Probe        | Should -BeOfType ([scriptblock])
+    }
+    It "includes all five CLIs by name" {
+        (Get-CliAdapters).Name | Should -Contain 'gemini'
+        (Get-CliAdapters).Name | Should -Contain 'jules'
+        (Get-CliAdapters).Name | Should -Contain 'codex'
+        (Get-CliAdapters).Name | Should -Contain 'copilot'
+    }
+    It "marks exactly one adapter as default" {
+        @(Get-CliAdapters | Where-Object { $_.IsDefault }).Count | Should -Be 1
+    }
+}
+
+Describe 'Get-CliProbeStatus' {
+    It 'returns ok on exit 0' {
+        Get-CliProbeStatus -ExitCode 0 -Stderr "" | Should -Be 'ok'
+    }
+    It 'returns no-quota on a rate-limit/quota message' {
+        Get-CliProbeStatus -ExitCode 1 -Stderr "Error: 429 rate limit exceeded" | Should -Be 'no-quota'
+        Get-CliProbeStatus -ExitCode 1 -Stderr "quota exceeded for this project" | Should -Be 'no-quota'
+    }
+    It 'returns auth on a 401/authentication message' {
+        Get-CliProbeStatus -ExitCode 1 -Stderr "401 Unauthorized: please login" | Should -Be 'auth'
+    }
+    It 'returns error on any other non-zero exit' {
+        Get-CliProbeStatus -ExitCode 1 -Stderr "some unexpected failure" | Should -Be 'error'
+    }
+}
+
+Describe 'Test-CliAvailability' {
+    It 'reports not-installed when the command is absent' {
+        Mock Get-Command { $null } -ParameterFilter { $Name -eq 'codex' }
+        $r = Test-CliAvailability -Adapter ([PSCustomObject]@{ Name='codex'; Command='codex'; Probe={ param($ctx) 'ok' } })
+        $r.Status | Should -Be 'not-installed'
+    }
+    It 'runs the probe when installed and returns its status' {
+        Mock Get-Command { [PSCustomObject]@{ Source='C:\x\gemini.exe' } } -ParameterFilter { $Name -eq 'gemini' }
+        $r = Test-CliAvailability -Adapter ([PSCustomObject]@{ Name='gemini'; Command='gemini'; Probe={ param($ctx) 'no-quota' } })
+        $r.Status | Should -Be 'no-quota'
+        $r.Cli    | Should -Be 'gemini'
+    }
+}
+
+Describe 'Resolve-LaunchCli' {
+    It 'returns the chosen CLI when it is available' {
+        Resolve-LaunchCli -Chosen 'gemini' -Availability @{ gemini='ok'; claude='ok' } | Should -Be 'gemini'
+    }
+    It 'falls back to claude when the chosen CLI is unavailable' {
+        Resolve-LaunchCli -Chosen 'gemini' -Availability @{ gemini='no-quota'; claude='ok' } | Should -Be 'claude'
+    }
+    It 'falls back to claude when the chosen CLI is missing from the map' {
+        Resolve-LaunchCli -Chosen 'codex' -Availability @{ claude='ok' } | Should -Be 'claude'
+    }
+}
+
+Describe 'Resolve-IssueCliMap' {
+    It 'keeps a valid available choice' {
+        $map = Resolve-IssueCliMap -Issues @(12,14) -Choices @{ 12='gemini'; 14='claude' } -Availability @{ gemini='ok'; claude='ok' }
+        $map[12] | Should -Be 'gemini'
+        $map[14] | Should -Be 'claude'
+    }
+    It 'coerces an unavailable choice to claude' {
+        $map = Resolve-IssueCliMap -Issues @(12) -Choices @{ 12='codex' } -Availability @{ claude='ok' }
+        $map[12] | Should -Be 'claude'
+    }
+    It 'defaults an unspecified issue to claude' {
+        $map = Resolve-IssueCliMap -Issues @(99) -Choices @{} -Availability @{ claude='ok' }
+        $map[99] | Should -Be 'claude'
+    }
+}
+Describe 'Show-CliAvailability' {
+    It 'renders one line per CLI with its status' {
+        $out = Show-CliAvailability -Availability @{ claude='ok'; gemini='no-quota' } | Out-String
+        $out | Should -Match 'claude'
+        $out | Should -Match 'no-quota'
+    }
+}
+
+Describe 'Build-FleetPlan' {
+    It 'pairs each started issue with its resolved CLI' {
+        $started = @(
+            [PSCustomObject]@{ issue=12; repo='o/r'; branch='issue-12-x'; workPath='C:\wt\12' }
+            [PSCustomObject]@{ issue=14; repo='o/r'; branch='issue-14-y'; workPath='C:\wt\14' }
+        )
+        $map = @{ 12='gemini'; 14='claude' }
+        $plan = Build-FleetPlan -Started $started -CliMap $map
+        ($plan | Where-Object issue -eq 12).cli | Should -Be 'gemini'
+        ($plan | Where-Object issue -eq 14).cli | Should -Be 'claude'
+    }
+    It 'defaults to claude when an issue is absent from the map' {
+        $started = @([PSCustomObject]@{ issue=7; repo='o/r'; branch='b'; workPath='C:\wt\7' })
+        (Build-FleetPlan -Started $started -CliMap @{})[0].cli | Should -Be 'claude'
+    }
+}
+
+Describe 'non-claude adapters' {
+    It 'gemini BuildLaunch uses -p and --approval-mode yolo --skip-trust' {
+        $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
+        $s = & ((Get-CliAdapters | Where-Object Name -eq 'gemini').BuildLaunch) $ctx
+        $s | Should -Match 'gemini -p'
+        $s | Should -Match '--approval-mode yolo'
+        $s | Should -Match '--skip-trust'
+    }
+    It 'codex BuildLaunch uses exec + --dangerously-bypass-approvals-and-sandbox' {
+        $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
+        (& ((Get-CliAdapters | Where-Object Name -eq 'codex').BuildLaunch) $ctx) | Should -Match 'codex exec .* --dangerously-bypass-approvals-and-sandbox'
+    }
+    It 'copilot BuildLaunch uses -p + --allow-all' {
+        $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
+        (& ((Get-CliAdapters | Where-Object Name -eq 'copilot').BuildLaunch) $ctx) | Should -Match 'copilot -p .* --allow-all'
+    }
+    It 'jules BuildLaunch dispatches jules new' {
+        $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
+        (& ((Get-CliAdapters | Where-Object Name -eq 'jules').BuildLaunch) $ctx) | Should -Match 'jules new'
+    }
+    It 'claude probe returns ok (host CLI always available)' {
+        (& (Get-CliAdapters | Where-Object Name -eq 'claude').Probe $null) | Should -Be 'ok'
+    }
+    It 'briefing path with a single quote is escaped in a non-claude adapter' {
+        $ctx = @{ BriefingFile = "C:\Users\O'Brien\b.txt" }
+        (& ((Get-CliAdapters | Where-Object Name -eq 'gemini').BuildLaunch) $ctx) | Should -Match "O''Brien"
     }
 }
