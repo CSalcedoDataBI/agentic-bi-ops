@@ -657,7 +657,7 @@ function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [st
 # launch-<issue>.ps1 and launching `pwsh -NoExit -File <script>` puts ZERO ';' on
 # wt's command line, so wt opens exactly one tab. The briefing is likewise passed by
 # file so no long/quoted text ever hits the command line.
-function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY") {
+function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY", [string]$Cli = 'claude') {
     $tabTitle  = "issue-$issueNum"
     # Defense-in-depth: this name is interpolated into the spawned launch script,
     # so it MUST be a bare env-var identifier - never let ';'/quotes/spaces through.
@@ -686,17 +686,20 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
     # CLAUDE_CODE_OAUTH_TOKEN, so an inherited API key would otherwise silently
     # override a subscription token (or 401 if stale). We also drop the inherited
     # CLAUDE_CODE_* session markers so the child starts as a clean top-level session.
-    # Double any single quote so a briefing path containing ' (valid on Windows, e.g. an
-    # O'Brien user folder) can't break out of the single-quoted literal it is embedded in
-    # inside the generated launch script (the Get-Content -LiteralPath '...' arg below).
-    $safeBrief  = $briefingFile -replace "'", "''"
-    # Each step on its OWN line (a .ps1 file), so no ';' is ever needed - which is the
-    # whole point: ';' on wt's command line would split the tab (see the header note).
-    $clearAuth  = 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue'
-    $setAuth    = '$env:{0}=[Environment]::GetEnvironmentVariable(''{0}'',''User'')' -f $claudeAuthVar
-    $clean      = 'Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue'
-    $run        = 'claude -p (Get-Content -Raw -LiteralPath ''{0}'') --permission-mode bypassPermissions --no-session-persistence --verbose' -f $safeBrief
-    $launchScript = ($clearAuth, $setAuth, $clean, $run) -join "`r`n"
+    # Delegate the launch-script construction to the chosen CLI's adapter. The adapter
+    # receives a context object and RETURNS the launch-script string; the claude adapter
+    # reproduces the exact lines this function used to build inline (byte-identical).
+    $ctx = @{
+        IssueNum     = $issueNum
+        WorkPath     = $workPath
+        BriefingFile = $briefingFile
+        TabTitle     = $tabTitle
+        WindowName   = $windowName
+        AuthVar      = $claudeAuthVar
+    }
+    $adapter = Get-CliAdapters | Where-Object { $_.Name -eq $Cli } | Select-Object -First 1
+    if (-not $adapter) { throw "Unknown CLI adapter '$Cli'." }
+    $launchScript = & $adapter.BuildLaunch $ctx
     # The launch script lives next to the briefing (same dir the caller chose).
     $launchScriptFile = Join-Path (Split-Path -Parent $briefingFile) "launch-$issueNum.ps1"
     $safeScriptPath   = $launchScriptFile   # a plain path arg (its own arg element -> Start-Process quotes it)
@@ -818,7 +821,24 @@ function Get-CliAdapters {
             IsDefault    = $true
             InstallCmd   = ''
             Probe        = { param($ctx) $null }
-            BuildLaunch  = { param($ctx) $null }
+            # Build the per-worktree claude launch script. $ctx carries at least
+            # BriefingFile + AuthVar. This is the SAME construction Build-WorktreeLaunch
+            # used inline before the adapter refactor - kept byte-identical on purpose
+            # (see the O'Brien single-quote escaping + the -join "`r`n" below).
+            BuildLaunch  = {
+                param($ctx)
+                # Double any single quote so a briefing path containing ' (valid on Windows, e.g. an
+                # O'Brien user folder) can't break out of the single-quoted literal it is embedded in
+                # inside the generated launch script (the Get-Content -LiteralPath '...' arg below).
+                $safeBrief  = $ctx.BriefingFile -replace "'", "''"
+                # Each step on its OWN line (a .ps1 file), so no ';' is ever needed - which is the
+                # whole point: ';' on wt's command line would split the tab (see the header note).
+                $clearAuth  = 'Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue'
+                $setAuth    = '$env:{0}=[Environment]::GetEnvironmentVariable(''{0}'',''User'')' -f $ctx.AuthVar
+                $clean      = 'Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue'
+                $run        = 'claude -p (Get-Content -Raw -LiteralPath ''{0}'') --permission-mode bypassPermissions --no-session-persistence --verbose' -f $safeBrief
+                ($clearAuth, $setAuth, $clean, $run) -join "`r`n"
+            }
         }
         [PSCustomObject]@{
             Name         = 'gemini'

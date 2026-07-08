@@ -222,6 +222,56 @@ Describe 'Build-WorktreeLaunch' {
     }
 }
 
+Describe 'Build-WorktreeLaunch adapter parity' {
+    # GOLDEN fixture captured from the pre-refactor Build-WorktreeLaunch for a claude
+    # launch of issue 42 (brief C:\b\briefing-42.txt). The adapter-driven refactor MUST
+    # keep the claude launchScript + args byte-identical to these constants.
+    BeforeAll {
+        $script:GoldenLaunchScript = @(
+            "Remove-Item Env:ANTHROPIC_API_KEY,Env:ANTHROPIC_AUTH_TOKEN,Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue"
+            "`$env:ANTHROPIC_API_KEY=[Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY','User')"
+            "Remove-Item Env:CLAUDECODE,Env:CLAUDE_CODE_SESSION_ID,Env:CLAUDE_CODE_CHILD_SESSION,Env:CLAUDE_CODE_ENTRYPOINT -ErrorAction SilentlyContinue"
+            "claude -p (Get-Content -Raw -LiteralPath 'C:\b\briefing-42.txt') --permission-mode bypassPermissions --no-session-persistence --verbose"
+        ) -join "`r`n"
+        $script:GoldenWtArgs = @('-w', 'abios-parallel', 'new-tab', '--title', 'issue-42',
+                                 '--startingDirectory', 'C:\wt\issue-42', 'pwsh', '-NoExit', '-File', 'C:\b\launch-42.ps1')
+    }
+
+    It 'exposes a -Cli parameter (adapter selector) defaulting to claude' {
+        $cmd = Get-Command Build-WorktreeLaunch
+        $cmd.Parameters.ContainsKey('Cli') | Should -BeTrue
+        # the added selector must be appended, keeping the 5 original positionals in order
+        $cmd.Parameters['Cli'].ParameterType | Should -Be ([string])
+    }
+    It 'produces a launchScript byte-identical to the golden when -Cli claude is explicit' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 42 'C:\wt\issue-42' 'C:\b\briefing-42.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude'
+        $p.launchScript | Should -BeExactly $script:GoldenLaunchScript
+    }
+    It 'produces a launchScript byte-identical to the golden when -Cli is omitted (default claude)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 42 'C:\wt\issue-42' 'C:\b\briefing-42.txt' 'abios-parallel' 'ANTHROPIC_API_KEY'
+        $p.launchScript | Should -BeExactly $script:GoldenLaunchScript
+    }
+    It 'produces args byte-identical to the golden wt args (explicit claude)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 42 'C:\wt\issue-42' 'C:\b\briefing-42.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude'
+        $p.args.Count            | Should -Be $script:GoldenWtArgs.Count
+        ($p.args -join "`n")     | Should -BeExactly ($script:GoldenWtArgs -join "`n")
+    }
+    It 'produces args byte-identical to the golden wt args (default claude)' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { [pscustomobject]@{ Name = 'wt' } }
+        $p = Build-WorktreeLaunch 42 'C:\wt\issue-42' 'C:\b\briefing-42.txt' 'abios-parallel' 'ANTHROPIC_API_KEY'
+        $p.args.Count            | Should -Be $script:GoldenWtArgs.Count
+        ($p.args -join "`n")     | Should -BeExactly ($script:GoldenWtArgs -join "`n")
+    }
+    It 'default (no -Cli) still yields a claude -p launch script' {
+        Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null }
+        $p = Build-WorktreeLaunch 12 'C:\wt' 'C:\brief.txt'
+        $p.launchScript | Should -Match 'claude -p '
+    }
+}
+
 Describe 'Get-BranchDriftWarning (foreign-checkout guard)' {
     BeforeAll {
         # Build a session-registry entry shaped like Write-SessionRegistryEntry writes.
