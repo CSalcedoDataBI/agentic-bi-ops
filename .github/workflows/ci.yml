@@ -1,0 +1,50 @@
+name: CI
+
+# Runs the Pester test suite on every pull request. A failure here fails the
+# `test` check, which blocks the merge (Board-ReviewGate waits on it, and the
+# check can also be marked "Required" in the branch ruleset — see #201).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Pester
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester 5
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+          Import-Module Pester -MinimumVersion 5.5.0
+          (Get-Module Pester).Version.ToString()
+
+      - name: Run Pester suite
+        shell: pwsh
+        run: |
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path              = 'plugins/agentic-bi-ops/tests'
+          $cfg.Run.Throw             = $true          # non-zero exit on any failure -> blocks merge
+          $cfg.Output.Verbosity      = 'Detailed'
+          $cfg.TestResult.Enabled    = $true
+          $cfg.TestResult.OutputPath = 'testResults.xml'
+          $cfg.TestResult.OutputFormat = 'NUnitXml'
+          Invoke-Pester -Configuration $cfg
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-results
+          path: testResults.xml
+          if-no-files-found: warn
