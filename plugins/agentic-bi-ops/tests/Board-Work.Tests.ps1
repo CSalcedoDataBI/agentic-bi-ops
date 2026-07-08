@@ -126,6 +126,19 @@ Describe 'Get-SessionBriefing' {
     }
 }
 
+Describe 'Get-SessionBriefing adapter-aware' {
+    It 'keeps the claude briefing unchanged' {
+        (Get-SessionBriefing 5 'o/r' 'issue-5-x' 'C:\wt' -Cli 'claude') | Should -Match 'AUTONOMOUSLY'
+        (Get-SessionBriefing 5 'o/r' 'issue-5-x' 'C:\wt' -Cli 'claude') | Should -Match 'issue #5'
+    }
+    It 'still references the same PR + review-gate steps for any repl CLI' {
+        (Get-SessionBriefing 5 'o/r' 'issue-5-x' 'C:\wt' -Cli 'gemini') | Should -Match 'New-BoardPR.ps1'
+    }
+    It 'defaults to claude behavior when -Cli is omitted' {
+        (Get-SessionBriefing 5 'o/r' 'issue-5-x' 'C:\wt') | Should -Match 'AUTONOMOUSLY'
+    }
+}
+
 Describe 'Resolve-ClaudeAuthVar' {
     It 'honors an explicit -ClaudeAuthVar even when the OAuth token exists' {
         Resolve-ClaudeAuthVar $true 'ANTHROPIC_API_KEY' $true | Should -Be 'ANTHROPIC_API_KEY'

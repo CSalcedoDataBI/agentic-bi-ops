@@ -628,7 +628,17 @@ query($o:String!, $r:String!, $n:Int!) {
 # ==============================================================================
 
 # The one-line first message a spawned Claude session receives. Pure -> testable.
-function Get-SessionBriefing([int]$issueNum, [string]$repo, [string]$branch, [string]$workPath) {
+# -Cli is threaded (default 'claude') so Phase-2 adapters can specialize the leading
+# autonomy sentence per CLI without another signature change; Phase 1 keeps the
+# body text identical for every repl CLI.
+function Get-SessionBriefing {
+    param(
+        [int]$issueNum,
+        [string]$repo,
+        [string]$branch,
+        [string]$workPath,
+        [string]$Cli = 'claude'
+    )
     return ("You are running AUTONOMOUSLY - permissions are pre-approved, so work this " +
             "task end-to-end WITHOUT stopping to ask for confirmation. " +
             "Pick up GitHub issue #$issueNum in $repo. It is already In Progress and claimed, " +
