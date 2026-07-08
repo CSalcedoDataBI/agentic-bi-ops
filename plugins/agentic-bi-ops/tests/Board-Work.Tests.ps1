@@ -447,3 +447,15 @@ Describe 'Test-CliAvailability' {
         $r.Cli    | Should -Be 'gemini'
     }
 }
+
+Describe 'Resolve-LaunchCli' {
+    It 'returns the chosen CLI when it is available' {
+        Resolve-LaunchCli -Chosen 'gemini' -Availability @{ gemini='ok'; claude='ok' } | Should -Be 'gemini'
+    }
+    It 'falls back to claude when the chosen CLI is unavailable' {
+        Resolve-LaunchCli -Chosen 'gemini' -Availability @{ gemini='no-quota'; claude='ok' } | Should -Be 'claude'
+    }
+    It 'falls back to claude when the chosen CLI is missing from the map' {
+        Resolve-LaunchCli -Chosen 'codex' -Availability @{ claude='ok' } | Should -Be 'claude'
+    }
+}

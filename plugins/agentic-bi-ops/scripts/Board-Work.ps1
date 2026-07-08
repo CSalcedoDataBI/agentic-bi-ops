@@ -921,6 +921,13 @@ function Test-CliAvailability {
     return [PSCustomObject]@{ Cli=$Adapter.Name; Status=$status; Detail='' }
 }
 
+# The v1 safety net: an unavailable chosen CLI silently degrades to claude (the
+# always-present default), never aborting the batch. Pure -> unit-testable.
+function Resolve-LaunchCli([string]$Chosen, [hashtable]$Availability) {
+    if ($Chosen -and $Availability[$Chosen] -eq 'ok') { return $Chosen }
+    return 'claude'
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
