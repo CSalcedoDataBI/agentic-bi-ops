@@ -333,7 +333,7 @@ Describe 'Invoke-IssueStart safety refusals + dry-run' {
     }
 }
 
-Describe "Get-CliAdapters" {
+Describe 'Get-CliAdapters' {
     It "returns claude as the default adapter with all required fields" {
         $adapters = Get-CliAdapters
         $claude = $adapters | Where-Object { $_.Name -eq 'claude' }

@@ -820,10 +820,42 @@ function Get-CliAdapters {
             Probe        = { param($ctx) $null }
             BuildLaunch  = { param($ctx) $null }
         }
-        [PSCustomObject]@{ Name='gemini';  Command='gemini';  Kind='repl';  IsDefault=$false; InstallCmd='npm i -g @google/gemini-cli'; Probe={ param($ctx) $null }; BuildLaunch={ param($ctx) $null } }
-        [PSCustomObject]@{ Name='jules';   Command='jules';   Kind='async'; IsDefault=$false; InstallCmd='npm i -g @google/jules';      Probe={ param($ctx) $null }; BuildLaunch={ param($ctx) $null } }
-        [PSCustomObject]@{ Name='codex';   Command='codex';   Kind='repl';  IsDefault=$false; InstallCmd='npm i -g @openai/codex';       Probe={ param($ctx) $null }; BuildLaunch={ param($ctx) $null } }
-        [PSCustomObject]@{ Name='copilot'; Command='copilot'; Kind='repl';  IsDefault=$false; InstallCmd='npm i -g @github/copilot';      Probe={ param($ctx) $null }; BuildLaunch={ param($ctx) $null } }
+        [PSCustomObject]@{
+            Name         = 'gemini'
+            Command      = 'gemini'
+            Kind         = 'repl'
+            IsDefault    = $false
+            InstallCmd   = 'npm i -g @google/gemini-cli'
+            Probe        = { param($ctx) $null }
+            BuildLaunch  = { param($ctx) $null }
+        }
+        [PSCustomObject]@{
+            Name         = 'jules'
+            Command      = 'jules'
+            Kind         = 'async'
+            IsDefault    = $false
+            InstallCmd   = 'npm i -g @google/jules'
+            Probe        = { param($ctx) $null }
+            BuildLaunch  = { param($ctx) $null }
+        }
+        [PSCustomObject]@{
+            Name         = 'codex'
+            Command      = 'codex'
+            Kind         = 'repl'
+            IsDefault    = $false
+            InstallCmd   = 'npm i -g @openai/codex'
+            Probe        = { param($ctx) $null }
+            BuildLaunch  = { param($ctx) $null }
+        }
+        [PSCustomObject]@{
+            Name         = 'copilot'
+            Command      = 'copilot'
+            Kind         = 'repl'
+            IsDefault    = $false
+            InstallCmd   = 'npm i -g @github/copilot'
+            Probe        = { param($ctx) $null }
+            BuildLaunch  = { param($ctx) $null }
+        }
     )
 }
 
