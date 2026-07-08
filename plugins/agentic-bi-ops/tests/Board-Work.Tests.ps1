@@ -370,3 +370,17 @@ Describe 'Get-CliProbeStatus' {
         Get-CliProbeStatus -ExitCode 1 -Stderr "some unexpected failure" | Should -Be 'error'
     }
 }
+
+Describe 'Test-CliAvailability' {
+    It 'reports not-installed when the command is absent' {
+        Mock Get-Command { $null } -ParameterFilter { $Name -eq 'codex' }
+        $r = Test-CliAvailability -Adapter ([PSCustomObject]@{ Name='codex'; Command='codex'; Probe={ param($ctx) 'ok' } })
+        $r.Status | Should -Be 'not-installed'
+    }
+    It 'runs the probe when installed and returns its status' {
+        Mock Get-Command { [PSCustomObject]@{ Source='C:\x\gemini.exe' } } -ParameterFilter { $Name -eq 'gemini' }
+        $r = Test-CliAvailability -Adapter ([PSCustomObject]@{ Name='gemini'; Command='gemini'; Probe={ param($ctx) 'no-quota' } })
+        $r.Status | Should -Be 'no-quota'
+        $r.Cli    | Should -Be 'gemini'
+    }
+}

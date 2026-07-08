@@ -869,6 +869,28 @@ function Get-CliProbeStatus([int]$ExitCode, [string]$Stderr) {
     return 'error'
 }
 
+# Shared probe runner for 'repl' CLIs that accept a one-shot prompt: run the
+# adapter's probe command, capture exit code + stderr, classify. Each adapter's
+# Probe scriptblock calls this with its own argument list (filled per CLI in the
+# spike tasks). Kept separate so Test-CliAvailability can be tested with a mock Probe.
+function Invoke-CliProbe([string[]]$CommandLine) {
+    $exe  = $CommandLine[0]
+    $rest = $CommandLine[1..($CommandLine.Count-1)]
+    $err  = & $exe @rest 2>&1 | Out-String
+    return Get-CliProbeStatus $LASTEXITCODE $err
+}
+
+# Availability = installed on PATH AND (for repl CLIs) a live probe. Returns
+# { Cli, Status, Detail }. Status in ok/no-quota/auth/not-installed/error.
+function Test-CliAvailability {
+    param([Parameter(Mandatory)][object]$Adapter)
+    if (-not (Get-Command $Adapter.Command -ErrorAction SilentlyContinue)) {
+        return [PSCustomObject]@{ Cli=$Adapter.Name; Status='not-installed'; Detail="$($Adapter.Command) no esta en PATH" }
+    }
+    $status = & $Adapter.Probe $null
+    return [PSCustomObject]@{ Cli=$Adapter.Name; Status=$status; Detail='' }
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
