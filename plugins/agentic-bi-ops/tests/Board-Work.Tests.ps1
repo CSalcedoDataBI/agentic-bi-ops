@@ -499,3 +499,32 @@ Describe 'Build-FleetPlan' {
         (Build-FleetPlan -Started $started -CliMap @{})[0].cli | Should -Be 'claude'
     }
 }
+
+Describe 'non-claude adapters' {
+    It 'gemini BuildLaunch uses -p and --approval-mode yolo --skip-trust' {
+        $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
+        $s = & ((Get-CliAdapters | Where-Object Name -eq 'gemini').BuildLaunch) $ctx
+        $s | Should -Match 'gemini -p'
+        $s | Should -Match '--approval-mode yolo'
+        $s | Should -Match '--skip-trust'
+    }
+    It 'codex BuildLaunch uses exec + --dangerously-bypass-approvals-and-sandbox' {
+        $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
+        (& ((Get-CliAdapters | Where-Object Name -eq 'codex').BuildLaunch) $ctx) | Should -Match 'codex exec .* --dangerously-bypass-approvals-and-sandbox'
+    }
+    It 'copilot BuildLaunch uses -p + --allow-all' {
+        $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
+        (& ((Get-CliAdapters | Where-Object Name -eq 'copilot').BuildLaunch) $ctx) | Should -Match 'copilot -p .* --allow-all'
+    }
+    It 'jules BuildLaunch dispatches jules new' {
+        $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
+        (& ((Get-CliAdapters | Where-Object Name -eq 'jules').BuildLaunch) $ctx) | Should -Match 'jules new'
+    }
+    It 'claude probe returns ok (host CLI always available)' {
+        (& (Get-CliAdapters | Where-Object Name -eq 'claude').Probe $null) | Should -Be 'ok'
+    }
+    It 'briefing path with a single quote is escaped in a non-claude adapter' {
+        $ctx = @{ BriefingFile = "C:\Users\O'Brien\b.txt" }
+        (& ((Get-CliAdapters | Where-Object Name -eq 'gemini').BuildLaunch) $ctx) | Should -Match "O''Brien"
+    }
+}

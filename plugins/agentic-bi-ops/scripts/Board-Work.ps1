@@ -833,7 +833,8 @@ function Get-CliAdapters {
             Kind         = 'repl'
             IsDefault    = $true
             InstallCmd   = ''
-            Probe        = { param($ctx) $null }
+            # claude is the host CLI running this very script -> always available.
+            Probe        = { param($ctx) 'ok' }
             # Build the per-worktree claude launch script. $ctx carries at least
             # BriefingFile + AuthVar. This is the SAME construction Build-WorktreeLaunch
             # used inline before the adapter refactor - kept byte-identical on purpose
@@ -859,8 +860,17 @@ function Get-CliAdapters {
             Kind         = 'repl'
             IsDefault    = $false
             InstallCmd   = 'npm i -g @google/gemini-cli'
-            Probe        = { param($ctx) $null }
-            BuildLaunch  = { param($ctx) $null }
+            # One-token probe prompt with the SAME autonomous flags as the real launch, so
+            # an auth/quota failure classifies correctly (see Get-CliProbeStatus).
+            Probe        = { param($ctx) Invoke-CliProbe @('gemini', '-p', 'reply OK', '--approval-mode', 'yolo', '--skip-trust') }
+            BuildLaunch  = {
+                param($ctx)
+                # Same single-quote doubling as the claude adapter (see its BuildLaunch
+                # comment) so a briefing path containing ' (e.g. an O'Brien user folder)
+                # can't break out of the generated script's single-quoted literal.
+                $b = $ctx.BriefingFile -replace "'", "''"
+                'gemini -p (Get-Content -Raw -LiteralPath ''{0}'') --approval-mode yolo --skip-trust' -f $b
+            }
         }
         [PSCustomObject]@{
             Name         = 'jules'
@@ -868,8 +878,17 @@ function Get-CliAdapters {
             Kind         = 'async'
             IsDefault    = $false
             InstallCmd   = 'npm i -g @google/jules'
-            Probe        = { param($ctx) $null }
-            BuildLaunch  = { param($ctx) $null }
+            # jules is an ASYNC cloud agent: 'jules new' dispatches a session that operates
+            # on the REMOTE repo, not this local worktree/branch. Phase-1 limitation: this
+            # dispatch is best-effort - there is no local worktree/PR integration yet (the
+            # cloud session runs independently of the branch this script checked out). Full
+            # worktree/PR round-trip integration is deferred to a later phase.
+            Probe        = { param($ctx) Invoke-CliProbe @('jules', 'remote', 'list') }
+            BuildLaunch  = {
+                param($ctx)
+                $b = $ctx.BriefingFile -replace "'", "''"
+                'jules new (Get-Content -Raw -LiteralPath ''{0}'')' -f $b
+            }
         }
         [PSCustomObject]@{
             Name         = 'codex'
@@ -877,8 +896,12 @@ function Get-CliAdapters {
             Kind         = 'repl'
             IsDefault    = $false
             InstallCmd   = 'npm i -g @openai/codex'
-            Probe        = { param($ctx) $null }
-            BuildLaunch  = { param($ctx) $null }
+            Probe        = { param($ctx) Invoke-CliProbe @('codex', 'exec', 'reply OK', '--dangerously-bypass-approvals-and-sandbox') }
+            BuildLaunch  = {
+                param($ctx)
+                $b = $ctx.BriefingFile -replace "'", "''"
+                'codex exec (Get-Content -Raw -LiteralPath ''{0}'') --dangerously-bypass-approvals-and-sandbox' -f $b
+            }
         }
         [PSCustomObject]@{
             Name         = 'copilot'
@@ -886,8 +909,12 @@ function Get-CliAdapters {
             Kind         = 'repl'
             IsDefault    = $false
             InstallCmd   = 'npm i -g @github/copilot'
-            Probe        = { param($ctx) $null }
-            BuildLaunch  = { param($ctx) $null }
+            Probe        = { param($ctx) Invoke-CliProbe @('copilot', '-p', 'reply OK', '--allow-all') }
+            BuildLaunch  = {
+                param($ctx)
+                $b = $ctx.BriefingFile -replace "'", "''"
+                'copilot -p (Get-Content -Raw -LiteralPath ''{0}'') --allow-all' -f $b
+            }
         }
     )
 }
