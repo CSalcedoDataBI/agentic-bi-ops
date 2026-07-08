@@ -432,6 +432,21 @@ Describe 'Get-CliProbeStatus' {
     It 'returns error on any other non-zero exit' {
         Get-CliProbeStatus -ExitCode 1 -Stderr "some unexpected failure" | Should -Be 'error'
     }
+    It 'catches quota error even on exit 0' {
+        Get-CliProbeStatus -ExitCode 0 -Stderr "quota exceeded" | Should -Be 'no-quota'
+    }
+    It 'catches auth error even on exit 0' {
+        Get-CliProbeStatus -ExitCode 0 -Stderr "not logged in" | Should -Be 'auth'
+    }
+}
+
+Describe 'Invoke-CliProbe timeout' {
+    It 'returns error when the command exceeds the timeout' {
+        Invoke-CliProbe @('pwsh', '-NoProfile', '-Command', 'Start-Sleep 5') -TimeoutSec 1 | Should -Be 'error'
+    }
+    It 'classifies a fast command' {
+        Invoke-CliProbe @('pwsh', '-NoProfile', '-Command', 'exit 0') | Should -Be 'ok'
+    }
 }
 
 Describe 'Test-CliAvailability' {
@@ -508,9 +523,17 @@ Describe 'non-claude adapters' {
         $s | Should -Match '--approval-mode yolo'
         $s | Should -Match '--skip-trust'
     }
-    It 'codex BuildLaunch uses exec + --dangerously-bypass-approvals-and-sandbox' {
+    It 'codex BuildLaunch uses exec + --dangerously-bypass-approvals-and-sandbox with an stdin EOF guard' {
         $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
-        (& ((Get-CliAdapters | Where-Object Name -eq 'codex').BuildLaunch) $ctx) | Should -Match 'codex exec .* --dangerously-bypass-approvals-and-sandbox'
+        $s = & ((Get-CliAdapters | Where-Object Name -eq 'codex').BuildLaunch) $ctx
+        $s | Should -Match '\$null \|.*codex exec .*--dangerously-bypass-approvals-and-sandbox'
+        $s | Should -Match 'Get-Content'
+    }
+    It 'codex Probe uses login status (not exec, which hangs on stdin)' {
+        ((Get-CliAdapters | Where-Object Name -eq 'codex').Probe).ToString() | Should -Match 'login.*status'
+    }
+    It 'jules Probe scopes to remote list --session' {
+        ((Get-CliAdapters | Where-Object Name -eq 'jules').Probe).ToString() | Should -Match 'remote.*list.*session'
     }
     It 'copilot BuildLaunch uses -p + --allow-all' {
         $ctx = @{ BriefingFile = 'C:\b\brief.txt' }

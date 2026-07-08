@@ -883,7 +883,9 @@ function Get-CliAdapters {
             # dispatch is best-effort - there is no local worktree/PR integration yet (the
             # cloud session runs independently of the branch this script checked out). Full
             # worktree/PR round-trip integration is deferred to a later phase.
-            Probe        = { param($ctx) Invoke-CliProbe @('jules', 'remote', 'list') }
+            # 'jules remote list' returns "Must specify what to list" with exit 0 (a
+            # false ok) - '--session' scopes it to a well-formed listing instead.
+            Probe        = { param($ctx) Invoke-CliProbe @('jules', 'remote', 'list', '--session') }
             BuildLaunch  = {
                 param($ctx)
                 $b = $ctx.BriefingFile -replace "'", "''"
@@ -896,11 +898,16 @@ function Get-CliAdapters {
             Kind         = 'repl'
             IsDefault    = $false
             InstallCmd   = 'npm i -g @openai/codex'
-            Probe        = { param($ctx) Invoke-CliProbe @('codex', 'exec', 'reply OK', '--dangerously-bypass-approvals-and-sandbox') }
+            # 'codex login status' is a lightweight auth check (no stdin read, ~2.6s)
+            # vs. the old 'codex exec' probe which took ~19.5s and reads stdin.
+            Probe        = { param($ctx) Invoke-CliProbe @('codex', 'login', 'status') }
             BuildLaunch  = {
                 param($ctx)
+                # 'codex exec' reads stdin even with a prompt arg - in a wt tab (TTY
+                # stdin) that hangs waiting for input. Piping $null gives it immediate
+                # EOF so it proceeds using only the prompt argument.
                 $b = $ctx.BriefingFile -replace "'", "''"
-                'codex exec (Get-Content -Raw -LiteralPath ''{0}'') --dangerously-bypass-approvals-and-sandbox' -f $b
+                '$null | codex exec (Get-Content -Raw -LiteralPath ''{0}'') --dangerously-bypass-approvals-and-sandbox' -f $b
             }
         }
         [PSCustomObject]@{
@@ -920,12 +927,14 @@ function Get-CliAdapters {
 }
 
 # Classify a probe outcome into one status word. Pure -> unit-testable.
-# Order matters: quota/rate-limit and auth are more specific than the generic error.
+# Order matters: quota/rate-limit and auth are checked FIRST, even on exit 0 -
+# some CLIs (observed live) print an error message but wrongly exit 0, so a
+# generic exit-0 "ok" short-circuit would hide a real quota/auth failure.
 function Get-CliProbeStatus([int]$ExitCode, [string]$Stderr) {
-    if ($ExitCode -eq 0) { return 'ok' }
     $s = "$Stderr".ToLower()
     if ($s -match 'rate.?limit|quota|429|resource.?exhausted|too many requests') { return 'no-quota' }
     if ($s -match '401|403|unauthor|authenticat|not logged in|login required')   { return 'auth' }
+    if ($ExitCode -eq 0) { return 'ok' }
     return 'error'
 }
 
@@ -933,11 +942,18 @@ function Get-CliProbeStatus([int]$ExitCode, [string]$Stderr) {
 # adapter's probe command, capture exit code + stderr, classify. Each adapter's
 # Probe scriptblock calls this with its own argument list (filled per CLI in the
 # spike tasks). Kept separate so Test-CliAvailability can be tested with a mock Probe.
-function Invoke-CliProbe([string[]]$CommandLine) {
+# Runs the command in a background job with a timeout so a slow/hung CLI (e.g.
+# codex exec waiting on stdin) can never block the fleet launch indefinitely.
+function Invoke-CliProbe([string[]]$CommandLine, [int]$TimeoutSec = 30) {
     $exe  = $CommandLine[0]
-    $rest = $CommandLine[1..($CommandLine.Count-1)]
-    $err  = & $exe @rest 2>&1 | Out-String
-    return Get-CliProbeStatus $LASTEXITCODE $err
+    $rest = @($CommandLine[1..($CommandLine.Count-1)])
+    $j = Start-Job { param($e,$a) $o = & $e @a 2>&1 | Out-String; [pscustomobject]@{ Exit = $LASTEXITCODE; Out = $o } } -ArgumentList $exe, $rest
+    if (Wait-Job $j -Timeout $TimeoutSec) {
+        $r = Receive-Job $j; Remove-Job $j -Force
+        return Get-CliProbeStatus $r.Exit $r.Out
+    }
+    Stop-Job $j; Remove-Job $j -Force
+    return 'error'
 }
 
 # Availability = installed on PATH AND (for repl CLIs) a live probe. Returns
