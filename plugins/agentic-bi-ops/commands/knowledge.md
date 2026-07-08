@@ -1,5 +1,5 @@
 ---
-description: Manage the project knowledge references registry by domain (add/harvest/list/gen). Versioned in knowledge/registry.json + generated KNOWLEDGE.md.
+description: Manage the project knowledge references registry by domain (add/harvest/list/gen/wiki). Versioned in knowledge/registry.json + generated KNOWLEDGE.md.
 ---
 
 # /knowledge
@@ -10,6 +10,7 @@ Route the request to the right knowledge-ops skill.
 - `harvest` → invoke **knowledge-harvest** (scan repo → pick → add).
 - `list [domain]` → invoke **knowledge-registry** (Get-KnowledgeInventory) and print the table.
 - `gen` → invoke **knowledge-registry** (Write-KnowledgeTable).
+- `wiki` → invoke **knowledge-registry** (Publish-KnowledgeWiki) to publish the registry to the repo's GitHub Wiki.
 - no argument → show this menu.
 
 The registry lives at `knowledge/registry.json`; the readable table at `knowledge/KNOWLEDGE.md`.
