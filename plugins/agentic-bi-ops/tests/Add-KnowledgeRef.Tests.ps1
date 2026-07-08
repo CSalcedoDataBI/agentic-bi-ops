@@ -41,4 +41,11 @@ Describe 'Add-KnowledgeRef' {
         $rec.type | Should -Be 'md'
         Remove-Item $root -Recurse -Force
     }
+    It 'normalizes a Windows-separator local ref to repo-relative forward slashes' {
+        $root = New-Root; New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $root 'docs' 'cap.md') -Force | Out-Null
+        $rec = & $script:Engine -Root $root -Ref 'docs\cap.md' -Domain 'DAX'
+        $rec.ref | Should -Be 'docs/cap.md'
+        Remove-Item $root -Recurse -Force
+    }
 }

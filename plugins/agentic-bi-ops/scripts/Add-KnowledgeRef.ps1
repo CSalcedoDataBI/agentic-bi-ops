@@ -33,8 +33,16 @@ if ($Domain -notin $reg.domains) {
 }
 
 $isUrl = Test-IsUrl $Ref
-if (-not $isUrl -and -not (Test-Path -LiteralPath (Join-Path $Root $Ref))) {
-    throw "Local ref does not exist: $Ref (never invent references)"
+if (-not $isUrl) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Root $Ref))) {
+        throw "Local ref does not exist: $Ref (never invent references)"
+    }
+    # Normalize local refs to a repo-relative path with forward slashes, so absolute paths and
+    # Windows separators (docs\cap.md) stay portable and dedup against Invoke-KnowledgeHarvest,
+    # which emits the same repo-relative forward-slash form.
+    $rootFull = (Resolve-Path -LiteralPath $Root).Path
+    $refFull  = (Resolve-Path -LiteralPath (Join-Path $Root $Ref)).Path
+    $Ref = [System.IO.Path]::GetRelativePath($rootFull, $refFull) -replace '\\','/'
 }
 
 if ([string]::IsNullOrEmpty($Type)) {
