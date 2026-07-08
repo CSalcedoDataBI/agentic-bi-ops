@@ -58,6 +58,12 @@
     Skip the machine-local Claude Code auto-memory pointer that -Save otherwise drops
     (active-handoff.md + a MEMORY.md index line) so a fresh session surfaces the handoff.
 
+.PARAMETER NoKnowledge
+    Skip the capture-in-handoff step that -Save otherwise runs: proposing knowledge
+    references touched this session (URLs in the narrative, doc-like key files) as
+    `/knowledge add` suggestions, deduped against knowledge/registry.json. The anti-rot
+    hook for the knowledge registry (never auto-adds — the user confirms each).
+
 .PARAMETER DryRun
     Print the handoff and the intended comment action without writing or posting.
 
@@ -79,6 +85,7 @@ param(
     [int]     $ProjectNum = 0,
     [string]  $TokenVar = "GITHUB_TOKEN_PERSONAL",
     [switch]  $NoMemo,
+    [switch]  $NoKnowledge,
     [switch]  $DryRun
 )
 
@@ -216,6 +223,56 @@ function Get-HandoffSection([string]$markdown, [string]$title) {
         if ($inSection -and $ln.Trim() -ne "") { $out += $ln }
     }
     return $out
+}
+
+# -- Capture-in-handoff helper (knowledge anti-rot) ----------------------------
+# From the curated handoff material, propose knowledge references TOUCHED this
+# session: http(s) URLs mentioned anywhere in the narrative, and key files that are
+# doc-like (a .md or a folder) and exist on disk. Everything is deduped against the
+# refs already in the registry ($KnownRefs). Pure + side-effect free: it only
+# PROPOSES candidates (the skill asks the user which to add) — never invents or
+# auto-adds, mirroring Invoke-KnowledgeHarvest and the "never invent references" rule.
+# Local candidates come back as repo-relative forward-slash paths, matching what
+# Add-KnowledgeRef stores, so a later add dedups cleanly.
+function Get-HandoffKnowledgeCandidates {
+    param(
+        [string[]]$Narrative = @(),   # NextStep + Done + OpenThreads + Traps lines
+        [string[]]$KeyFiles  = @(),
+        [string]  $RepoRoot,
+        [string[]]$KnownRefs = @()
+    )
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($k in $KnownRefs) { [void]$seen.Add([string]$k) }
+    $out = [System.Collections.Generic.List[object]]::new()
+    $add = {
+        param($type, $ref)
+        $ref = [string]$ref
+        if ($ref -and $seen.Add($ref)) { $out.Add([pscustomobject]@{ type = $type; ref = $ref }) }
+    }
+
+    # URLs anywhere in the narrative (things fetched / referenced this session).
+    $urlRx = [regex]'https?://[^\s)>\]]+'
+    foreach ($ln in $Narrative) {
+        foreach ($m in $urlRx.Matches([string]$ln)) {
+            & $add 'url' ($m.Value.TrimEnd('.', ',', ';', ':', ')', ']'))
+        }
+    }
+
+    # Doc-like key files that exist on disk -> repo-relative forward-slash refs.
+    $rootFull = if ($RepoRoot -and (Test-Path -LiteralPath $RepoRoot)) { (Resolve-Path -LiteralPath $RepoRoot).Path } else { $RepoRoot }
+    foreach ($kfRaw in $KeyFiles) {
+        # Strip a leading bullet, surrounding backticks, and any trailing "(note)".
+        $kf = ([string]$kfRaw).Trim() -replace '^\s*-\s*', '' -replace '\s*\(.*\)\s*$', ''
+        $kf = $kf.Trim().Trim('`').Trim()
+        if (-not $kf -or $kf -match '^https?://') { continue }
+        $full = Join-Path $RepoRoot $kf
+        if (-not (Test-Path -LiteralPath $full)) { continue }
+        $isFolder = Test-Path -LiteralPath $full -PathType Container
+        if (-not $isFolder -and $kf -notmatch '\.md$') { continue }   # only docs/folders, not code
+        $rel = [System.IO.Path]::GetRelativePath($rootFull, (Resolve-Path -LiteralPath $full).Path) -replace '\\', '/'
+        & $add ($(if ($isFolder) { 'folder' } else { 'md' })) $rel
+    }
+    return @($out)
 }
 
 # -- Auto-memory pointer helpers (surface the handoff on the NEXT session) ------
@@ -507,6 +564,20 @@ if ($DryRun) {
     } else {
         Write-Host "DRY-RUN - no linked issue -> local HANDOFF.md only (consider committing it for portability)." -ForegroundColor Yellow
     }
+    if (-not $NoKnowledge) {
+        try {
+            $knownRefs = @()
+            $regPath = Join-Path (Join-Path $repoRoot 'knowledge') 'registry.json'
+            if (Test-Path -LiteralPath $regPath) {
+                $knownRefs = @((Get-Content -LiteralPath $regPath -Raw | ConvertFrom-Json).references | ForEach-Object { [string]$_.ref })
+            }
+            $cands = Get-HandoffKnowledgeCandidates -Narrative (@($NextStep) + $Done + $OpenThreads + $Traps) -KeyFiles $KeyFiles -RepoRoot $repoRoot -KnownRefs $knownRefs
+            if ($cands.Count) {
+                Write-Host "DRY-RUN - would propose $($cands.Count) knowledge reference(s) to capture:" -ForegroundColor Yellow
+                foreach ($c in $cands) { Write-Host "    [$($c.type)] $($c.ref)" -ForegroundColor DarkCyan }
+            }
+        } catch { }
+    }
     return
 }
 
@@ -580,5 +651,34 @@ _Last saved $($fm.saved)._
 if (-not $NoMemo -and $Issue -gt 0) {
     if (Write-HandoffMemoPointer -IssueNum $Issue -RepoName $Repo -BranchName $branch -Saved $fm.saved -Next $NextStep) {
         Write-Host "  OK  MEMORY.md pointer written - your next session in this repo will surface it" -ForegroundColor DarkGray
+    }
+}
+
+# -- Capture-in-handoff: propose knowledge references touched this session ------
+# The anti-rot hook for knowledge-ops (M5): surface URLs + doc-like key files from
+# this handoff that are NOT yet in knowledge/registry.json, as ready-to-run
+# `/knowledge add` suggestions. It only PROPOSES — the skill asks which to keep and
+# the user confirms each (never auto-adds; "never invent references"). Best-effort:
+# a missing/unreadable registry must never fail the handoff save.
+if (-not $NoKnowledge) {
+    try {
+        $knownRefs = @()
+        $regPath = Join-Path (Join-Path $repoRoot 'knowledge') 'registry.json'
+        if (Test-Path -LiteralPath $regPath) {
+            $knownRefs = @((Get-Content -LiteralPath $regPath -Raw | ConvertFrom-Json).references | ForEach-Object { [string]$_.ref })
+        }
+        $narrative = @($NextStep) + $Done + $OpenThreads + $Traps
+        $cands = Get-HandoffKnowledgeCandidates -Narrative $narrative -KeyFiles $KeyFiles -RepoRoot $repoRoot -KnownRefs $knownRefs
+        if ($cands.Count) {
+            Write-Host ""
+            Write-Host "  Knowledge references touched this session (not yet in the registry):" -ForegroundColor Cyan
+            foreach ($c in $cands) {
+                Write-Host "    [$($c.type)] $($c.ref)" -ForegroundColor DarkCyan
+            }
+            Write-Host "  Add the ones worth keeping (pick a domain each):" -ForegroundColor DarkGray
+            Write-Host "    /knowledge add <ref> <Domain> `"<one-line note>`"" -ForegroundColor DarkGray
+        }
+    } catch {
+        # Silently skip — the handoff save is the real work and must not fail here.
     }
 }
