@@ -804,6 +804,30 @@ function Show-SessionFleet {
 }
 
 # ==============================================================================
+# CLI adapter registry: one record per launchable AI CLI. Generalizes the
+# previously Claude-only launch path (Build-WorktreeLaunch / Get-SessionBriefing).
+# Kind: 'repl' = live tab in the worktree; 'async' = dispatches a cloud task.
+# Hooks are scriptblocks so they stay pure/testable and are invoked with &.
+# ==============================================================================
+function Get-CliAdapters {
+    @(
+        [PSCustomObject]@{
+            Name         = 'claude'
+            Command      = 'claude'
+            Kind         = 'repl'
+            IsDefault    = $true
+            InstallCmd   = ''
+            Probe        = { param($ctx) $null }
+            BuildLaunch  = { param($ctx) $null }
+        }
+        [PSCustomObject]@{ Name='gemini';  Command='gemini';  Kind='repl';  IsDefault=$false; InstallCmd='npm i -g @google/gemini-cli'; Probe={ param($ctx) $null }; BuildLaunch={ param($ctx) $null } }
+        [PSCustomObject]@{ Name='jules';   Command='jules';   Kind='async'; IsDefault=$false; InstallCmd='npm i -g @google/jules';      Probe={ param($ctx) $null }; BuildLaunch={ param($ctx) $null } }
+        [PSCustomObject]@{ Name='codex';   Command='codex';   Kind='repl';  IsDefault=$false; InstallCmd='npm i -g @openai/codex';       Probe={ param($ctx) $null }; BuildLaunch={ param($ctx) $null } }
+        [PSCustomObject]@{ Name='copilot'; Command='copilot'; Kind='repl';  IsDefault=$false; InstallCmd='npm i -g @github/copilot';      Probe={ param($ctx) $null }; BuildLaunch={ param($ctx) $null } }
+    )
+}
+
+# ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
 # calls, no side effects - so the pure helpers can be unit-tested in isolation.

@@ -332,3 +332,25 @@ Describe 'Invoke-IssueStart safety refusals + dry-run' {
         $r.branch  | Should -Match '^issue-1-'
     }
 }
+
+Describe "Get-CliAdapters" {
+    It "returns claude as the default adapter with all required fields" {
+        $adapters = Get-CliAdapters
+        $claude = $adapters | Where-Object { $_.Name -eq 'claude' }
+        $claude              | Should -Not -BeNullOrEmpty
+        $claude.Command      | Should -Be 'claude'
+        $claude.Kind         | Should -Be 'repl'
+        $claude.IsDefault    | Should -BeTrue
+        $claude.BuildLaunch  | Should -BeOfType ([scriptblock])
+        $claude.Probe        | Should -BeOfType ([scriptblock])
+    }
+    It "includes all five CLIs by name" {
+        (Get-CliAdapters).Name | Should -Contain 'gemini'
+        (Get-CliAdapters).Name | Should -Contain 'jules'
+        (Get-CliAdapters).Name | Should -Contain 'codex'
+        (Get-CliAdapters).Name | Should -Contain 'copilot'
+    }
+    It "marks exactly one adapter as default" {
+        @(Get-CliAdapters | Where-Object { $_.IsDefault }).Count | Should -Be 1
+    }
+}
