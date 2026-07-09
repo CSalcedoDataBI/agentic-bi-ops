@@ -1,6 +1,6 @@
 {
   "name": "agentic-board",
-  "description": "GitOps for BI with AI agents — cross-account GitHub Projects & issues governance, plus future BI GitOps modules.",
+  "description": "Run coding agents off your real GitHub Projects board — quota-aware, review-gated orchestration, not another local Kanban. A general platform; BI GitOps is a future module.",
   "owner": { "name": "CSalcedoDataBI", "url": "https://github.com/CSalcedoDataBI" },
   "plugins": [
     {
