@@ -8,6 +8,7 @@ description: >
   Triggers — "revisa el diff TMDL", "breaking changes del modelo", "compara el
   modelo semántico", "¿este cambio rompe el modelo?", "review the TMDL diff",
   "detect breaking schema changes".
+user-invocable: false
 ---
 
 # tmdl-review — detect breaking semantic-model changes

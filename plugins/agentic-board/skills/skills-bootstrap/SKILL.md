@@ -1,6 +1,7 @@
 ---
 name: skills-bootstrap
 description: Use to install curated best-practice skills for authoring and evaluating skills (skill-creator, writing-skills, skill-improver, second-opinion) WITHOUT duplicating what is already installed. Detects the gap against the live inventory, recommends only what is missing, and clean-clones each from its source repo into ~/.claude/skills preserving the LICENSE/attribution. Use when setting up a machine for skill development, or when you want the recommended skill-quality toolkit. NOT for organizing or auditing existing skills — use skills-organize or skills-audit for that. Triggers — "instala las skills de buenas prácticas", "bootstrap skills", "qué skills de calidad me faltan", "setup skill toolkit", /skills bootstrap.
+user-invocable: false
 ---
 
 # skills-bootstrap — the recommended skill toolkit, no duplicates

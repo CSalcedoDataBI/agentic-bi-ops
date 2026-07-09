@@ -1,6 +1,7 @@
 ---
 name: projects-admin
 description: Use to administer or automate a GitHub Projects (v2) board or its issues — create/configure a project, set Status/Priority/Target fields, add/move/bulk-edit items, link a board to a repo, install CI auto-add, run /board fill to detect and fix gaps, or /board work to see pending issues across boards and start one. Always resolves identity via gh-account (default CSalcedoDataBI). Triggers — "administra el board", "mueve a Done", "crea el project", "add to board", "bulk close", "automatiza el board", "llena el board", "qué hay pendiente", "qué issue trabajo", "empecemos un issue", /board.
+user-invocable: false
 ---
 
 # projects-admin — GitHub Projects (v2) Board & Issue Admin
