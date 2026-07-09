@@ -33,7 +33,7 @@ jobs:
         shell: pwsh
         run: |
           $cfg = New-PesterConfiguration
-          $cfg.Run.Path              = 'plugins/agentic-bi-ops/tests'
+          $cfg.Run.Path              = 'plugins/agentic-board/tests'
           $cfg.Run.Throw             = $true          # non-zero exit on any failure -> blocks merge
           $cfg.Output.Verbosity      = 'Detailed'
           $cfg.TestResult.Enabled    = $true

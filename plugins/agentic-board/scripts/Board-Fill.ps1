@@ -1,0 +1,428 @@
+<#
+.SYNOPSIS
+    Detect and fill gaps in a GitHub Projects v2 board.
+
+.DESCRIPTION
+    Reads all items from a GitHub Projects v2 board, converts any draft notes
+    to real GitHub issues automatically, then detects and fills gaps:
+    missing assignees, Status, Priority, Size, and Type.
+
+    Fill rules:
+      Drafts    : converted to real issues in $Repo before any other step
+      Assignees : if empty, assign the board owner
+      Status    : issue CLOSED -> Done
+                  issue OPEN + merged PR -> Done
+                  issue OPEN + open PR   -> In Review (In Progress if absent)
+                  issue OPEN + no PR     -> Backlog
+      Priority  : if empty -> P2 Medium
+      Size      : if empty -> M
+      Type      : if empty -> detect from labels (bug->Bug, docs->Docs,
+                  refactor->Refactor, chore->Chore), else Feature
+
+    Linked PRs and Sub-issues progress are system-derived — not writable via API.
+
+    The board owner may be a USER or an ORGANIZATION. The owner type is resolved
+    up front (see Get-OwnerType) and the project is queried against the matching
+    GraphQL root, so the script never false-reports "no gaps" just because the
+    board could not be read under the wrong owner root (issue #86).
+
+.PARAMETER Owner
+    GitHub login that owns the project board (user OR organization).
+    Defaults to CSalcedoDataBI.
+
+.PARAMETER Repo
+    owner/repo string. Issues are created here when converting drafts.
+
+.PARAMETER ProjectNum
+    GitHub Projects v2 number (e.g. 1).
+
+.PARAMETER DryRun
+    Print the plan without executing any changes.
+
+.PARAMETER Auto
+    Execute changes without asking for confirmation.
+
+.PARAMETER TokenVar
+    Windows USER env var holding the PAT. Defaults to GITHUB_TOKEN_PERSONAL.
+    A pre-set $env:GH_TOKEN is respected and NOT overwritten - so a business
+    board works with GITHUB_TOKEN_BUSINESS (same contract as Board-Work.ps1).
+
+.EXAMPLE
+    .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/csalcedodatabi.com -ProjectNum 1 -DryRun
+    .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/csalcedodatabi.com -ProjectNum 1
+    .\Board-Fill.ps1 -Owner CSalcedoDataBI -Repo CSalcedoDataBI/csalcedodatabi.com -ProjectNum 1 -Auto
+#>
+[CmdletBinding()]
+param(
+    [string]$Owner      = "CSalcedoDataBI",
+    [string]$Repo       = "",
+    [int]   $ProjectNum = 13,
+    [switch]$DryRun,
+    [switch]$Auto,
+    [string]$TokenVar   = "GITHUB_TOKEN_PERSONAL"
+)
+
+$ErrorActionPreference = "Stop"
+
+# ── Functions (pure + gh helpers; defined before the dot-source guard) ─────────
+
+function Get-OwnerRoot {
+    # Pure: map a GraphQL RepositoryOwner __typename to the query root field that
+    # exposes projectV2(number:) for that owner. This is the decision point behind
+    # issue #86 — the board owner may be a USER or an ORGANIZATION.
+    param([string]$OwnerType)
+    switch ($OwnerType) {
+        'User'         { 'user' }
+        'Organization' { 'organization' }
+        default        { $null }
+    }
+}
+
+function Get-OwnerUrlSegment {
+    # Pure: the github.com path segment for an owner's projects page.
+    # Organizations live under /orgs/<login>, everyone else under /users/<login>.
+    param([string]$OwnerType)
+    if ($OwnerType -eq 'Organization') { 'orgs' } else { 'users' }
+}
+
+function Get-OwnerType {
+    # Resolve whether $Owner is a User or an Organization. stderr is NOT suppressed
+    # so a real auth/network failure surfaces instead of being mistaken for "owner
+    # not found". Returns 'User', 'Organization', or $null (login does not exist).
+    param([string]$Owner)
+    $resp = gh api graphql -f query='
+query($o:String!) { repositoryOwner(login:$o) { __typename } }' -F "o=$Owner" | ConvertFrom-Json
+    return $resp.data.repositoryOwner.__typename
+}
+
+function Resolve-ProjectV2Node {
+    # Resolve a ProjectV2 (+ its single-select fields) by number for a USER- OR
+    # ORGANIZATION-owned board. Querying only user(login:) silently returns null
+    # for org-owned boards, so the old code reported a healthy "no gaps" board that
+    # was really unread (issue #86). We resolve the owner type first, then query
+    # the CORRECT root — no expected-error noise, and stderr stays visible so real
+    # failures are not hidden.
+    param([string]$Owner, [int]$Num, [string]$OwnerType)
+    $root = Get-OwnerRoot $OwnerType
+    if (-not $root) { return $null }
+    # Build the query in a variable first: PowerShell does NOT concatenate a
+    # bareword like `query=` with an adjacent `(...)` subexpression, so the inline
+    # `-f query=(...)` form would pass a broken argument to gh.
+    $query = @'
+query($owner:String!, $num:Int!) {
+  ROOT(login:$owner) {
+    projectV2(number:$num) {
+      id
+      fields(first:30) {
+        nodes {
+          ... on ProjectV2SingleSelectField { id name options { id name } }
+        }
+      }
+    }
+  }
+}
+'@ -replace 'ROOT', $root
+    $resp = gh api graphql -f query=$query -F "owner=$Owner" -F "num=$Num" | ConvertFrom-Json
+    return $resp.data.$root.projectV2
+}
+
+function Get-Field($name) { $allFields | Where-Object { $_.name -eq $name } }
+function Get-Opt($field, $optName) { ($field.options | Where-Object { $_.name -eq $optName }).id }
+
+function Get-BoardItems($projId) {
+    $data = gh api graphql -f query='
+query($proj:ID!) {
+  node(id:$proj) {
+    ... on ProjectV2 {
+      items(first:100) {
+        nodes {
+          id
+          fieldValues(first:20) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                field { ... on ProjectV2SingleSelectField { name } }
+                optionId name
+              }
+            }
+          }
+          content {
+            __typename
+            ... on DraftIssue { title }
+            ... on Issue {
+              number title state
+              labels(first:10) { nodes { name } }
+              assignees(first:5) { nodes { login } }
+              timelineItems(first:20 itemTypes:[CROSS_REFERENCED_EVENT]) {
+                nodes {
+                  ... on CrossReferencedEvent {
+                    willCloseTarget
+                    source { ... on PullRequest { number state merged } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}' -F "proj=$projId" | ConvertFrom-Json
+    return $data.data.node.items.nodes
+}
+
+# Dot-source guard: tests set this to load the functions above without running
+# the token check or any gh call (same contract as Board-Work.ps1).
+if ($env:ABIOS_BOARDFILL_DOTSOURCE) { return }
+
+# ── 0. Token ──────────────────────────────────────────────────────────────────
+# Respect a pre-set $env:GH_TOKEN (a business board is reached by exporting
+# GITHUB_TOKEN_BUSINESS first) instead of clobbering it with the personal PAT.
+if (-not $env:GH_TOKEN) {
+    $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
+}
+if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
+if (-not $Repo) { $Repo = "$Owner/agentic-board" }
+
+$mode = if ($DryRun) { "DRY-RUN" } elseif ($Auto) { "AUTO" } else { "INTERACTIVE" }
+
+# ── 1. Resolve owner type, board URL, project + field IDs ──────────────────────
+# The owner may be a USER or an ORGANIZATION — resolve which once, up front, so
+# both the board URL (/users/ vs /orgs/) and the project query use the right root.
+$ownerType = Get-OwnerType $Owner
+$boardUrl  = "https://github.com/$(Get-OwnerUrlSegment $ownerType)/$Owner/projects/$ProjectNum"
+Write-Host "=== Board-Fill  Owner=$Owner  Project=#$ProjectNum  Mode=$mode ===" -ForegroundColor Cyan
+Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+Write-Host ""
+
+$projNode = Resolve-ProjectV2Node -Owner $Owner -Num $ProjectNum -OwnerType $ownerType
+# A non-existent project (or a token for the wrong account / missing 'project'
+# scope) resolves projectV2 to null, and an unknown owner resolves $ownerType to
+# null. Abort loudly instead of sailing on to report a healthy, empty board.
+if (-not $projNode -or -not $projNode.id) {
+    throw "No pude resolver el board: '$Owner' projectV2 #$ProjectNum no existe (owner tipo '$ownerType'), o el token ($TokenVar) no tiene acceso (revisa cuenta y scope 'project'). Aborto en vez de reportar un board sano."
+}
+$projectId = $projNode.id
+$allFields = $projNode.fields.nodes | Where-Object { $_.name }
+
+$statusNode = Get-Field "Status"
+$statusId   = $statusNode.id
+$doneId     = Get-Opt $statusNode "Done"
+$inProgId   = Get-Opt $statusNode "In Progress"
+$backlogId  = Get-Opt $statusNode "Backlog"
+$reviewId   = Get-Opt $statusNode "In Review"   # optional (from the field preset); falls back to In Progress
+
+$prioNode   = Get-Field "Priority"
+$prioId     = $prioNode.id
+$prioMedId  = Get-Opt $prioNode "P2 Medium"
+
+$sizeNode   = Get-Field "Size"
+$sizeId     = $sizeNode.id
+$sizeMId    = Get-Opt $sizeNode "M"
+
+$typeNode   = Get-Field "Type"
+$typeId     = $typeNode.id
+
+# ── 1.5. Resolve repo ID (needed for draft conversion) ────────────────────────
+# repository(owner,name) is owner-type-agnostic (works for user AND org repos).
+$repoParts = $Repo -split "/"
+$repoOwner = $repoParts[0]
+$repoName  = $repoParts[1]
+
+$repoData = gh api graphql -f query='
+query($owner:String!, $name:String!) {
+  repository(owner:$owner, name:$name) { id }
+}' -F "owner=$repoOwner" -F "name=$repoName" | ConvertFrom-Json
+$repoId = $repoData.data.repository.id
+if (-not $repoId) {
+    throw "No pude resolver el repo '$Repo' (no existe o el token ($TokenVar) no tiene acceso). Aborto."
+}
+
+# ── 3. Convert any drafts to real issues ──────────────────────────────────────
+$items  = Get-BoardItems $projectId
+$drafts = @($items | Where-Object { $_.content.__typename -eq "DraftIssue" })
+
+if ($drafts.Count -gt 0) {
+    Write-Host "$($drafts.Count) draft(s) encontrado(s) — convirtiendo a issues reales en $Repo..." -ForegroundColor Cyan
+
+    if ($DryRun) {
+        Write-Host "(DRY-RUN: conversion omitida)" -ForegroundColor Gray
+        $drafts | ForEach-Object { Write-Host "  [draft] $($_.content.title)" }
+        Write-Host ""
+    } else {
+        $convOk = 0; $convFail = 0
+        foreach ($draft in $drafts) {
+            $draftId = $draft.id
+            $title   = $draft.content.title
+            try {
+                $result = gh api graphql -f query='
+mutation($itemId:ID!, $repoId:ID!) {
+  convertProjectV2DraftIssueItemToIssue(input:{
+    itemId: $itemId
+    repositoryId: $repoId
+  }) {
+    item { content { ... on Issue { number } } }
+  }
+}' -F "itemId=$draftId" -F "repoId=$repoId" 2>&1 | ConvertFrom-Json
+                $num = $result.data.convertProjectV2DraftIssueItemToIssue.item.content.number
+                Write-Host "  -> #$num $title" -ForegroundColor DarkCyan
+                $convOk++
+            } catch {
+                Write-Host "  FAIL converting '$title': $_" -ForegroundColor Red
+                $convFail++
+            }
+        }
+        Write-Host "Conversion: $convOk OK  $convFail fallos" -ForegroundColor Cyan
+        Write-Host ""
+
+        # Re-load items so the converted issues appear with their numbers
+        $items = Get-BoardItems $projectId
+    }
+}
+
+# ── 4. Detect gaps ────────────────────────────────────────────────────────────
+$plan = @()
+
+foreach ($item in $items) {
+    $c = $item.content
+    if ($c.__typename -ne "Issue") { continue }
+
+    $fv = $item.fieldValues.nodes
+    $assigneeCount  = $c.assignees.nodes.Count
+    $currentStatus  = ($fv | Where-Object { $_.field.name -eq "Status"   }).optionId
+    $currentPrio    = ($fv | Where-Object { $_.field.name -eq "Priority" }).optionId
+    $currentSize    = ($fv | Where-Object { $_.field.name -eq "Size"     }).optionId
+    $currentType    = ($fv | Where-Object { $_.field.name -eq "Type"     }).optionId
+    $currentStatusN = ($fv | Where-Object { $_.field.name -eq "Status"   }).name
+
+    # Only CLOSING references count (willCloseTarget). A textual "#<n>" mention in a PR body is
+    # also a CROSS_REFERENCED_EVENT — counting those falsely moved untouched issues to Done, and
+    # the board's built-in "Done -> close issue" workflow then closed them for real (issue #48).
+    $closingRefs = @($c.timelineItems.nodes | Where-Object { $_.willCloseTarget -eq $true })
+    $mergedPRs = @($closingRefs.source | Where-Object { $_.merged -eq $true })
+    $openPRs   = @($closingRefs.source | Where-Object { $_.state  -eq "OPEN"  })
+    $labels    = @($c.labels.nodes.name | Where-Object { $_ } | ForEach-Object { $_.ToLower() })
+
+    $changes = @()
+
+    if ($assigneeCount -eq 0) {
+        $changes += [PSCustomObject]@{ Type="assignee"; Display="Assignee vacio -> $Owner" }
+    }
+
+    $targetStatus = $null; $targetStatusN = $null
+    if     ($c.state -eq "CLOSED"  -and $currentStatus -ne $doneId)  { $targetStatus=$doneId;   $targetStatusN="Done (issue cerrado)" }
+    elseif ($mergedPRs.Count -gt 0 -and $currentStatus -ne $doneId)  { $targetStatus=$doneId;   $targetStatusN="Done (PR mergeado)" }
+    elseif ($openPRs.Count -gt 0) {
+        # An open PR means the change is in review/testing -> In Review (the
+        # review-gate stage). Fall back to In Progress on boards without it.
+        $prTarget  = if ($reviewId) { $reviewId } else { $inProgId }
+        $prTargetN = if ($reviewId) { "In Review (PR abierto)" } else { "In Progress (PR abierto)" }
+        if ($currentStatus -ne $prTarget -and $currentStatus -ne $doneId) { $targetStatus=$prTarget; $targetStatusN=$prTargetN }
+    }
+    elseif (-not $currentStatus)                                       { $targetStatus=$backlogId; $targetStatusN="Backlog (sin PR)" }
+    if ($targetStatus) {
+        $changes += [PSCustomObject]@{ Type="single"; FieldId=$statusId; TargetId=$targetStatus; Display="Status [$currentStatusN] -> $targetStatusN" }
+    }
+
+    if (-not $currentPrio -and $prioMedId) {
+        $changes += [PSCustomObject]@{ Type="single"; FieldId=$prioId; TargetId=$prioMedId; Display="Priority vacio -> P2 Medium" }
+    }
+
+    if (-not $currentSize -and $sizeMId) {
+        $changes += [PSCustomObject]@{ Type="single"; FieldId=$sizeId; TargetId=$sizeMId; Display="Size vacio -> M" }
+    }
+
+    if (-not $currentType -and $typeId) {
+        $detectedType = "Feature"
+        if     ($labels -contains "bug")      { $detectedType = "Bug" }
+        elseif ($labels -contains "docs")     { $detectedType = "Docs" }
+        elseif ($labels -contains "refactor") { $detectedType = "Refactor" }
+        elseif ($labels -contains "chore")    { $detectedType = "Chore" }
+        $typeOptId = Get-Opt $typeNode $detectedType
+        if ($typeOptId) {
+            $changes += [PSCustomObject]@{ Type="single"; FieldId=$typeId; TargetId=$typeOptId; Display="Type vacio -> $detectedType" }
+        }
+    }
+
+    if ($changes.Count -gt 0) {
+        $plan += [PSCustomObject]@{
+            ItemId   = $item.id
+            IssueNum = $c.number
+            Title    = $c.title
+            State    = $c.state
+            Changes  = $changes
+        }
+    }
+}
+
+# ── 5. Print plan ─────────────────────────────────────────────────────────────
+if ($plan.Count -eq 0) {
+    Write-Host "Board completo. Sin gaps detectados." -ForegroundColor Green
+    Write-Host "NOTA: Linked PRs y Sub-issues progress son columnas del sistema, no escribibles via API."
+    Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+    exit 0
+}
+
+Write-Host "Plan de cambios:" -ForegroundColor Yellow
+foreach ($entry in $plan) {
+    Write-Host ""
+    Write-Host "  #$($entry.IssueNum) $($entry.Title) [$($entry.State)]" -ForegroundColor Yellow
+    foreach ($ch in $entry.Changes) { Write-Host "    -> $($ch.Display)" }
+}
+Write-Host ""
+Write-Host "Total: $($plan.Count) item(s) con gaps." -ForegroundColor Yellow
+
+if ($DryRun) {
+    Write-Host ""
+    Write-Host "Modo DRY-RUN — ningun cambio ejecutado." -ForegroundColor Gray
+    Write-Host "NOTA: Linked PRs y Sub-issues progress son columnas del sistema, no escribibles via API."
+    Write-Host ""
+    Write-Host "Board: $boardUrl" -ForegroundColor Cyan
+    exit 0
+}
+
+# ── 6. Confirm (interactive) ──────────────────────────────────────────────────
+if (-not $Auto) {
+    Write-Host ""
+    $confirm = Read-Host "Aplicar estos cambios? (s/n)"
+    if ($confirm -notmatch '^[sySY]') { Write-Host "Cancelado." -ForegroundColor Gray; exit 0 }
+}
+
+# ── 7. Execute ────────────────────────────────────────────────────────────────
+$ok = 0; $fail = 0
+
+foreach ($entry in $plan) {
+    foreach ($ch in $entry.Changes) {
+        try {
+            if ($ch.Type -eq "assignee") {
+                $assignUrl = "repos/$Repo/issues/$($entry.IssueNum)/assignees"
+                gh api $assignUrl -X POST -F "assignees[]=$Owner" | Out-Null
+                Write-Host "  OK  #$($entry.IssueNum) assignee -> $Owner" -ForegroundColor Green
+                $ok++
+            }
+            elseif ($ch.Type -eq "single") {
+                $itemId  = $entry.ItemId
+                $fieldId = $ch.FieldId
+                $optId   = $ch.TargetId
+                gh api graphql -f query='
+mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
+  updateProjectV2ItemFieldValue(input:{
+    projectId:$proj, itemId:$item, fieldId:$field,
+    value:{singleSelectOptionId:$opt}
+  }) { projectV2Item { id } }
+}' -f "proj=$projectId" -f "item=$itemId" -f "field=$fieldId" -f "opt=$optId" | Out-Null
+                Write-Host "  OK  #$($entry.IssueNum) $($ch.Display)" -ForegroundColor Green
+                $ok++
+            }
+        } catch {
+            Write-Host "  FAIL #$($entry.IssueNum): $_" -ForegroundColor Red
+            $fail++
+        }
+    }
+}
+
+Write-Host ""
+Write-Host "=== Completado: $ok OK  $fail fallos ===" -ForegroundColor Cyan
+Write-Host "NOTA: Linked PRs y Sub-issues progress son columnas del sistema, no escribibles via API."
+Write-Host ""
+Write-Host "Board: $boardUrl" -ForegroundColor Cyan

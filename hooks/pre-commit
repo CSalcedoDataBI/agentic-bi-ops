@@ -1,5 +1,5 @@
 #!/bin/sh
-# agentic-bi-ops guard — block private content/secrets from entering this public repo.
+# agentic-board guard — block private content/secrets from entering this public repo.
 if command -v pwsh >/dev/null 2>&1; then PS=pwsh; else PS=powershell; fi
 "$PS" -NoProfile -ExecutionPolicy Bypass -File scripts/guard-no-private.ps1 -Mode commit
 exit $?

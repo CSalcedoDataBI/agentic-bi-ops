@@ -5,7 +5,7 @@
 set -euo pipefail
 
 OWNER="${REPO_OWNER:-CSalcedoDataBI}"
-REPO="${REPO_NAME:-agentic-bi-ops}"
+REPO="${REPO_NAME:-agentic-board}"
 PROJECT_NUM="${PROJECT_NUMBER:-13}"
 
 echo "=== board-sync: $OWNER/$REPO project #$PROJECT_NUM ==="

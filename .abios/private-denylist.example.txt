@@ -1,4 +1,4 @@
-# agentic-bi-ops — private denylist (TEMPLATE)
+# agentic-board — private denylist (TEMPLATE)
 #
 # Copy this to  .abios/private-denylist.txt  (gitignored — NEVER committed) and list the
 # strings that must NEVER appear in this PUBLIC repo. The pre-commit / pre-push guard blocks

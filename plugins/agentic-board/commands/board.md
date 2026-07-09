@@ -1,0 +1,228 @@
+---
+description: Administer/automate a GitHub Projects board (work/init/add/move/field/bulk/fill/automate/handoff). Defaults to the CSalcedoDataBI account.
+---
+You are running the agentic-board /board command.
+
+**If $ARGUMENTS is empty or only whitespace, do NOT run anything yet.** Show this menu and wait
+for the user to pick (they can answer with just the number):
+
+```
+¿Qué quieres hacer con el board?
+
+1. work             → ver qué issues están pendientes y empezar a trabajar uno (o varios en paralelo)
+2. plan             → planificar (o tomar un plan existente) y convertir sus tareas en epic + issues
+3. fill --dry-run   → ver qué gaps hay (assignees, Status, Priority, Size, Type) SIN cambiar nada
+4. fill --auto      → llenar todos los gaps automáticamente (convierte drafts a issues reales)
+5. fill             → llenar gaps pidiendo confirmación antes de ejecutar
+6. init             → crear/configurar el board de este repo
+7. add <url>        → añadir un issue/PR al board
+8. move             → cambiar el Status de un item
+9. field            → crear campos o llenar un campo en todos los items por regla
+10. bulk            → mover/cerrar/etiquetar muchos items a la vez
+11. automate        → instalar CI que sincroniza el board solo
+12. templates       → instalar issue forms (bug/feature/task) + PR template en el repo actual
+13. labels          → aplicar la taxonomia de labels (bug/docs/refactor/chore/blocked/...) al repo
+14. update          → publicar un status update del board (progreso de alto nivel)
+15. changelog       → generar un bloque de CHANGELOG (Added/Changed/Fixed) desde los issues Done
+16. handoff         → guardar/retomar contexto entre sesiones (save/resume) para continuar días después
+```
+
+When they answer (number or name), execute that sub-action following the instructions below.
+
+First apply the `gh-account` skill to set `$env:GH_TOKEN` for the right account (default
+CSalcedoDataBI; honor an explicit `--account pal-devs` in the arguments). Never run `gh auth switch`.
+
+Then apply the `projects-admin` skill. Parse the request into ONE of these sub-actions and run the
+matching recipe from the projects-admin references:
+
+- **work** — the daily driver: show pending work and start an issue, via `scripts/Board-Work.ps1`.
+  Conversational flow — steps 0 and 1 are QUESTIONS: ask, then WAIT for the answer before running:
+  0. **Account.** Check which PATs are configured (Windows USER registry):
+     `[Environment]::GetEnvironmentVariable('GITHUB_TOKEN_PERSONAL','User')` and the same for
+     `GITHUB_TOKEN_BUSINESS`. If BOTH exist, ask which account to use — `1. CSalcedoDataBI
+     (personal, default)` / `2. PAL-Devs (business)` — and for business pass
+     `-TokenVar GITHUB_TOKEN_BUSINESS -Owner PAL-Devs` to every Board-Work call. If only ONE
+     exists, use it silently — do not ask.
+  1. **Scope.** Detect the current repo: `git remote get-url origin` → `<owner/name>`. If the cwd
+     is a clone of a GitHub repo, ask: "¿Boards de ESTE repo (<owner/name>) o TODOS los boards de
+     la cuenta?" — a repo can have several linked boards.
+     - This repo → `-ListBoards -Repo <owner/name>` (only boards LINKED to the repo, via
+       `repository.projectsV2`). If exactly ONE board comes back, skip step 2 and continue with it.
+     - All / not inside a git repo (skip the question then) → `-ListBoards` (every board of the
+       account, most pending first).
+  2. **Pick a board.** Show the listing (pending counts + URLs) and ask which board.
+  3. **Pick an issue.** Run with `-ProjectNum <n>` — pending items sorted by Priority. Show them
+     and ask which issue to start. Draft notes appear flagged: they must be converted with
+     `/board fill` before they can be started. Items labeled `blocked` appear as `[BLOCKED]`
+     and cannot be started; `-Start` also refuses them (and issues with open native blocked-by
+     dependencies) with the blocker listed — `-IgnoreBlocked` overrides a false positive.
+     The list also shows LIVE local sessions from `.agentic-bi-ops/sessions.json` (who works
+     what, where) — dead-PID entries are pruned automatically.
+     **Multi-session lock:** `-Start` also refuses an issue already In Progress + assigned
+     (another Claude session probably has it — the last `[abios-claim]` fingerprint comment is
+     shown). `-TakeOver` retakes it on purpose (dead session / deliberate handoff) and posts a
+     TAKEOVER claim. Every successful start posts a claim comment (hostname, PID, time, branch).
+  4. **Start it.** Run with `-ProjectNum <n> -Start <issueNum> -Branch` — moves the item to
+     In Progress, assigns the owner, creates + checks out the work branch `issue-<num>-<slug>`
+     (when the cwd is a clone of the issue's repo), and prints the full issue context (body,
+     labels, sub-issues). Then CONTINUE WORKING that issue in this session: treat the printed
+     context as the task briefing. Always pass `-Branch` when the issue belongs to the current
+     repo. `--dry-run` previews without mutating; a CLOSED issue is refused.
+     - **Busy working copy?** If the folder has uncommitted changes or sits on another
+       `issue-*` branch (another session active), `-Branch` does NOT switch — it creates an
+       isolated **git worktree** `../<repo>--issue-<n>` automatically (the official
+       parallel-sessions pattern) and prints `cd <path>`: CONTINUE THE WORK THERE. After the
+       PR merges, clean it with `git worktree remove <path>`.
+     - **Too big for one PR?** Break it down FIRST with
+       `scripts/Board-Breakdown.ps1 -Parent <issueNum> -Tasks "child A", "child B"` — creates
+       native sub-issues (Sub-issues progress fills itself) — then start one child. Use a
+       checkbox task list in the parent body instead when the pieces are too small for issues.
+  5. **Finish with a PR + review gate — MANDATORY.** When the work is done:
+     a. Run `scripts/New-BoardPR.ps1 -Issue <issueNum>` — the cross-account push+PR step:
+        it resolves the RIGHT account from the repo OWNER (CSalcedoDataBI → personal PAT,
+        PAL-Devs → business PAT; `-TokenVar` forces one), verifies push permission, pushes
+        the branch with a one-shot credential helper (the stored remote is never rewritten
+        and the token never hits the command line or logs), and opens the PR with
+        `Closes #<issueNum>` in the body — or, on re-run, just pushes new commits to the
+        already-open PR (the gate-feedback iteration). NEVER commit board-tracked issue work
+        directly to main — the PR is what makes GitHub fill the board's "Linked pull
+        requests" column (a system column no API can write). This overrides any general
+        commit-directly-to-main workflow rule for issues started via `work`.
+     b. Move the board item into **In Review** (the review/testing stage) now that the PR is
+        open: `scripts/Board-Work.ps1 -ProjectNum <n> -ToReview <issueNum>`. If the board has no
+        In Review column yet, apply the field preset (`/board field apply en`) — it creates the
+        canonical Status (Backlog·In Progress·In Review·Blocked·Done) with colors. On boards without
+        it, `Board-Fill` keeps mapping open PRs to In Progress, so this step is a no-op — skip it.
+     c. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
+        code review when available, measures PR size (warns over 600 lines / 20 files and
+        suggests `Board-Breakdown.ps1` — small PRs review better), runs the **TMDL diff review**
+        when the PR touches `*.tmdl` (a PBIP semantic model — warn-only report of BREAKING /
+        WARNING / INFO schema changes, does not change the verdict), waits for CI checks, waits
+        for the review, and prints decision + feedback + unresolved threads. Exit 0 = gate
+        passed; exit 1 = blocked.
+        Address the printed feedback with new commits, push, and RE-RUN the gate until it
+        passes. If the `second-opinion` skill is available, use it as an extra reviewer.
+        If no reviewer is available at all, an explicit self-review of `gh pr diff <n>` is
+        obligatory before merging — and say so honestly in your report.
+     d. Only after the gate passes: `scripts/Board-Merge.ps1 -PR <n>` — merges the PR (squash +
+        delete-branch by default) and, if the repo's own `pr-before-merge` ruleset marks the PR
+        `blocked`, retries with the `--admin` bypass the ruleset grants admins (announced honestly);
+        a non-admin gets a clear blocked message instead of a raw error. The merge closes the issue,
+        which moves the board item from In Review to **Done** (close→Done + `Board-Fill`). Use a raw
+        `gh pr merge <n> --squash --delete-branch` only if you deliberately want no ruleset handling.
+     - Optional, once per repo: `Board-ReviewGate.ps1 -Repo <owner/name> -InstallRuleset`
+       installs a ruleset requiring PRs into the default branch (admins keep bypass — say so).
+       `Board-Merge.ps1` handles the resulting `blocked` state for you (auto `--admin` when admin).
+  - **Parallel (several independent issues at once).** When the user picks MORE THAN ONE
+    independent pending issue, batch-start them instead of looping:
+    `scripts/Board-Work.ps1 -ProjectNum <n> -Parallel <n1,n2,...>` starts each (In Progress +
+    assign + claim) in its OWN worktree `../<repo>--issue-<n>` off a fresh `origin/main`;
+    blocked / claimed / closed issues are skipped with a reason (the batch never aborts).
+    Add `-Launch` to open one visible Claude session per worktree — a Windows Terminal (`wt`)
+    tab when available, else a `pwsh` window — each briefed to take its issue through step 5
+    (PR + review gate). `-DryRun` plans (and previews the launch commands) without mutating or
+    spawning. Add `-Parallel <nums> -Fleet` instead of `-Launch` to probe the available AI CLIs,
+    pick one per issue (auto-fallback to `claude` when a choice is unavailable), and launch each
+    in its worktree; `-DryRun` shows the probe table without prompting or spawning.
+    Monitor the fleet with `scripts/Board-Work.ps1 -Sessions`. Only parallelize issues
+    that DON'T depend on each other; clean each worktree with `git worktree remove` after its PR
+    merges. Requires Windows Terminal for tabs (Windows-only launcher).
+  - If many pending items lack Priority/Size, suggest `/board fill` to triage them first.
+- **plan** — turn a plan into a tracked epic + native sub-issues on the board. A plan is NOT
+  done when a markdown file is written — it is done when its tasks are issues. Two entry modes
+  (ask which one if unclear):
+  1. **Plan now (interactive):** gather the goal and the SUBSTANTIAL tasks conversationally
+     (tiny steps stay as checkboxes in the epic description, not issues). Show the proposed
+     epic title + task list and WAIT for the user's approval.
+  2. **Plan exists:** read the plan document (or plan-mode output) the user points to, extract
+     goal + substantial tasks, show the same proposal, and WAIT for approval. Link the doc in
+     the description ONLY as a full `https://github.com/<owner>/<repo>/blob/<branch>/<path>`
+     URL on a PUSHED ref — relative paths render broken in issues.
+  Then run `scripts/Board-Plan.ps1 -Title "plan: <feature>" -Tasks "A","B",... -Description "..."`
+  — it ensures plan/plan-task labels, creates the epic, reuses Board-Breakdown for NATIVE
+  sub-issues, resolves the repo board with Resolve-Board (never a duplicate), and registers
+  epic + children. Suggest `/board fill` for Priority/Size/Type and `/board work` to start the
+  first task. Issues are created ONLY in the current repo (origin) — never elsewhere.
+- **init** — create a board and fill it coherently: title, short description, README, and link the
+  repo (references/board-ops.md). Tell the user the two UI-only items (Default repository pick, View
+  name/layout) need one click in settings — do not claim they were set.
+- **add** — add an issue/PR to the board (references/issue-ops.md)
+- **move** — set an item's Status (references/board-ops.md single-select recipe)
+- **field** — create fields / apply a field preset (`apply en|es`) / set Status/Priority/Type values /
+  **bulk-fill any custom field across EVERY item by rule** (`scripts/Set-BoardField.ps1` — single-select
+  by title-prefix map, or text by `{title}` template — idempotent, retries 502s)
+  (references/field-presets.md + board-ops.md). Visibility-per-view and group-by are UI-only — say so.
+- **bulk** — batch move/close/label across many items (references/issue-ops.md)
+- **fill** — detect and fill ALL gaps across the board by running `scripts/Board-Fill.ps1`
+  (pass -Owner, -Repo, -ProjectNum for the current repo's board):
+  - The script converts any draft notes to REAL issues in the repo first, then fills gaps:
+    Assignees (owner), Status (from issue/PR state), Priority (P2 Medium), Size (M),
+    Type (from labels, else Feature).
+  - No flags: run with neither -DryRun nor -Auto — the script prints the plan and asks (s/n).
+  - `--dry-run`: run with -DryRun — plan only, executes nothing.
+  - `--auto`: run with -Auto — fills everything without asking. Use for CI or when already approved.
+  - NOTE: Linked PRs and Sub-issues progress are system-derived columns — GitHub sets them
+    automatically from PR mentions and sub-issue state. They are NOT writable via API; do not
+    attempt to fill them and explain this to the user if asked.
+  - NOTE: which columns a VIEW displays is UI-only — if fields look "empty" on the board page,
+    tell the user to click `+` at the right of the view header and enable Priority/Size/Type.
+- **automate** — install the actions/add-to-project CI workflow (references/automation.md)
+- **templates** — install issue forms + PR template into the current repo working copy by running
+  `scripts/Install-RepoTemplates.ps1` (default `-Path .`, repo derived from origin):
+  - Drops `.github/ISSUE_TEMPLATE/{bug,feature,task,config}.yml` and
+    `.github/PULL_REQUEST_TEMPLATE.md` (with the mandatory `Closes #` slot).
+  - Ensures the labels the forms reference exist (`bug`/`feature`/`task`) — GitHub silently
+    ignores a form label that does not exist.
+  - Existing files are SKIPPED (never overwrite a repo's customized templates); `--force`
+    overwrites. The script only touches the working copy — commit through the normal flow
+    (PR when the work is board-tracked).
+- **update** — post a board status update (Projects BP: share high-level progress) by running
+  `scripts/Post-BoardStatusUpdate.ps1 -ProjectNum <n>` (auto-generates the body from live counts
+  + next pending by Priority; `-Status AT_RISK|OFF_TRACK|COMPLETE` and `-Body` override it).
+- **changelog** — generate a Keep-a-Changelog version block from the board's Done issues by
+  running `scripts/Board-Changelog.ps1 -ProjectNum <n>`. Groups issues into Added/Changed/Fixed
+  by the board Type field (Feature→Added, Bug→Fixed, Docs/Refactor/Chore→Changed; label fallback).
+  Includes only issues closed since the last CHANGELOG entry AND not already cited as `(#n)` —
+  so shipped work is never double-listed. Prints the block; `-Write` inserts it at the top of
+  CHANGELOG.md; `-Version`/`-Date`/`-Since` override the defaults (version read from plugin.json).
+  NOTE: the dedup keys on `(#n)` citations, which this tool always emits — pre-existing prose
+  entries without a number are not recognized, so review the first generated block before `-Write`.
+- **labels** — apply the label taxonomy preset by running `scripts/Apply-LabelPreset.ps1`
+  (repo derived from origin, or `-Repo owner/name`). Idempotent `gh label create --force` from
+  `presets/labels.json`: `bug`/`docs`/`refactor`/`chore` feed Board-Fill Type detection,
+  `blocked` feeds the work dependency check, `roadmap`/`plan`/`plan-task` feed plan tracking.
+  Never deletes existing labels.
+- **handoff** — save or resume a curated cross-session context, so work can continue in a fresh
+  session days later (even on another machine), via `scripts/Board-Handoff.ps1`. Full design in
+  `references/handoff.md`. Parse `save` vs `resume` from the request (default: if a
+  `[abios-handoff]` comment / local `HANDOFF.md` exists and little was done this session, offer
+  **resume**; otherwise **save**).
+  - **save** — compose the curated, [V]/[?]-tagged content (next step / done / open threads /
+    traps / key files) yourself, verifying each claim live, then run
+    `scripts/Board-Handoff.ps1 -Save -NextStep "..." -Done "...","..." -Traps "..." -KeyFiles "..."`.
+    It autofills the frontmatter from git + `.agentic-bi-ops/sessions.json`, writes a gitignored
+    `HANDOFF.md`, archives the previous one, upserts the durable `[abios-handoff]` comment on the
+    linked issue, and drops a MEMORY.md pointer (opt-out `-NoMemo`). `-DryRun` previews.
+  - **resume** — `scripts/Board-Handoff.ps1 -Resume` reads the latest `[abios-handoff]` comment
+    (falls back to local `HANDOFF.md`), rehydrates, reports branch/PR drift, carries traps
+    forward, clears the consumed pointer, and offers to start the linked issue. TREAT the printed
+    handoff as the session briefing and continue that work.
+  - **auto-load on resume** (opt-in): `references/handoff-hook.md` wires a SessionStart hook so a
+    resumed session surfaces the handoff automatically.
+  - **heavy memory** (opt-in, security-gated): for persistent *semantic* memory across projects,
+    `scripts/Suggest-HeavyMemory.ps1` proposes installing Basic Memory (upstream, AGPL) — never
+    vendored. See `references/heavy-memory.md`. The default remains the lightweight `HANDOFF.md`.
+
+ALWAYS END WITH THE BOARD LINK (mandatory): every response about a board operation — plan,
+result, or error — must end with the board URL so the user can open it in one click:
+`https://github.com/users/<owner>/projects/<num>` (or `/orgs/<org>/projects/<num>` for org boards).
+
+SAFETY (mandatory, see references/best-practices.md):
+- Before init/add/plan, **resolve-or-reuse** the repo's board with `scripts/Resolve-Board.ps1` —
+  never create a duplicate board with a blind `gh project create`.
+- Before ANY board delete, **always run `scripts/Backup-Board.ps1` first** (JSON snapshot + live
+  clone) — unconditionally, without asking. The delete itself still needs explicit confirmation.
+- For any destructive action (delete, bulk close/move), print a dry-run of exactly what would
+  change and confirm BEFORE mutating.
+
+Arguments: $ARGUMENTS

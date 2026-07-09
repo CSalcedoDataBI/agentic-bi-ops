@@ -1,12 +1,17 @@
 {
-  "name": "agentic-bi-ops",
+  "name": "agentic-board",
   "description": "GitOps for BI with AI agents — cross-account GitHub Projects & issues governance, plus future BI GitOps modules.",
   "owner": { "name": "CSalcedoDataBI", "url": "https://github.com/CSalcedoDataBI" },
   "plugins": [
     {
-      "name": "agentic-bi-ops",
-      "source": "./plugins/agentic-bi-ops",
+      "name": "agentic-board",
+      "source": "./plugins/agentic-board",
       "description": "Cross-account GitHub Projects & issues governance plus a skills-ops lifecycle module: gh-account, projects-admin, abios-feedback, skills-organize, skills-audit, skills-bootstrap, /board, /scan, /skills."
+    },
+    {
+      "name": "agentic-bi-ops",
+      "source": "./plugins/agentic-board",
+      "description": "DEPRECATED alias — renamed to agentic-board. Points to the same plugin so existing `agentic-bi-ops` installs keep updating. Install the new name: agentic-board."
     }
   ]
 }

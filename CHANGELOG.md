@@ -1,6 +1,22 @@
 # Changelog
 
 
+## [Unreleased]
+### Changed
+- **Rebrand: `agentic-bi-ops` → `agentic-board`** (#214). The plugin, marketplace slug, repo, and
+  all brand/path references now use `agentic-board`, positioning the tool as a general
+  coding-agent-on-a-GitHub-Projects-board platform (BI becomes a future module). Migration is
+  non-breaking: a **deprecated `agentic-bi-ops` alias** in the marketplace points to the same
+  plugin so existing installs keep updating (#215); the GitHub repo rename relies on GitHub's
+  automatic redirect (#216); the in-repo sweep left internal state keys (`.agentic-bi-ops/`
+  session dir, `ABIOS_*` env vars) untouched so live sessions, worktrees, and backups are not
+  orphaned (#217). See the README "Migrating from agentic-bi-ops" note.
+
+### Added
+- **CI: run the Pester suite on every PR, blocking merge on failure** (#201). New
+  `.github/workflows/ci.yml` installs Pester 5 and runs all 213 tests on `windows-latest`
+  (parity with local); any failure fails the `Pester` check. `Board-ReviewGate` waits on it.
+
 ## [0.16.0] - 2026-07-07
 ### Added
 - **Session-handoff module — `/board handoff` (save/resume)** (#137). Stop mid-task and resume in
