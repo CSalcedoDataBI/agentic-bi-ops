@@ -17,7 +17,7 @@ describes a change to the **public** tool with **no** private project context. S
   public tool's board.
 - **Fix (0.6.2):** hard rule + check before `item-add` — the item's source repo must equal the
   board's anchored repo; refuse otherwise. Keeps the public board 100% about the tool. Verified the
-  tool's board #13 contains only `CSalcedoDataBI/agentic-bi-ops` items.
+  tool's board #13 contains only `CSalcedoDataBI/agentic-board` items.
 
 ## 2026-06-29 — board visibility must match repo exposure (public showcase needs public board)
 - **Where:** `references/board-ops.md`, `references/best-practices.md`.

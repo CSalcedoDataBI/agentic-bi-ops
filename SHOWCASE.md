@@ -1,4 +1,4 @@
-# agentic-bi-ops in action — it runs on itself
+# agentic-board in action — it runs on itself
 
 The best demo of a project-governance tool is the tool governing **its own** project. Everything
 below is live data from this repository's own GitHub Projects board — no other project involved.
@@ -17,23 +17,23 @@ use the tool  →  hit a rough edge  →  abios-feedback captures it (public-onl
 
 ## Live roadmap board
 
-_Snapshot of [agentic-bi-ops — Roadmap](https://github.com/users/CSalcedoDataBI/projects/13).
+_Snapshot of [agentic-board — Roadmap](https://github.com/users/CSalcedoDataBI/projects/13).
 Regenerate with `scripts/Export-BoardSnapshot.ps1 -Number 13 -Owner CSalcedoDataBI`._
 
 **7 of 10 tracked items done.**
 
 | Status | Item | Issue |
 |--------|------|-------|
-| In Review | M2 — PBIP / Fabric git ops | [#2](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/2) |
-| In Review | M3 — Semantic-model review agents wired to the board | [#3](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/3) |
-| In Review | M4 — BI release automation | [#4](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/4) |
-| Done | guard: secret patterns self-matched their own definition lines | [#1](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/1) |
-| Done | packaging: plugin must live in `plugins/<name>/`, not repo root | [#5](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/5) |
-| Done | init: fill board description/README/linked-repo coherently | [#6](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/6) |
-| Done | project-scan: exclude noise dirs from scan | [#7](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/7) |
-| Done | project-scan: code-marker regex must follow the `TAG:` convention | [#8](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/8) |
-| Done | showcase: self-referential example + board snapshot export | [#9](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/9) |
-| Done | visibility: public-repo board must be Public | [#10](https://github.com/CSalcedoDataBI/agentic-bi-ops/issues/10) |
+| In Review | M2 — PBIP / Fabric git ops | [#2](https://github.com/CSalcedoDataBI/agentic-board/issues/2) |
+| In Review | M3 — Semantic-model review agents wired to the board | [#3](https://github.com/CSalcedoDataBI/agentic-board/issues/3) |
+| In Review | M4 — BI release automation | [#4](https://github.com/CSalcedoDataBI/agentic-board/issues/4) |
+| Done | guard: secret patterns self-matched their own definition lines | [#1](https://github.com/CSalcedoDataBI/agentic-board/issues/1) |
+| Done | packaging: plugin must live in `plugins/<name>/`, not repo root | [#5](https://github.com/CSalcedoDataBI/agentic-board/issues/5) |
+| Done | init: fill board description/README/linked-repo coherently | [#6](https://github.com/CSalcedoDataBI/agentic-board/issues/6) |
+| Done | project-scan: exclude noise dirs from scan | [#7](https://github.com/CSalcedoDataBI/agentic-board/issues/7) |
+| Done | project-scan: code-marker regex must follow the `TAG:` convention | [#8](https://github.com/CSalcedoDataBI/agentic-board/issues/8) |
+| Done | showcase: self-referential example + board snapshot export | [#9](https://github.com/CSalcedoDataBI/agentic-board/issues/9) |
+| Done | visibility: public-repo board must be Public | [#10](https://github.com/CSalcedoDataBI/agentic-board/issues/10) |
 
 The three `In Review` items (M2–M4) are the forward roadmap, their scaffolds open for review;
 the `Done` items are self-found improvements — each one a real rough edge the tool surfaced
@@ -56,4 +56,4 @@ about itself and then fixed.
 
 Not Scrum — GitHub Projects is **Kanban** at heart (the `Status` flow), with Scrum elements layered
 on via fields (`Estimate`, `Target`) — a pragmatic **Scrumban**. Details and sources in
-[`plugins/agentic-bi-ops/skills/projects-admin/references/best-practices.md`](plugins/agentic-bi-ops/skills/projects-admin/references/best-practices.md).
+[`plugins/agentic-board/skills/projects-admin/references/best-practices.md`](plugins/agentic-board/skills/projects-admin/references/best-practices.md).

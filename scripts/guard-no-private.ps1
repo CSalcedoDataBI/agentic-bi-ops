@@ -58,7 +58,7 @@ foreach ($line in ($diff -split "`n")) {
 
 if ($violations.Count -gt 0) {
     Write-Host ""
-    Write-Host "BLOCKED by agentic-bi-ops guard ($Mode): private content / secrets detected." -ForegroundColor Red
+    Write-Host "BLOCKED by agentic-board guard ($Mode): private content / secrets detected." -ForegroundColor Red
     Write-Host "The PUBLIC repo must never receive private project data." -ForegroundColor Red
     Write-Host ""
     $violations | Select-Object -Unique | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }

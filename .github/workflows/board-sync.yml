@@ -24,6 +24,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
           REPO_OWNER: CSalcedoDataBI
-          REPO_NAME: agentic-bi-ops
+          REPO_NAME: agentic-board
           PROJECT_NUMBER: 13
         run: bash scripts/board-sync.sh
