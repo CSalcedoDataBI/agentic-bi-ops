@@ -82,6 +82,31 @@ After installing, use the `/board` command or just ask:
 
 ---
 
+## The command model
+
+agentic-board follows the **noun-verb** convention used by `git`, `gh`, `docker`, and `kubectl`
+([clig.dev](https://clig.dev/)): a few command **"nouns"**, with **verbs as arguments**. You learn
+one door, not a wall of commands.
+
+| Command (noun) | Governs | Example verbs |
+|---|---|---|
+| `/board` | the GitHub Projects board + issues | `work`, `plan`, `fill`, `move`, `bulk`, `handoff`, … |
+| `/scan` | harvesting untracked work in the current repo | *(a single action)* |
+| `/skills` | the Agent Skills lifecycle | `organize`, `audit`, `bootstrap` |
+| `/knowledge` | the external-references registry | `add`, `harvest`, `list`, `gen`, `wiki` |
+
+Two rules keep it discoverable, so nothing has to be memorized:
+
+- **No args → a menu.** Run a command with nothing after it (just `/board`) and it lists its own
+  verbs.
+- **One front door.** `/board` also points to the sibling commands, so the whole tool is reachable
+  from a single entry point.
+
+The internal skills (account resolution, board admin, and the rest) are hidden from the `/` palette
+— the four commands above are the only entry points you type.
+
+---
+
 ## Session handoff
 
 Stop mid-task and pick it up in a **fresh session days later — even on another machine** —
