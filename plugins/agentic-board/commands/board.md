@@ -25,9 +25,19 @@ for the user to pick (they can answer with just the number):
 14. update          → publicar un status update del board (progreso de alto nivel)
 15. changelog       → generar un bloque de CHANGELOG (Added/Changed/Fixed) desde los issues Done
 16. handoff         → guardar/retomar contexto entre sesiones (save/resume) para continuar días después
+
+── otros módulos (comandos aparte) ─────────────────────────────
+/scan       → escanear ESTE proyecto por trabajo sin trackear (TODOs, checklists, planes) → issues + plan
+/skills     → ciclo de vida de Agent Skills (organize / audit / bootstrap)
+/knowledge  → registro de referencias externas por dominio (add / harvest / wiki)
 ```
 
-When they answer (number or name), execute that sub-action following the instructions below.
+If the user picks one of the **otros módulos** (or types its name), do NOT run a board
+sub-action — tell them it is a separate command and to invoke it directly (`/scan`, `/skills`,
+`/knowledge`); this menu lists them only so the whole tool is discoverable from one entry point.
+
+When they answer with a board option (number or name), execute that sub-action following the
+instructions below.
 
 First apply the `gh-account` skill to set `$env:GH_TOKEN` for the right account (default
 CSalcedoDataBI; honor an explicit `--account pal-devs` in the arguments). Never run `gh auth switch`.
