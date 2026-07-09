@@ -1,6 +1,7 @@
 ---
 name: knowledge-harvest
 description: Use to sweep the CURRENT repo for knowledge references that are not yet catalogued — docs/*.md research files and http links in README/docs — and turn the chosen ones into registry entries by domain. The batch-capture companion to knowledge-registry, parallel to project-scan. Triggers — "cosecha las referencias", "escanea el repo por docs/links", "qué conocimiento no está registrado", "harvest knowledge", "/knowledge harvest".
+user-invocable: false
 ---
 
 # knowledge-harvest

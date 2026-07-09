@@ -1,6 +1,7 @@
 ---
 name: knowledge-registry
 description: Use to capture and read a project's knowledge references by domain — add a research MD, repo, doc folder, URL, NotebookLM notebook or video to knowledge/registry.json, regenerate the KNOWLEDGE.md table, or publish it to the repo's GitHub Wiki. Distinct from MEMORY.md (agent facts) and HANDOFF.md (task resume). Triggers — "guarda esta referencia", "agrega a knowledge", "registra este link/doc/repo", "muéstrame la tabla de conocimiento", "publica el knowledge al wiki", "/knowledge add", "/knowledge list", "/knowledge gen", "/knowledge wiki".
+user-invocable: false
 ---
 
 # knowledge-registry

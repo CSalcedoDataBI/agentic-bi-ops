@@ -1,6 +1,7 @@
 ---
 name: skills-audit
 description: Use to evaluate Agent Skills and detect when one is failing — a static health audit (empty/first-person/over-budget descriptions, missing triggers, near-duplicates, misplaced) plus an on-demand runtime trigger-eval (run a realistic prompt with the skill enabled vs disabled, 3x, score false positives/negatives). Classifies failures (under-triggered, over-triggered, wrong output, ignored, obsolete) and, behind a human gate, files a SANITIZED issue to the repo that OWNS the skill — the tool's own board for its skills, the project's board for the project's own skills, local-only for third-party — never leaking the private project you are working in. Triggers — "audita mis skills", "esta skill no dispara/falla", "evalúa el triggering", "skill health check", "por qué no se activó la skill", /skills audit.
+user-invocable: false
 ---
 
 # skills-audit — detect skill failures, file them where they belong
