@@ -1,26 +1,43 @@
 # agentic-board
 
-**A Claude Code plugin that lets an AI agent run your GitHub Projects board for you.**
+**Run coding agents off your real GitHub Projects board — a quota-aware, review-gated
+coordinator, not another local Kanban.**
 
-Ask it in plain language — *"create a board for this repo", "move these issues to Done",
-"add everything labeled `bug` to the board", "close the stale ones"* — and it drives the
-GitHub Projects (v2) and Issues APIs through the `gh` CLI, with safety confirmations before
-anything destructive. It works across multiple GitHub accounts from one machine.
+agentic-board is a Claude Code plugin for developers who track work on GitHub Projects and want
+an agent to actually *do* the board work: pick the next issue, start it on its own branch and
+worktree, take it through a PR and a review gate, and merge it — across multiple GitHub accounts,
+always with a confirmation before anything destructive.
 
-This is **Module 1** of a growing "GitOps for BI" suite (see [roadmap](#module-roadmap)).
+Ask in plain language — *"what's pending?", "start issue #42", "move these to Done", "add
+everything labeled `bug`", "close the stale ones"* — or just run `/board work` and let it drive
+the whole issue → branch → PR → gate → merge loop.
+
+### What makes it different
+
+- **Your real board, not a local clone.** It drives the GitHub Projects (v2) and Issues APIs
+  through the `gh` CLI — the same board your team already uses, not a throwaway Kanban in a tab.
+- **A quota-aware multi-CLI fleet.** `/board work` can start several independent issues at once,
+  each in its own git worktree, and optionally launch one agent session per issue — probing each
+  CLI (Claude, Gemini, Codex, Jules, Copilot) for quota and availability before handing it work.
+- **Review-gated by default.** Every issue finishes through a PR and a review gate (Copilot
+  review + CI checks + unresolved-thread checks) before it can merge. Good GitHub hygiene is
+  driven by the flow, not left to willpower.
 
 > **See it run on itself → [SHOWCASE.md](SHOWCASE.md)** — the tool governs its own roadmap board;
 > every fix was found while using it and tracked in the open (the dogfooding loop).
+
+BI GitOps (PBIP/Fabric, TMDL diff review, semantic-model agents) is a **future module** on the
+same foundation — see the [roadmap](#module-roadmap).
 
 ---
 
 ## Why
 
-Power BI / Fabric teams track their work on GitHub Projects, but the board work is manual:
-creating fields, moving cards, bulk-triaging issues, wiring CI automation. This plugin turns
-those chores into natural-language requests an agent executes consistently — including the
-GitHub gotchas (single-select field IDs, native sub-issues, `gh project delete` having no
-`--yes` flag) that are easy to get wrong by hand.
+Teams track their work on GitHub Projects, but the board work stays manual: creating fields,
+moving cards, bulk-triaging issues, wiring CI automation, then babysitting each change through
+its branch, PR, and merge. This plugin turns those chores into natural-language requests an agent
+executes consistently — including the GitHub gotchas (single-select field IDs, native sub-issues,
+`gh project delete` having no `--yes` flag) that are easy to get wrong by hand.
 
 ---
 
