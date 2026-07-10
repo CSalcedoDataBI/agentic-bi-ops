@@ -336,14 +336,38 @@ query($owner:String!, $num:Int!) {
     return [PSCustomObject]@{ projectId = $projectId; statusNode = $statusNode; inProgId = $inProgId }
 }
 
-# Find the board item for an issue number, with one retry (eventual consistency).
+# Accumulate all nodes across GraphQL project-item pages. $FetchPage is called with a
+# cursor ($null on the first call) and must return @{ nodes; hasNext; endCursor } for
+# that page. Pure w.r.t. its injected fetcher -> unit-testable with a fake page source.
+# Fixes #246: board lookups used items(first:100) with no pagination, so issues past
+# the first 100 board items were invisible (a 148-item board hid the newest issues, and
+# -Start/-ToReview/-Parallel/-Fleet all failed on them via Get-BoardItem).
+function Get-AllPages {
+    param([scriptblock]$FetchPage)
+    $all = @(); $cursor = $null
+    do {
+        $page = & $FetchPage $cursor
+        if (-not $page) { break }
+        $all += @($page.nodes)
+        $cursor = $page.endCursor
+        $more   = [bool]$page.hasNext
+    } while ($more)
+    return $all
+}
+
+# Find the board item for an issue number, paginating the WHOLE board (issue #246) with
+# one retry for GitHub eventual consistency. $projectId is closed over by the fetcher.
 function Get-BoardItem([string]$projectId, [int]$issueNum) {
     foreach ($attempt in 1..2) {
-        $itemsData = gh api graphql -f query='
-query($proj:ID!) {
-  node(id:$proj) {
+        $nodes = Get-AllPages {
+            param($cursor)
+            $after = if ($cursor) { 'after: "' + $cursor + '"' } else { '' }
+            $q = @"
+query(`$proj:ID!) {
+  node(id:`$proj) {
     ... on ProjectV2 {
-      items(first:100) {
+      items(first:100 $after) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           fieldValues(first:20) {
@@ -366,9 +390,12 @@ query($proj:ID!) {
       }
     }
   }
-}' -F "proj=$projectId" | ConvertFrom-Json
-
-        $item = $itemsData.data.node.items.nodes |
+}
+"@
+            $items = (gh api graphql -f query=$q -F "proj=$projectId" | ConvertFrom-Json).data.node.items
+            return @{ nodes = $items.nodes; hasNext = $items.pageInfo.hasNextPage; endCursor = $items.pageInfo.endCursor }
+        }
+        $item = $nodes |
                 Where-Object { $_.content.__typename -eq "Issue" -and $_.content.number -eq $issueNum } |
                 Select-Object -First 1
         if ($item) { return $item }
@@ -1210,22 +1237,9 @@ query($owner:String!, $num:Int!) {
         throw "El board #$ProjectNum no tiene la opcion 'In Review' en Status. Agregala (/board field) antes de usar -ToReview."
     }
 
-    # Find the item (one retry for GitHub eventual consistency, like -Start).
-    $item = $null
-    foreach ($attempt in 1..2) {
-        $itemsData = gh api graphql -f query='
-query($proj:ID!) {
-  node(id:$proj) {
-    ... on ProjectV2 {
-      items(first:100) { nodes { id content { __typename ... on Issue { number title } } } } }
-  }
-}' -F "proj=$projectId" | ConvertFrom-Json
-        $item = $itemsData.data.node.items.nodes |
-                Where-Object { $_.content.__typename -eq "Issue" -and $_.content.number -eq $ToReview } |
-                Select-Object -First 1
-        if ($item) { break }
-        if ($attempt -eq 1) { Start-Sleep -Seconds 3 }
-    }
+    # Find the item by reusing Get-BoardItem, which paginates the whole board (#246)
+    # and retries for eventual consistency - no separate capped query here.
+    $item = Get-BoardItem $projectId $ToReview
     if (-not $item) { throw "Issue #$ToReview no esta en el board #$ProjectNum." }
 
     if ($DryRun) {

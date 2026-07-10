@@ -129,12 +129,32 @@ query($owner:String!, $num:Int!) {
 function Get-Field($name) { $allFields | Where-Object { $_.name -eq $name } }
 function Get-Opt($field, $optName) { ($field.options | Where-Object { $_.name -eq $optName }).id }
 
+# Accumulate all nodes across GraphQL project-item pages (issue #246: without this the
+# scan stopped at items(first:100) and silently skipped issues on boards >100 items).
+# Pure w.r.t. its injected fetcher -> unit-testable with a fake page source.
+function Get-AllPages {
+    param([scriptblock]$FetchPage)
+    $all = @(); $cursor = $null
+    do {
+        $page = & $FetchPage $cursor
+        if (-not $page) { break }
+        $all += @($page.nodes)
+        $cursor = $page.endCursor
+        $more   = [bool]$page.hasNext
+    } while ($more)
+    return $all
+}
+
 function Get-BoardItems($projId) {
-    $data = gh api graphql -f query='
-query($proj:ID!) {
-  node(id:$proj) {
+    return Get-AllPages {
+        param($cursor)
+        $after = if ($cursor) { 'after: "' + $cursor + '"' } else { '' }
+        $q = @"
+query(`$proj:ID!) {
+  node(id:`$proj) {
     ... on ProjectV2 {
-      items(first:100) {
+      items(first:100 $after) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           fieldValues(first:20) {
@@ -166,8 +186,11 @@ query($proj:ID!) {
       }
     }
   }
-}' -F "proj=$projId" | ConvertFrom-Json
-    return $data.data.node.items.nodes
+}
+"@
+        $items = (gh api graphql -f query=$q -F "proj=$projId" | ConvertFrom-Json).data.node.items
+        return @{ nodes = $items.nodes; hasNext = $items.pageInfo.hasNextPage; endCursor = $items.pageInfo.endCursor }
+    }
 }
 
 # Dot-source guard: tests set this to load the functions above without running
