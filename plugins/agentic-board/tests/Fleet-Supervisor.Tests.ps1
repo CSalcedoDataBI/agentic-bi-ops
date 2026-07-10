@@ -1,0 +1,71 @@
+#Requires -Modules Pester
+<#  Pester tests for Fleet-Supervisor.ps1 - stall detection + fleet termination (P3-5).
+    Watches the live fleet and decides: which sessions have stalled (running too long with
+    no PR), whether the whole run is complete, and whether it should STOP (guard against
+    runaway loops). Pure verdict core behind a dot-source guard
+    ($env:ABIOS_FLEETSUPERVISOR_DOTSOURCE); only the CLI reads sessions.json / gh. #>
+
+BeforeAll {
+    $script:Script = Join-Path $PSScriptRoot '..' 'scripts' 'Fleet-Supervisor.ps1' | Resolve-Path
+    $env:ABIOS_FLEETSUPERVISOR_DOTSOURCE = '1'
+    . $script:Script
+    $env:ABIOS_FLEETSUPERVISOR_DOTSOURCE = ''
+
+    function New-Sess {
+        param([int]$Issue, [int]$AgeMin = 0, [string]$Pr = '', [bool]$Merged = $false)
+        [pscustomobject]@{ issue = $Issue; ageMin = $AgeMin; pr = $Pr; merged = $Merged }
+    }
+}
+
+Describe 'Test-SessionStalled' {
+    It 'is not stalled while young' {
+        Test-SessionStalled (New-Sess 1 -AgeMin 5) 30 | Should -BeFalse
+    }
+    It 'is stalled when old and still has no PR' {
+        Test-SessionStalled (New-Sess 1 -AgeMin 60) 30 | Should -BeTrue
+    }
+    It 'is NOT stalled when old but a PR is already open (that is progress)' {
+        Test-SessionStalled (New-Sess 1 -AgeMin 60 -Pr 'http://pr/1') 30 | Should -BeFalse
+    }
+}
+
+Describe 'Get-StalledSessions' {
+    It 'returns only the stalled sessions' {
+        $s = @( (New-Sess 1 -AgeMin 5), (New-Sess 2 -AgeMin 90), (New-Sess 3 -AgeMin 90 -Pr 'p') )
+        $r = @(Get-StalledSessions $s 30)
+        $r.Count | Should -Be 1
+        $r[0].issue | Should -Be 2
+    }
+}
+
+Describe 'Test-FleetComplete' {
+    It 'is complete when every session is merged' {
+        Test-FleetComplete @( (New-Sess 1 -Merged $true), (New-Sess 2 -Merged $true) ) | Should -BeTrue
+    }
+    It 'is not complete while any session is unmerged' {
+        Test-FleetComplete @( (New-Sess 1 -Merged $true), (New-Sess 2) ) | Should -BeFalse
+    }
+    It 'treats an empty fleet as complete' {
+        Test-FleetComplete @() | Should -BeTrue
+    }
+}
+
+Describe 'Get-FleetVerdict (termination policy)' {
+    It 'says STOP + complete when all sessions merged' {
+        $v = Get-FleetVerdict @( (New-Sess 1 -Merged $true) ) 30 2
+        $v.complete   | Should -BeTrue
+        $v.shouldStop | Should -BeTrue
+        $v.reason     | Should -Match 'complet'
+    }
+    It 'says STOP when stalled count reaches the max' {
+        $v = Get-FleetVerdict @( (New-Sess 1 -AgeMin 90), (New-Sess 2 -AgeMin 90) ) 30 2
+        $v.shouldStop | Should -BeTrue
+        $v.reason     | Should -Match 'stall'
+        @($v.stalled).Count | Should -Be 2
+    }
+    It 'keeps going when work is in progress and nothing is stalled' {
+        $v = Get-FleetVerdict @( (New-Sess 1 -AgeMin 5 -Pr 'p'), (New-Sess 2 -AgeMin 5) ) 30 2
+        $v.complete   | Should -BeFalse
+        $v.shouldStop | Should -BeFalse
+    }
+}
