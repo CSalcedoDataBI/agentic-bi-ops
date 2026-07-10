@@ -124,6 +124,17 @@ Describe 'Get-SessionBriefing' {
     It 'finishes the merge through the ruleset-safe Board-Merge.ps1' {
         $script:Brief | Should -Match 'Board-Merge\.ps1'
     }
+    It 'wires the fleet blackboard: read prior findings and record on completion' {
+        $script:Brief | Should -Match 'Fleet-Findings\.ps1 -List'
+        $script:Brief | Should -Match 'Fleet-Findings\.ps1 -Add'
+    }
+    It 'wires file-ownership: claim before editing and release when done' {
+        $script:Brief | Should -Match 'Fleet-Ownership\.ps1 -Claim'
+        $script:Brief | Should -Match 'Fleet-Ownership\.ps1 -Release'
+    }
+    It 'wires the upstream hand-off context' {
+        $script:Brief | Should -Match 'Fleet-Handoff\.ps1 -Context'
+    }
 }
 
 Describe 'Get-SessionBriefing adapter-aware' {

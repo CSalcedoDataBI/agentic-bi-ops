@@ -671,15 +671,24 @@ function Get-SessionBriefing {
     return ("You are running AUTONOMOUSLY - permissions are pre-approved, so work this " +
             "task end-to-end WITHOUT stopping to ask for confirmation. " +
             "Pick up GitHub issue #$issueNum in $repo. It is already In Progress and claimed, " +
-            "on branch $branch in this worktree ($workPath). Steps: " +
+            "on branch $branch in this worktree ($workPath). " +
+            "FIRST load fleet coordination context so you collaborate with sibling sessions: " +
+            "read prior findings with 'pwsh plugins/agentic-board/scripts/Fleet-Findings.ps1 -List' ; " +
+            "inherit any upstream hand-off with 'pwsh plugins/agentic-board/scripts/Fleet-Handoff.ps1 -Context -Issue $issueNum' ; " +
+            "and once you know which files you will edit, claim them with " +
+            "'pwsh plugins/agentic-board/scripts/Fleet-Ownership.ps1 -Claim -Issue $issueNum -Branch $branch -Paths <files>' " +
+            "(if it warns of overlap with another live session, steer clear of those files). Then: " +
             "(1) read it with: gh issue view $issueNum --repo $repo ; " +
             "(2) implement it fully in this worktree and commit your changes ; " +
             "(3) open the PR with: pwsh plugins/agentic-board/scripts/New-BoardPR.ps1 -Issue $issueNum " +
             "and note the PR number it prints ; " +
             "(4) pass the review gate: pwsh plugins/agentic-board/scripts/Board-ReviewGate.ps1 -PR <pr> ; " +
             "address any feedback and re-run until it is green ; " +
-            "(5) merge it (ruleset-safe): pwsh plugins/agentic-board/scripts/Board-Merge.ps1 -PR <pr> . " +
-            "Work ONLY this issue - never touch other worktrees or issues. When the PR is merged, you are done.")
+            "(5) merge it (ruleset-safe): pwsh plugins/agentic-board/scripts/Board-Merge.ps1 -PR <pr> ; " +
+            "(6) record what you learned for other sessions with " +
+            "'pwsh plugins/agentic-board/scripts/Fleet-Findings.ps1 -Add -Issue $issueNum -Status done -Files <files touched> -Decisions <key decisions> -Gotchas <pitfalls>' " +
+            "and free your files with 'pwsh plugins/agentic-board/scripts/Fleet-Ownership.ps1 -Release -Issue $issueNum' . " +
+            "Work ONLY this issue - never touch other worktrees or issues. When the PR is merged and your findings recorded, you are done.")
 }
 
 # Build the exact launch command for a worktree session. Returns an object
