@@ -116,13 +116,18 @@ if (-not $Version) {
     if (-not $Version) { $Version = "0.0.0" }
 }
 
-# ── Read board items (issue content + Type single-select) ─────────────────────
-$data = gh api graphql -f query='
-query($owner:String!, $num:Int!) {
-  user(login:$owner) {
-    projectV2(number:$num) {
+# ── Read board items, paginated (issue #246: items(first:100) alone skipped issues
+#    on boards >100 items, so the changelog silently missed recent entries) ───────
+$nodes = @(); $cursor = $null
+do {
+    $after = if ($cursor) { 'after: "' + $cursor + '"' } else { '' }
+    $q = @"
+query(`$owner:String!, `$num:Int!) {
+  user(login:`$owner) {
+    projectV2(number:`$num) {
       id
-      items(first:100) {
+      items(first:100 $after) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           fieldValues(first:20) {
             nodes {
@@ -143,12 +148,17 @@ query($owner:String!, $num:Int!) {
       }
     }
   }
-}' -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
-
-if (-not $data.data.user.projectV2.id) {
-    throw "No pude resolver el board #$ProjectNum de $Owner (revisa cuenta / scope 'project')."
 }
-$nodes = $data.data.user.projectV2.items.nodes
+"@
+    $data = gh api graphql -f query=$q -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
+    $pv = $data.data.user.projectV2
+    if (-not $pv.id) {
+        throw "No pude resolver el board #$ProjectNum de $Owner (revisa cuenta / scope 'project')."
+    }
+    $nodes += @($pv.items.nodes)
+    $cursor = $pv.items.pageInfo.endCursor
+    $more   = $pv.items.pageInfo.hasNextPage
+} while ($more)
 
 # ── Select + bucket ───────────────────────────────────────────────────────────
 $sections = [ordered]@{ Added = @(); Changed = @(); Fixed = @() }

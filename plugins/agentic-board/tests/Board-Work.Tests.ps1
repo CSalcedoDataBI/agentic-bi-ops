@@ -551,3 +551,44 @@ Describe 'non-claude adapters' {
         (& ((Get-CliAdapters | Where-Object Name -eq 'gemini').BuildLaunch) $ctx) | Should -Match "O''Brien"
     }
 }
+
+Describe 'Get-AllPages (board pagination - issue #246)' {
+    It 'concatenates nodes across pages and stops when hasNext is false' {
+        $script:calls = 0
+        $fetch = {
+            param($cursor)
+            $script:calls++
+            if ($script:calls -eq 1) { @{ nodes = @(1,2); hasNext = $true;  endCursor = 'c1' } }
+            else                     { @{ nodes = @(3);   hasNext = $false; endCursor = $null } }
+        }
+        (Get-AllPages $fetch) | Should -Be @(1,2,3)
+        $script:calls | Should -Be 2
+    }
+    It 'threads each page endCursor into the next fetch (first cursor is empty)' {
+        $script:seen = @()
+        $fetch = {
+            param($cursor)
+            $script:seen += "$cursor"
+            if (-not $cursor) { @{ nodes = @('a'); hasNext = $true;  endCursor = 'NEXT' } }
+            else              { @{ nodes = @('b'); hasNext = $false; endCursor = $null } }
+        }
+        Get-AllPages $fetch | Out-Null
+        $script:seen[0] | Should -Be ''
+        $script:seen[1] | Should -Be 'NEXT'
+    }
+    It 'returns an empty array for a single empty page' {
+        @(Get-AllPages { param($c) @{ nodes = @(); hasNext = $false; endCursor = $null } }).Count | Should -Be 0
+    }
+    It 'finds an issue that only appears on the SECOND page (the #246 regression)' {
+        $fetch = {
+            param($cursor)
+            if (-not $cursor) {
+                @{ nodes = @([pscustomobject]@{ content = [pscustomobject]@{ __typename='Issue'; number=1 } }); hasNext = $true; endCursor = 'p2' }
+            } else {
+                @{ nodes = @([pscustomobject]@{ content = [pscustomobject]@{ __typename='Issue'; number=239 } }); hasNext = $false; endCursor = $null }
+            }
+        }
+        $all = @(Get-AllPages $fetch)
+        ($all | Where-Object { $_.content.number -eq 239 }).Count | Should -Be 1
+    }
+}

@@ -28,6 +28,23 @@ Describe 'Get-OwnerRoot (owner-type -> GraphQL root, issue #86)' {
     }
 }
 
+Describe 'Get-AllPages (board pagination - issue #246)' {
+    It 'concatenates nodes across pages and stops when hasNext is false' {
+        $script:calls = 0
+        $fetch = {
+            param($cursor)
+            $script:calls++
+            if ($script:calls -eq 1) { @{ nodes = @(1,2); hasNext = $true;  endCursor = 'c1' } }
+            else                     { @{ nodes = @(3);   hasNext = $false; endCursor = $null } }
+        }
+        (Get-AllPages $fetch) | Should -Be @(1,2,3)
+        $script:calls | Should -Be 2
+    }
+    It 'returns an empty array for a single empty page' {
+        @(Get-AllPages { param($c) @{ nodes = @(); hasNext = $false; endCursor = $null } }).Count | Should -Be 0
+    }
+}
+
 Describe 'Get-OwnerUrlSegment (projects URL segment)' {
     It 'uses /orgs/ for an organization' {
         Get-OwnerUrlSegment -OwnerType 'Organization' | Should -Be 'orgs'
