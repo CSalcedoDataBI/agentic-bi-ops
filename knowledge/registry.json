@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "project": "agentic-bi-ops",
+  "domains": [
+    "PowerBI",
+    "Fabric",
+    "DAX",
+    "TMDL",
+    "Power-Query",
+    "Vega",
+    "Claude-Code",
+    "Research",
+    "Multi-Agent-Orchestration"
+  ],
+  "references": [
+    {
+      "id": "kn_001",
+      "domain": "Multi-Agent-Orchestration",
+      "type": "repo",
+      "title": "Ruflo (ruvnet/ruflo) — agent meta-harness",
+      "ref": "https://github.com/ruvnet/ruflo",
+      "note": "63.9K stars, MIT. Multi-player agent swarms, self-learning memory, coordinated autonomous workflows over Claude Code/Codex. Referente de coordinacion multi-agente para /board work fleet.",
+      "added": "2026-07-10"
+    },
+    {
+      "id": "kn_002",
+      "domain": "Claude-Code",
+      "type": "repo",
+      "title": "wshobson/agents — multi-harness agentic plugin marketplace",
+      "ref": "https://github.com/wshobson/agents",
+      "note": "37.8K stars, MIT. Marketplace de plugins/subagentes multi-harness (Claude Code, Codex, Cursor, Copilot, Gemini). Peer directo de agentic-board; referente de como estructurar subagentes y coordinacion.",
+      "added": "2026-07-10"
+    },
+    {
+      "id": "kn_003",
+      "domain": "Claude-Code",
+      "type": "repo",
+      "title": "awesome-claude-code — curated Claude Code ecosystem",
+      "ref": "https://github.com/hesreallyhim/awesome-claude-code",
+      "note": "49.7K stars. Coleccion curada de skills, subagentes, status lines, plugins y tooling de Claude Code. Fuente para descubrir patrones y herramientas del ecosistema.",
+      "added": "2026-07-10"
+    },
+    {
+      "id": "kn_004",
+      "domain": "Multi-Agent-Orchestration",
+      "type": "repo",
+      "title": "CrewAI — role-playing autonomous agent orchestration",
+      "ref": "https://github.com/crewAIInc/crewAI",
+      "note": "55.3K stars, MIT. Framework para orquestar agentes autonomos con roles colaborativos. Referente de patrones de coordinacion (roles, tareas, delegacion) para el fleet de /board work.",
+      "added": "2026-07-10"
+    },
+    {
+      "id": "kn_005",
+      "domain": "Multi-Agent-Orchestration",
+      "type": "repo",
+      "title": "Microsoft AutoGen — agentic AI programming framework",
+      "ref": "https://github.com/microsoft/autogen",
+      "note": "59.6K stars, CC-BY-4.0. Framework de Microsoft para AI agentica multi-agente (conversaciones entre agentes, group chat). Referente de arquitectura de coordinacion.",
+      "added": "2026-07-10"
+    }
+  ]
+}
