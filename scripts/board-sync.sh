@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # board-sync.sh — Auto-fill all gaps in a GitHub Projects v2 board.
 # Runs on: issue events, PR events, weekly schedule, manual dispatch.
-# Requires: GH_TOKEN with 'project' + 'repo' scopes (PROJECTS_TOKEN secret).
+# Requires: GH_TOKEN = classic PAT (PROJECTS_TOKEN secret) with minimal scopes:
+#   - 'project'      → read/write the user-owned Project v2 (issues assign + Status field)
+#   - 'public_repo'  → write to this PUBLIC repo's issues (do NOT use full 'repo')
+# Fine-grained PATs can't manage user-owned Projects v2, so a classic PAT is required.
+# 'public_repo' (not 'repo') keeps private repos out of the blast radius if the secret leaks.
+# If this ever syncs a PRIVATE repo, swap 'public_repo' for full 'repo' — but never store
+# such a token as a secret in a public repo.
 set -euo pipefail
 
 OWNER="${REPO_OWNER:-CSalcedoDataBI}"
