@@ -2,6 +2,48 @@
 
 
 ## [Unreleased]
+
+## [0.17.0] - 2026-07-10
+### Added
+- **Multi-CLI fleet for `/board work` (Phase 1 + 1.1)** (#168, #182). Turn `-Parallel -Launch`
+  from a Claude-only launcher into a heterogeneous coordinator: a CLI adapter registry
+  (claude default + gemini/codex/copilot repl adapters and a jules async adapter), a live
+  availability probe with a per-probe timeout and ok/no-quota/auth/error classification, an
+  interactive per-issue picker with automatic fallback to claude, and a new `-Fleet` switch —
+  reusing the existing worktree + `sessions.json` + Windows-Terminal machinery
+  (#169–#180, #183–#186). Headless invocations were discovered live per CLI, never hardcoded.
+- **Fleet work-coordination / collaboration layer (Phase 3)** (#238). The parallel fleet now
+  *collaborates* instead of merely avoiding collisions:
+  - **Shared findings blackboard** — `Fleet-Findings.ps1` (#239): each worktree records
+    files-touched / decisions / gotchas in `.agentic-bi-ops/fleet/findings.json` (upsert by
+    issue, shared across worktrees); the next session reads it before starting.
+  - **File-ownership guard** — `Fleet-Ownership.ps1` (#241): one-owner-per-file with
+    boundary-aware overlap detection and dead-PID auto-release.
+  - **Advisory board-lead planner** — `Fleet-Plan.ps1` (#240): reads pending issues, orders
+    them into dependency waves, and routes each to the best CLI by capability — emits the plan
+    (never launches).
+  - **Dependency hand-off + briefing wiring** — `Fleet-Handoff.ps1` (#242): a dependent issue
+    waits for its blockers and inherits their findings as context. `Get-SessionBriefing` now
+    tells each spawned session to read findings, inherit upstream context, claim its files, and
+    on completion record findings + release ownership — so the three modules are used in the
+    live fleet.
+  - **Supervisor** — `Fleet-Supervisor.ps1` (#243): stall detection (past threshold, no PR),
+    fleet-complete detection, and a should-stop verdict guarding against a runaway fleet.
+- **knowledge-ops module — `/knowledge` (M5)** (#152). A per-project references registry by
+  domain (`knowledge/registry.json` + generated `KNOWLEDGE.md`): add/list/harvest/gen/wiki, with
+  domain + local-path guards, a health report, and GitHub-Wiki publishing (#153–#162).
+- **Discoverability & command-surface UX** (#204, #205, #187–#189, #208, #209). A two-tier
+  command surface (only entry-point commands in the `/` palette), a single `/board` index facade
+  that routes to every module, a one-line value prop, and an above-the-fold README rewrite.
+- **blog-sync + release tooling** (#228–#235). Keep the marketing site synced with releases:
+  config schema, tool-state snapshot, gap analyzer, apply+PR flow, and a `/blog-sync` command
+  wired into the release flow.
+- **Community** (#211–#213). `CONTRIBUTING.md`, good-first-issue labels, issue/PR templates,
+  repo metadata, and a distribution checklist.
+- **CI: run the Pester suite on every PR, blocking merge on failure** (#201). New
+  `.github/workflows/ci.yml` installs Pester 5 and runs the full suite (300 tests) on
+  `windows-latest`; any failure fails the `Pester` check. `Board-ReviewGate` waits on it.
+
 ### Changed
 - **Rebrand: `agentic-bi-ops` → `agentic-board`** (#214). The plugin, marketplace slug, repo, and
   all brand/path references now use `agentic-board`, positioning the tool as a general
@@ -12,10 +54,11 @@
   session dir, `ABIOS_*` env vars) untouched so live sessions, worktrees, and backups are not
   orphaned (#217). See the README "Migrating from agentic-bi-ops" note.
 
-### Added
-- **CI: run the Pester suite on every PR, blocking merge on failure** (#201). New
-  `.github/workflows/ci.yml` installs Pester 5 and runs all 213 tests on `windows-latest`
-  (parity with local); any failure fails the `Pester` check. `Board-ReviewGate` waits on it.
+### Fixed
+- **Board item lookups are paginated** (#246). `Get-BoardItem` / `Board-Fill` / `Board-Changelog`
+  read project items with `items(first:100)` and never paginated, so on a board with more than
+  100 items the newest issues were invisible — `/board work -Start/-ToReview/-Parallel/-Fleet`
+  failed on recent issues. A pure `Get-AllPages` accumulator now walks every page.
 
 ## [0.16.0] - 2026-07-07
 ### Added
