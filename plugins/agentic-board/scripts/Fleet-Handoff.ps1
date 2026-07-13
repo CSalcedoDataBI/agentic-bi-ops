@@ -42,6 +42,9 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
+# The single resolver for the internal state dir (new name + migration + fallback).
+. (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
+
 # ------------------------------------------------------------------ pure helpers
 # The blockers still open: any blocked-by whose entry in $Merged is not $true (an
 # unknown blocker is treated as pending - we can't prove it landed). Pure -> testable.
@@ -69,10 +72,9 @@ function Get-HandoffContext {
 
 # ------------------------------------------------------------- I/O (gh + blackboard)
 function Get-FleetFindingsFile {
-    $common = git rev-parse --git-common-dir 2>$null
-    if (-not $common) { return $null }
-    try { $root = Split-Path (Resolve-Path $common).Path -Parent } catch { return $null }
-    return (Join-Path (Join-Path (Join-Path $root ".agentic-bi-ops") "fleet") "findings.json")
+    $state = Get-AbiosStateDir -NoCreate
+    if (-not $state) { return $null }
+    return (Join-Path (Join-Path $state "fleet") "findings.json")
 }
 
 function Read-BlackboardFindings {

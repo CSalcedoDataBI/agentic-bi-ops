@@ -3,7 +3,7 @@
     Fleet supervisor: stall detection + fleet termination policy (Phase 3, P3-5).
 
 .DESCRIPTION
-    Watches the live /board work fleet (from .agentic-bi-ops/sessions.json) and produces a
+    Watches the live /board work fleet (from .agentic-board/sessions.json) and produces a
     verdict:
       - which sessions have STALLED (running past -ThresholdMin with no PR opened yet),
       - whether the whole run is COMPLETE (every session's PR merged),
@@ -40,6 +40,9 @@ param(
     [string]$TokenVar = "GITHUB_TOKEN_PERSONAL"
 )
 $ErrorActionPreference = "Stop"
+
+# The single resolver for the internal state dir (new name + migration + fallback).
+. (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
 
 # ------------------------------------------------------------------ pure verdict core
 # A session is stalled when it has run past the threshold with NO PR yet (an open PR is
@@ -81,10 +84,9 @@ function Get-FleetVerdict {
 
 # ------------------------------------------------------------- I/O (sessions.json + gh)
 function Get-SessionsFile {
-    $common = git rev-parse --git-common-dir 2>$null
-    if (-not $common) { return $null }
-    try { $root = Split-Path (Resolve-Path $common).Path -Parent } catch { return $null }
-    return (Join-Path (Join-Path $root ".agentic-bi-ops") "sessions.json")
+    $state = Get-AbiosStateDir -NoCreate
+    if (-not $state) { return $null }
+    return (Join-Path $state "sessions.json")
 }
 
 function Read-FleetSessions {

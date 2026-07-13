@@ -1,6 +1,6 @@
 <#  Backup-Board.ps1 - make a COMPLETE backup of a Projects board. ALWAYS run before delete.
     Writes a JSON snapshot (project meta + fields + items) AND creates a restorable live clone.
-    Requires $env:GH_TOKEN (via gh-account). Backups go to $env:ABIOS_BACKUP_DIR or ~/.agentic-bi-ops/backups.
+    Requires $env:GH_TOKEN (via gh-account). Backups go to $env:ABIOS_BACKUP_DIR or ~/.agentic-board/backups.
     Usage: ./Backup-Board.ps1 -Number 13 -Owner CSalcedoDataBI
     NOTE: source is pure ASCII; the em-dash is built at runtime for Windows PowerShell 5.1 safety.  #>
 [CmdletBinding()]
@@ -11,8 +11,10 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $dash = [char]0x2014
+# The single resolver for the internal state dir (new name + migration + fallback).
+. (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
 if (-not $BackupDir) {
-  $BackupDir = if ($env:ABIOS_BACKUP_DIR) { $env:ABIOS_BACKUP_DIR } else { Join-Path $HOME '.agentic-bi-ops/backups' }
+  $BackupDir = if ($env:ABIOS_BACKUP_DIR) { $env:ABIOS_BACKUP_DIR } else { Join-Path (Get-AbiosStateDir -Root $HOME) 'backups' }
 }
 New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
 

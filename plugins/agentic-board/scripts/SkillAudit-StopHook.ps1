@@ -3,7 +3,7 @@
     Meant to be wired as a Claude Code Stop hook (OPT-IN — see
     skills/skills-audit/references/stop-hook.md). On each stop it runs a fast static
     audit of the CURRENT repo's project skills and, IF there are findings, appends ONE
-    suggestion line to <Root>/.agentic-bi-ops/skill-suggestions.jsonl (gitignored, local).
+    suggestion line to <Root>/.agentic-board/skill-suggestions.jsonl (gitignored, local).
 
     It NEVER opens an issue, NEVER edits a skill, NEVER blocks, and NEVER throws — a Stop
     hook that errors would disrupt the session. It only leaves a breadcrumb suggesting the
@@ -25,8 +25,9 @@ try {
     $res = & $audit -Root $Root -Scope project 2>$null
     if (-not $res -or $res.summary.findings -le 0) { return }
 
-    $dir = Join-Path $Root '.agentic-bi-ops'
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    # The single resolver for the internal state dir (new name + migration + fallback).
+    . (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
+    $dir = Get-AbiosStateDir -Root $Root
     $line = [pscustomobject]@{
         time     = (Get-Date).ToString('s')
         findings = $res.summary.findings

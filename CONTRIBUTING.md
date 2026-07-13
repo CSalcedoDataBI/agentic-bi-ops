@@ -68,9 +68,12 @@ New behavior needs a test. Side-effecting scripts expose a dot-source guard (e.g
 - **Commits & board content in English**, [Conventional Commits](https://www.conventionalcommits.org/)
   style (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`).
 - **PowerShell** for scripts; match the surrounding style.
-- **Don't rename internal state keys.** The `.agentic-bi-ops/` session dir, `~/.agentic-bi-ops/`
-  backups, and `ABIOS_*` env vars are on-disk identifiers on users' machines — renaming them
-  orphans live sessions and backups.
+- **Don't rename internal state keys casually.** The state dir and `ABIOS_*` env vars are on-disk
+  identifiers on users' machines — renaming them orphans live sessions and backups. The current
+  state dir is `.agentic-board/` (with `~/.agentic-board/backups`); the pre-rebrand `.agentic-bi-ops/`
+  is migrated transparently. Both are resolved through the single `Get-AbiosStateDir` helper —
+  never hard-code either literal elsewhere, and any future rename must go through that helper with
+  the same one-time migration + fallback.
 - Keep the `gh` remote a bare URL; auth flows through the token env var, never a PAT baked into the
   URL.
 
