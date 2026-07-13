@@ -830,6 +830,12 @@ Describe 'Get-FleetIssueFromCommandLine (issue-precise fingerprint)' {
     It 'does NOT match a keyword without digits (launch-server, not a fleet artifact)' {
         Get-FleetIssueFromCommandLine 'node C:\proj\launch-server.js' | Should -Be 0
     }
+    It 'does NOT over-match a non-generated launch filename (launch-42-test.ps1)' {
+        Get-FleetIssueFromCommandLine 'pwsh -File .\launch-42-test.ps1' | Should -Be 0
+    }
+    It 'does NOT over-match a bare issue-<n> outside a worktree path (reproducer script)' {
+        Get-FleetIssueFromCommandLine 'node tools/issue-123-reproducer.js' | Should -Be 0
+    }
     It 'is 0 for an empty command line' {
         Get-FleetIssueFromCommandLine '' | Should -Be 0
     }
@@ -864,21 +870,26 @@ Describe 'Find-FleetOrphansCore (escaped, cross-checked by PID AND issue)' {
 Describe 'Invoke-FleetReap (guard-safe orphan/fleet kill)' {
     BeforeAll {
         # 500 is self (guarded via ParentMap 500->1); 700 is an orphan whose subtree holds
-        # 750 - a LIVE registered session that must be protected via -Guard.
+        # 750 - a LIVE registered session that must be protected.
         $script:RMap  = @{ 500=1; 1=0; 700=600; 600=1; 750=700 }
         $script:Cands = @(
             [pscustomobject]@{ ProcessId=700; CommandLine='pwsh launch-5.ps1' }
             [pscustomobject]@{ ProcessId=500; CommandLine='pwsh launch-9.ps1' }   # self - must survive
         )
     }
+    # By default no live sessions in the fake registry (deterministic).
+    BeforeEach { Mock Read-SessionRegistry -MockWith { @() } }
+
     It 'plans a kill for the orphan and REFUSES the guarded self under -DryRun' {
         $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun
         ($r | Where-Object { $_.Pid -eq 700 }).Refused | Should -BeFalse
         ($r | Where-Object { $_.Pid -eq 500 }).Refused | Should -BeTrue
     }
-    It 'protects a LIVE registry session that lives inside a candidate subtree (-Guard)' {
-        # 750 (live) is a descendant of orphan 700; passing it as -Guard must veto the kill.
-        $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -Guard @(750) -ParentMap $script:RMap -DryRun
+    It 'FAIL-SAFE: protects a LIVE registry session in a candidate subtree even with NO -Guard' {
+        # 750 (live per the registry) is a descendant of orphan 700; the reaper folds live
+        # registry PIDs into the guard itself, so the kill is vetoed without any caller -Guard.
+        Mock Read-SessionRegistry -MockWith { @([pscustomobject]@{ sessionPid = 750; issue = 5 }) }
+        $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun
         ($r | Where-Object { $_.Pid -eq 700 }).Refused | Should -BeTrue
     }
     It 'reports one result per candidate' {

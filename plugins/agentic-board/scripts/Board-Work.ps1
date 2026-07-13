@@ -1442,7 +1442,13 @@ function Stop-ProcessTree {
 # `launch-server.js`). Returns 0 when the process is not a fleet artifact.
 function Get-FleetIssueFromCommandLine([string]$CommandLine) {
     if (-not $CommandLine) { return 0 }
-    if ($CommandLine -match '(?:launch-|briefing-|issue-)(\d+)') { return [int]$Matches[1] }
+    # Anchored to the EXACT generated artifacts so unrelated commands do not over-match:
+    #   launch-<n>.ps1  (the launcher)   briefing-<n>.txt  (the CLI's prompt file)
+    #   --worktrees\issue-<n>  (the grouped worktree path). e.g. `launch-42-test.ps1` or
+    #   `node tools/issue-123-reproducer.js` are NOT fleet artifacts and return 0.
+    if ($CommandLine -match 'launch-(\d+)\.ps1')            { return [int]$Matches[1] }
+    if ($CommandLine -match 'briefing-(\d+)\.txt')          { return [int]$Matches[1] }
+    if ($CommandLine -match '--worktrees[\\/]issue-(\d+)')  { return [int]$Matches[1] }
     return 0
 }
 
@@ -1480,10 +1486,16 @@ function Find-FleetOrphans {
 }
 
 # Tree-kill a set of fleet candidates, each through the fail-safe Stop-ProcessTree (self +
-# ancestors always excluded). The caller passes -Guard = the live registry session PIDs so
-# a legitimate live session inside a candidate's subtree is ALSO protected (taskkill /T
-# kills descendants). -DryRun plans without killing. Candidates/SelfPid/Guard/ParentMap are
-# injectable for unit tests; the live path builds them from the registry.
+# ancestors always excluded). FAIL-SAFE: the live registry session PIDs are ALWAYS folded
+# into the guard here (not just whatever the caller passes), so a legitimate live session
+# inside a candidate's subtree is protected even if the caller omits -Guard (taskkill /T
+# kills descendants). -DryRun plans without killing.
+#
+# RESIDUAL LIMITATION (wt): a `wt` launch registers the host/proxy PID, not the real spawned
+# pwsh. If that proxy dies while the tab still runs, the registry prunes the entry and its
+# issue leaves $liveIssues, so a still-live session could be listed as an orphan. The
+# backstop is the spec-mandated flow: -Reap DEFAULTS to a dry-run listing and requires human
+# confirmation before any forced kill (wired at the CLI in #198) - never an unattended sweep.
 function Invoke-FleetReap {
     param(
         [object[]]$Candidates,
@@ -1493,9 +1505,13 @@ function Invoke-FleetReap {
         [switch]$DryRun
     )
     if (-not $ParentMap) { try { $ParentMap = Get-ProcessParentMap } catch { $ParentMap = @{} } }
+    # Always protect every live registry session, regardless of the caller-supplied guard.
+    $liveGuard = @()
+    try { $liveGuard = @(Read-SessionRegistry | ForEach-Object { [int]$_.sessionPid }) } catch { }
+    $fullGuard = @(@($Guard) + $liveGuard) | Select-Object -Unique
     $results = @()
     foreach ($c in @($Candidates)) {
-        $results += Stop-ProcessTree -TargetPid ([int]$c.ProcessId) -Guard $Guard -SelfPid $SelfPid -ParentMap $ParentMap -DryRun:$DryRun
+        $results += Stop-ProcessTree -TargetPid ([int]$c.ProcessId) -Guard $fullGuard -SelfPid $SelfPid -ParentMap $ParentMap -DryRun:$DryRun
     }
     return $results
 }
