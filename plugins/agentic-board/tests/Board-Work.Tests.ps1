@@ -746,6 +746,73 @@ Describe 'Get-MachineCapacity (live wrapper wiring)' {
     }
 }
 
+Describe 'Get-LogTailLines (dashboard log tail)' {
+    BeforeAll {
+        $script:LogFile = Join-Path $TestDrive 'issue-7.log'
+        Set-Content -LiteralPath $script:LogFile -Value "l1`nl2`nl3`nl4`nl5" -Encoding UTF8
+    }
+    It 'returns the last N lines in order' {
+        Get-LogTailLines $script:LogFile 2 | Should -Be @('l4', 'l5')
+    }
+    It 'returns all lines when the file is shorter than N' {
+        (Get-LogTailLines $script:LogFile 99).Count | Should -Be 5
+    }
+    It 'returns an empty array for a missing file (no session log yet)' {
+        @(Get-LogTailLines (Join-Path $TestDrive 'nope.log') 3).Count | Should -Be 0
+    }
+    It 'drops trailing blank lines' {
+        $f = Join-Path $TestDrive 'trail.log'
+        Set-Content -LiteralPath $f -Value "a`nb`n`n`n" -Encoding UTF8
+        Get-LogTailLines $f 2 | Should -Be @('a', 'b')
+    }
+    It 'returns the single line intact when the tail is exactly one line ($start -eq $end slice)' {
+        $f = Join-Path $TestDrive 'one.log'
+        Set-Content -LiteralPath $f -Value "only" -Encoding UTF8
+        # PS unwraps a 1-element result on capture; an indexing caller wraps with @(...).
+        $r = @(Get-LogTailLines $f 3)
+        $r.Count | Should -Be 1
+        $r[0]    | Should -Be 'only'
+    }
+    It 'returns an empty array for a whitespace-only file' {
+        $f = Join-Path $TestDrive 'blank.log'
+        Set-Content -LiteralPath $f -Value "`n `n`n" -Encoding UTF8
+        @(Get-LogTailLines $f 3).Count | Should -Be 0
+    }
+}
+
+Describe 'Get-SessionMetrics (live PID CPU/RAM)' {
+    It 'reports RAM (MB) and CPU (s) for a live PID' {
+        Mock Get-Process -MockWith { [pscustomobject]@{ WorkingSet64 = 512MB; CPU = 12.4 } }
+        $m = Get-SessionMetrics 1234
+        $m.Alive | Should -BeTrue
+        $m.RamMB | Should -Be 512
+        $m.CpuSec | Should -Be 12
+    }
+    It 'reports not-alive for a dead PID' {
+        Mock Get-Process -MockWith { $null }
+        (Get-SessionMetrics 4321).Alive | Should -BeFalse
+    }
+}
+
+Describe 'Format-SessionMetric (dashboard cell)' {
+    It 'renders RAM + CPU for a live session' {
+        $s = Format-SessionMetric ([pscustomobject]@{ Alive=$true; RamMB=512; CpuSec=12 })
+        $s | Should -Match '512'
+        $s | Should -Match 'MB'
+        $s | Should -Match '12'
+    }
+    It 'renders a dead marker when the PID is gone' {
+        Format-SessionMetric ([pscustomobject]@{ Alive=$false }) | Should -Match 'muerto'
+    }
+}
+
+Describe 'Get-SessionLogPath (fleet log convention)' {
+    It 'points at logs/issue-<n>.log under the state dir' {
+        Mock Get-AbiosDir -MockWith { 'C:\repo\.agentic-board' }
+        Get-SessionLogPath 42 | Should -Be 'C:\repo\.agentic-board\logs\issue-42.log'
+    }
+}
+
 Describe 'non-claude adapters' {
     It 'gemini BuildLaunch uses -p and --approval-mode yolo --skip-trust' {
         $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
