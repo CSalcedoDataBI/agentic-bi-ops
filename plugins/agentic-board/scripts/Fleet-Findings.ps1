@@ -11,7 +11,7 @@
     (files touched, decisions, gotchas) before starting and never re-derives them.
 
     Like sessions.json, the store lives next to the MAIN clone's .git
-    (git rev-parse --git-common-dir) inside .agentic-bi-ops/fleet/findings.json, so
+    (git rev-parse --git-common-dir) inside .agentic-board/fleet/findings.json, so
     every worktree of the repo sees the same one. It is gitignored (state, not code).
 
     Entries are UPSERTED by issue: a second write for the same issue unions its arrays
@@ -83,6 +83,9 @@ param(
     [switch]$Json
 )
 $ErrorActionPreference = "Stop"
+
+# The single resolver for the internal state dir (new name + migration + fallback).
+. (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
 
 # ------------------------------------------------------------------ pure helpers
 # Split comma-joined tokens into a de-duplicated, trimmed array. Mirrors
@@ -194,13 +197,12 @@ function Select-FleetFindings {
 }
 
 # ------------------------------------------------------------- disk (side-effecting)
-# The blackboard path: .agentic-bi-ops/fleet/findings.json next to the MAIN clone's
+# The blackboard path: <state-dir>/fleet/findings.json next to the MAIN clone's
 # .git, shared across every worktree of the repo. Returns $null outside a git repo.
 function Get-FleetFindingsPath {
-    $common = git rev-parse --git-common-dir 2>$null
-    if (-not $common) { return $null }
-    try { $root = Split-Path (Resolve-Path $common).Path -Parent } catch { return $null }
-    $dir = Join-Path (Join-Path $root ".agentic-bi-ops") "fleet"
+    $state = Get-AbiosStateDir
+    if (-not $state) { return $null }
+    $dir = Join-Path $state "fleet"
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
     return (Join-Path $dir "findings.json")
 }

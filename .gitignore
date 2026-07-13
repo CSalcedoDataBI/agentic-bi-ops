@@ -9,7 +9,10 @@ Thumbs.db
 .abios/private-denylist.txt
 # internal dev scaffolding (kept local, not shipped in the public plugin)
 /docs/
-# board backups (may contain private board data) — never commit
+# internal per-repo state (sessions, briefings, handoffs, fleet) — never commit.
+# both names: .agentic-board/ is the current name, .agentic-bi-ops/ the pre-rebrand
+# one still present in repos until the one-time migration runs (Get-AbiosStateDir).
+.agentic-board/
 .agentic-bi-ops/
 **/.backups/
 *.items.json

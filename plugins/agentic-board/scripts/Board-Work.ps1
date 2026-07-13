@@ -75,7 +75,7 @@
 
 .PARAMETER Sessions
     Monitor mode: list the LIVE parallel-session fleet from
-    .agentic-bi-ops/sessions.json (branch, worktree, launch method, and the
+    .agentic-board/sessions.json (branch, worktree, launch method, and the
     PR opened for each branch). Dead-PID entries are pruned on read. Needs no
     -ProjectNum.
 
@@ -141,6 +141,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# The single resolver for the internal state dir (new name + migration + fallback).
+. (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
+
 # NOTE: the GH_TOKEN check lives in the main-entry guard below (after every function
 # is defined) so the pure helpers can be dot-sourced for unit tests without a token
 # and without side effects (set $env:ABIOS_BOARDWORK_DOTSOURCE=1 before dot-sourcing).
@@ -153,20 +156,11 @@ function Test-Pending($item) {
 }
 
 # -- Local session registry (multi-session awareness) ---------------------------
-# Shared across worktrees of the same repo: it lives next to the MAIN clone's .git
-# (git rev-parse --git-common-dir), inside .agentic-bi-ops/ (gitignored).
+# Shared across worktrees of the same repo: the state dir lives next to the MAIN
+# clone's .git (git rev-parse --git-common-dir) so every worktree sees the same one.
 # Session identity = the PARENT process of this script (the long-lived Claude/host
 # process), because the script's own PID dies as soon as it returns.
-# The shared .agentic-bi-ops/ dir (registry + briefings) lives next to the MAIN
-# clone's .git so every worktree of the repo sees the same one.
-function Get-AbiosDir {
-    $common = git rev-parse --git-common-dir 2>$null
-    if (-not $common) { return $null }
-    try { $root = Split-Path (Resolve-Path $common).Path -Parent } catch { return $null }
-    $dir = Join-Path $root ".agentic-bi-ops"
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
-    return $dir
-}
+function Get-AbiosDir { Get-AbiosStateDir }
 
 function Get-SessionRegistryPath {
     $dir = Get-AbiosDir
@@ -611,7 +605,7 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
         }
         if ($result.workPath) {
             Write-SessionRegistryEntry -IssueNum $IssueNum -Branch $branchName -WorkPath $result.workPath -Repo $repo
-            Write-Host "  OK  Sesion registrada en .agentic-bi-ops/sessions.json" -ForegroundColor Green
+            Write-Host "  OK  Sesion registrada en .agentic-board/sessions.json" -ForegroundColor Green
         }
     }
 
@@ -834,7 +828,7 @@ function Show-SessionFleet {
     Write-Host "=== Flota de sesiones activas (esta maquina) ===" -ForegroundColor Cyan
     Write-Host ""
     if ($sessions.Count -eq 0) {
-        Write-Host "No hay sesiones vivas registradas en .agentic-bi-ops/sessions.json." -ForegroundColor DarkGray
+        Write-Host "No hay sesiones vivas registradas en .agentic-board/sessions.json." -ForegroundColor DarkGray
         return
     }
     foreach ($s in ($sessions | Sort-Object issue)) {

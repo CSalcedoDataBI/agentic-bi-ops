@@ -6,7 +6,7 @@ default — a hook that runs on every stop is noisy, so you turn it on deliberat
 ## What it does
 
 On each Claude stop it runs a fast static audit of the current repo's **project** skills.
-If there are findings it appends ONE line to `.agentic-bi-ops/skill-suggestions.jsonl`
+If there are findings it appends ONE line to `.agentic-board/skill-suggestions.jsonl`
 (gitignored, local) and prints a one-line nudge:
 
 ```
@@ -43,7 +43,7 @@ Add to `.claude/settings.json` (project) or `~/.claude/settings.json` (global):
 Drop `-Quiet` to also print the nudge line. Review the breadcrumbs anytime:
 
 ```powershell
-Get-Content .agentic-bi-ops/skill-suggestions.jsonl | ForEach-Object { $_ | ConvertFrom-Json }
+Get-Content .agentic-board/skill-suggestions.jsonl | ForEach-Object { $_ | ConvertFrom-Json }
 ```
 
 ## Disable it

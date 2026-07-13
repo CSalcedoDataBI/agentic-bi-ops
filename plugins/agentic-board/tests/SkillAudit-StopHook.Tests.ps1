@@ -23,7 +23,7 @@ AfterAll {
 Describe 'SkillAudit-StopHook' {
     It 'appends a suggestion line when there are findings' {
         & $script:Hook -Root $script:Root -Quiet
-        $file = Join-Path $script:Root '.agentic-bi-ops/skill-suggestions.jsonl'
+        $file = Join-Path $script:Root '.agentic-board/skill-suggestions.jsonl'
         Test-Path $file | Should -BeTrue
         $last = (Get-Content $file | Select-Object -Last 1) | ConvertFrom-Json
         $last.findings | Should -BeGreaterThan 0
@@ -35,7 +35,7 @@ Describe 'SkillAudit-StopHook' {
         New-Item -ItemType Directory -Path $empty -Force | Out-Null
         { & $script:Hook -Root $empty -Quiet } | Should -Not -Throw
         # No findings → no suggestions file written.
-        Test-Path (Join-Path $empty '.agentic-bi-ops/skill-suggestions.jsonl') | Should -BeFalse
+        Test-Path (Join-Path $empty '.agentic-board/skill-suggestions.jsonl') | Should -BeFalse
         Remove-Item $empty -Recurse -Force
     }
 }

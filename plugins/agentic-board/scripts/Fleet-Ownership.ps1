@@ -6,7 +6,7 @@
 .DESCRIPTION
     Parallel worktrees can edit the same files and collide at merge time. This guard lets
     each fleet session DECLARE the paths it will own for its issue, into a shared registry
-    next to the MAIN clone's .git (.agentic-bi-ops/fleet/ownership.json, shared across
+    next to the MAIN clone's .git (.agentic-board/fleet/ownership.json, shared across
     worktrees), and warns when a new claim would OVERLAP paths another live session already
     owns. Overlap is boundary-aware: owning a directory ('scripts') conflicts with a file
     inside it ('scripts/Foo.ps1') but not with a look-alike sibling ('scriptsfoo/Bar.ps1').
@@ -62,6 +62,9 @@ param(
     [switch]$Json
 )
 $ErrorActionPreference = "Stop"
+
+# The single resolver for the internal state dir (new name + migration + fallback).
+. (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
 
 # ------------------------------------------------------------------ pure helpers
 # Normalize a path for comparison: forward slashes, no leading ./, no trailing /,
@@ -148,10 +151,9 @@ function Remove-DeadClaims {
 # ------------------------------------------------------------- disk (side-effecting)
 # ownership.json next to the MAIN clone's .git, shared across every worktree.
 function Get-FleetOwnershipPath {
-    $common = git rev-parse --git-common-dir 2>$null
-    if (-not $common) { return $null }
-    try { $root = Split-Path (Resolve-Path $common).Path -Parent } catch { return $null }
-    $dir = Join-Path (Join-Path $root ".agentic-bi-ops") "fleet"
+    $state = Get-AbiosStateDir
+    if (-not $state) { return $null }
+    $dir = Join-Path $state "fleet"
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
     return (Join-Path $dir "ownership.json")
 }

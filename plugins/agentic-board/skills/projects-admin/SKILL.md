@@ -186,7 +186,7 @@ Notes:
   last `[abios-claim]` fingerprint comment: hostname, PID, time, branch). `-TakeOver` retakes it
   deliberately and posts a TAKEOVER claim. GitHub is the lock — it works across machines too.
 - **Session registry**: every successful `-Start` records `{issue, branch, workPath, sessionPid,
-  host, started}` in `.agentic-bi-ops/sessions.json` next to the MAIN clone (shared across
+  host, started}` in `.agentic-board/sessions.json` next to the MAIN clone (shared across
   worktrees, gitignored). The pending list shows live local sessions; entries with dead PIDs are
   pruned automatically on read.
 - **Worktree mode**: when the working copy is busy (dirty tree or another `issue-*` branch),
@@ -212,7 +212,7 @@ them instead of one-by-one (each still finishes through the same step 5):
 - **Only for INDEPENDENT issues.** Never parallelize a chain where one depends on another's
   merge — run those sequentially. The user picks which issues are safe to run together.
 - **Each spawned session finishes through step 5** (PR `Closes #<num>` → review gate → merge).
-  The briefing is written to `.agentic-bi-ops/briefing-<n>.txt` and read by the session, so no
+  The briefing is written to `.agentic-board/briefing-<n>.txt` and read by the session, so no
   long prompt ever hits the command line.
 - **Requires Windows Terminal (`wt`)** for grouped tabs; without it each session opens in its own
   `pwsh` window (still works). Windows-only launcher.

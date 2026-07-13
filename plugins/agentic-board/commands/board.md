@@ -66,7 +66,7 @@ matching recipe from the projects-admin references:
      `/board fill` before they can be started. Items labeled `blocked` appear as `[BLOCKED]`
      and cannot be started; `-Start` also refuses them (and issues with open native blocked-by
      dependencies) with the blocker listed — `-IgnoreBlocked` overrides a false positive.
-     The list also shows LIVE local sessions from `.agentic-bi-ops/sessions.json` (who works
+     The list also shows LIVE local sessions from `.agentic-board/sessions.json` (who works
      what, where) — dead-PID entries are pruned automatically.
      **Multi-session lock:** `-Start` also refuses an issue already In Progress + assigned
      (another Claude session probably has it — the last `[abios-claim]` fingerprint comment is
@@ -210,7 +210,7 @@ matching recipe from the projects-admin references:
   - **save** — compose the curated, [V]/[?]-tagged content (next step / done / open threads /
     traps / key files) yourself, verifying each claim live, then run
     `scripts/Board-Handoff.ps1 -Save -NextStep "..." -Done "...","..." -Traps "..." -KeyFiles "..."`.
-    It autofills the frontmatter from git + `.agentic-bi-ops/sessions.json`, writes a gitignored
+    It autofills the frontmatter from git + `.agentic-board/sessions.json`, writes a gitignored
     `HANDOFF.md`, archives the previous one, upserts the durable `[abios-handoff]` comment on the
     linked issue, and drops a MEMORY.md pointer (opt-out `-NoMemo`). `-DryRun` previews.
   - **resume** — `scripts/Board-Handoff.ps1 -Resume` reads the latest `[abios-handoff]` comment

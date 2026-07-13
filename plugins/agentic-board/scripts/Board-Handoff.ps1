@@ -8,7 +8,7 @@
     already-tagged narrative (next step / done / open threads / traps / key files);
     this script does the mechanical + verifiable parts:
 
-      1. Autofills frontmatter from git + the active `.agentic-bi-ops/sessions.json`
+      1. Autofills frontmatter from git + the active `.agentic-board/sessions.json`
          entry + `gh` (issue, repo, branch, pr, board, saved, host).
       2. Injects a "Verified git state" block gathered live this run (all [V]).
       3. Computes the verified ratio ([V] claims / total tagged claims).
@@ -305,6 +305,9 @@ if ($env:ABIOS_HANDOFF_DOTSOURCE) { return }
 
 $ErrorActionPreference = "Stop"
 
+# The single resolver for the internal state dir (new name + migration + fallback).
+. (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
+
 if ($Save -and $Resume) { throw "Pass either -Save or -Resume, not both." }
 if (-not ($Save -or $Resume)) { throw "Pass an action: -Save (snapshot) or -Resume (rehydrate)." }
 
@@ -322,12 +325,11 @@ if (-not $Owner) { $Owner = ($Repo -split "/")[0] }
 $branch = (git branch --show-current 2>$null)
 if (-not $branch) { $branch = "(detached)" }
 
-# -- Session registry lookup (shared .agentic-bi-ops/ next to the main clone) ---
+# -- Session registry lookup (shared state dir next to the main clone) ----------
 function Get-AbiosSessionsPath {
-    $common = git rev-parse --git-common-dir 2>$null
-    if (-not $common) { return $null }
-    try { $root = Split-Path (Resolve-Path $common).Path -Parent } catch { return $null }
-    return (Join-Path (Join-Path $root ".agentic-bi-ops") "sessions.json")
+    $dir = Get-AbiosStateDir -NoCreate
+    if (-not $dir) { return $null }
+    return (Join-Path $dir "sessions.json")
 }
 $session = $null
 $sp = Get-AbiosSessionsPath

@@ -7,7 +7,7 @@
     Today the human types the issue numbers for `/board work -Parallel`. This planner reads
     the PENDING issues of a board, resolves their blocked-by dependencies into ordered
     WAVES, and routes each issue to the best available CLI by capability (labels / type /
-    size). It EMITS the assignment map (prints it + writes .agentic-bi-ops/fleet/plan.json
+    size). It EMITS the assignment map (prints it + writes .agentic-board/fleet/plan.json
     + prints the suggested -Parallel command per wave) - it never launches anything. Driving
     the fleet stays the human's call (or a future -Launch flag).
 
@@ -47,6 +47,9 @@ param(
     [string]$TokenVar = "GITHUB_TOKEN_PERSONAL"
 )
 $ErrorActionPreference = "Stop"
+
+# The single resolver for the internal state dir (new name + migration + fallback).
+. (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
 
 # ------------------------------------------------------------------ pure planner core
 function Split-CsvArg {
@@ -214,10 +217,9 @@ query(`$o:String!, `$n:Int!) {
 }
 
 function Get-FleetPlanPath {
-    $common = git rev-parse --git-common-dir 2>$null
-    if (-not $common) { return $null }
-    try { $root = Split-Path (Resolve-Path $common).Path -Parent } catch { return $null }
-    $dir = Join-Path (Join-Path $root ".agentic-bi-ops") "fleet"
+    $state = Get-AbiosStateDir
+    if (-not $state) { return $null }
+    $dir = Join-Path $state "fleet"
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
     return (Join-Path $dir "plan.json")
 }
