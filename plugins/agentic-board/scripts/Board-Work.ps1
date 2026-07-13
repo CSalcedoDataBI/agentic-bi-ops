@@ -1680,6 +1680,16 @@ function Get-SessionLiveStatus {
     return Get-SessionCompletion -PrState $prState -IssueState $issueState -PidAlive $pidAlive
 }
 
+# Raw registry read WITHOUT the dead-PID pruning that Read-SessionRegistry does. The watch
+# loop must use this: a dead host PID is a COMPLETION signal (#135), so pruning it before the
+# loop sees it would drop the session before -AutoClean could remove its worktree/branch
+# (Codex review, PR #269). Returns @() when the registry is absent/unreadable.
+function Read-SessionRegistryRaw {
+    $p = Get-SessionRegistryPath
+    if (-not $p -or -not (Test-Path $p)) { return @() }
+    try { return @(Get-Content $p -Raw | ConvertFrom-Json) } catch { return @() }
+}
+
 # Remove one issue's entry from sessions.json (raw read, so a dead-PID pruning pass does
 # not interfere). No-op when the registry is absent. Used by auto-clean.
 function Remove-SessionRegistryEntry {
@@ -1704,9 +1714,21 @@ function Invoke-SessionCleanup {
         $actions += "kill PID $($Session.sessionPid) (libera el handle del worktree)"
         if (-not $DryRun) { Stop-ProcessTree -TargetPid ([int]$Session.sessionPid) | Out-Null }
     }
+    # Removing the worktree is the step that can genuinely fail (a held handle - see the
+    # tab-shell gotcha). Success = the path is gone afterwards. Only when it is do we delete
+    # the branch and prune the registry; otherwise keep BOTH so the leftover is still tracked
+    # and a later run can retry (Codex review, PR #269 - never drop tracking on a failed teardown).
+    $worktreeGone = $true
     if ($Session.workPath) {
         $actions += "git worktree remove --force $($Session.workPath)"
-        if (-not $DryRun) { git worktree remove --force $Session.workPath 2>&1 | Out-Null }
+        if (-not $DryRun) {
+            git worktree remove --force $Session.workPath 2>&1 | Out-Null
+            $worktreeGone = -not (Test-Path $Session.workPath)
+        }
+    }
+    if (-not $worktreeGone) {
+        $actions += "FAIL el worktree sigue presente (handle abierto?) - conservo la rama y el registro de #$($Session.issue) para reintentar"
+        return $actions
     }
     if ($Session.branch) {
         $actions += "git branch -D $($Session.branch)"
@@ -1728,7 +1750,7 @@ function Invoke-SessionWatch {
         [switch]$AutoClean,
         [switch]$DryRun,
         [scriptblock]$GetStatus = { param($s) Get-SessionLiveStatus $s },
-        [scriptblock]$ReadSessions = { Read-SessionRegistry },
+        [scriptblock]$ReadSessions = { Read-SessionRegistryRaw },
         [scriptblock]$Now = { Get-Date },
         [scriptblock]$Sleep = { param($sec) Start-Sleep -Seconds $sec }
     )

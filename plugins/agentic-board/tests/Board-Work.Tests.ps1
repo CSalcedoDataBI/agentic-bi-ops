@@ -1189,6 +1189,19 @@ Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
         ($acts -join ' ') | Should -Not -Match 'kill PID'
         ($acts -join ' ') | Should -Match 'prune #5'
     }
+
+    It 'keeps the branch + registry when the worktree removal fails (Codex #269 fix)' {
+        # A real dir that is NOT a git worktree: `git worktree remove` fails and the path
+        # survives -> the cleanup must NOT delete the branch or prune the registry.
+        $stuck = Join-Path $TestDrive 'stuck-worktree'
+        New-Item -ItemType Directory -Path $stuck | Out-Null
+        Mock Remove-SessionRegistryEntry { throw 'must not prune on a failed teardown' }
+        $s = [pscustomobject]@{ issue = 3; branch = 'issue-3-z'; workPath = $stuck; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s)   # NOT -DryRun
+        ($acts -join ' ') | Should -Match 'FAIL'
+        ($acts -join ' ') | Should -Not -Match 'branch -D'
+        Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
+    }
 }
 
 Describe 'Remove-SessionRegistryEntry (prune one issue, #135)' {
@@ -1207,6 +1220,23 @@ Describe 'Remove-SessionRegistryEntry (prune one issue, #135)' {
     It 'is a no-op when the registry file is absent' {
         Mock Get-SessionRegistryPath { Join-Path $TestDrive 'missing.json' }
         { Remove-SessionRegistryEntry -IssueNum 1 } | Should -Not -Throw
+    }
+}
+
+Describe 'Read-SessionRegistryRaw (no dead-PID pruning, #135 / Codex #269)' {
+    It 'returns entries verbatim WITHOUT pruning a dead PID (so the watcher can classify it done)' {
+        $tmp = Join-Path $TestDrive 'raw-sessions.json'
+        # PID 999999 is not a live process -> the live reader would prune it; raw keeps it.
+        @([pscustomobject]@{ issue = 8; branch = 'issue-8-x'; sessionPid = 999999 }) |
+            ConvertTo-Json -Depth 4 -AsArray | Set-Content $tmp
+        Mock Get-SessionRegistryPath { $tmp }
+        $raw = @(Read-SessionRegistryRaw)
+        $raw.Count | Should -Be 1
+        [int]$raw[0].issue | Should -Be 8
+    }
+    It 'returns an empty array when the registry is absent' {
+        Mock Get-SessionRegistryPath { Join-Path $TestDrive 'nope.json' }
+        @(Read-SessionRegistryRaw).Count | Should -Be 0
     }
 }
 
