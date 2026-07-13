@@ -1,5 +1,21 @@
 # Changelog
 
+
+## [0.19.0] - 2026-07-13
+### Added
+- **ci: docs-freshness gate - regenerate + git diff --exit-code (blocks a stale README)** (#203)
+- **docs: Update-Docs.ps1 generator - command catalog from frontmatter + version into README markers** (#202)
+- **fleet: extend -Sessions dashboard (cli + PID CPU/RAM + log tail)** (#195)
+- **fleet: Find-FleetOrphans + Invoke-FleetReap (-Reap / -KillAll)** (#197)
+- **fleet: Get-DispatchPlan (wave size from capacity + concurrency cap)** (#193)
+- **fleet: Get-MachineCapacity (CPU LoadPercentage + free RAM + cores)** (#192)
+- **fleet: Get-SessionGuardSet + Stop-ProcessTree (tree kill, self-exclusion)** (#196)
+- **fleet: Invoke-FleetDispatch governor loop (launch in waves)** (#194)
+- **fleet: launch-time session marker (ABIOS_FLEET_SESSION) for reaper fingerprinting** (#191)
+- **fleet: wire -Stop/-Relaunch/-Reap/-KillAll/-MaxConcurrent + session log redirection** (#198)
+- **plan: board fleet - Phase 2 (coordinator + task reaper)** (#190)
+- **plan: engineering hardening & DX** (#200)
+
 ## [Unreleased]
 
 ## [0.18.0] - 2026-07-13
