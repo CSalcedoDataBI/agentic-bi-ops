@@ -1324,6 +1324,118 @@ function Invoke-FleetDispatch {
 }
 
 # ==============================================================================
+# Kill layer (Phase 2 task reaper foundation). Every kill path is guarded by
+# Get-SessionGuardSet (this session's PID + ancestor chain) so the tool can never
+# terminate itself, its terminal host, or the Claude host above it. Fleet sessions
+# are (re)parented DESCENDANTS -> not in the guard set -> stay killable.
+# ==============================================================================
+
+# Walk ParentProcessId from a start PID to the root over a pid->parentPid map. PURE ->
+# unit-testable. Returns start + ancestors, and is cycle-safe (a $seen set stops a loop).
+function Get-AncestorChain([int]$StartPid, [hashtable]$ParentMap) {
+    $chain = @()
+    $seen  = @{}
+    $cur   = $StartPid
+    while ($cur -and $cur -gt 0 -and -not $seen.ContainsKey($cur)) {
+        $chain += $cur
+        $seen[$cur] = $true
+        $cur = if ($ParentMap.ContainsKey($cur)) { [int]$ParentMap[$cur] } else { 0 }
+    }
+    return @($chain)
+}
+
+# Live pid->parentPid map from CIM. Thin (one reading) -> mocked in tests. PIDs are cast
+# to [long] (they are unsigned 32-bit) so a value above [int]::MaxValue cannot throw during
+# map construction and silently drop entries from the guard.
+function Get-ProcessParentMap {
+    $map = @{}
+    foreach ($p in @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)) {
+        $map[[long]$p.ProcessId] = [long]$p.ParentProcessId
+    }
+    return $map
+}
+
+# Every transitive child of a root PID over a pid->parentPid map. PURE, cycle-safe. Used
+# to veto a tree-kill whose subtree (taskkill /T kills descendants) contains a guarded PID.
+function Get-DescendantPids([long]$RootPid, [hashtable]$ParentMap) {
+    $children = @{}
+    foreach ($k in $ParentMap.Keys) {
+        $parent = [long]$ParentMap[$k]
+        if (-not $children.ContainsKey($parent)) { $children[$parent] = @() }
+        $children[$parent] += [long]$k
+    }
+    $result = @()
+    $seen   = @{}
+    $stack  = New-Object System.Collections.Stack
+    $stack.Push($RootPid)
+    while ($stack.Count -gt 0) {
+        $cur = $stack.Pop()
+        foreach ($c in @($children[$cur])) {
+            if ($c -and -not $seen.ContainsKey($c)) {
+                $seen[$c] = $true
+                $result += $c
+                $stack.Push($c)
+            }
+        }
+    }
+    return @($result)
+}
+
+# The never-kill set: the given session PID (default this process) + its ancestor chain.
+# ANCESTORS, not descendants: the fleet sessions are descendants and must stay killable,
+# but the coordinator + its hosts must never be a target. An injectable ParentMap keeps it
+# unit-testable; the default reads live CIM.
+function Get-SessionGuardSet([int]$SelfPid = $PID, [hashtable]$ParentMap) {
+    if (-not $ParentMap) { $ParentMap = Get-ProcessParentMap }
+    return @(Get-AncestorChain $SelfPid $ParentMap)
+}
+
+# Subtract the guard set from a target list. PURE -> unit-testable.
+function Remove-GuardedTargets([int[]]$Targets, [int[]]$Guard) {
+    return @($Targets | Where-Object { $Guard -notcontains $_ })
+}
+
+# Tree-deep force kill of a PID and every descendant via `taskkill /PID <id> /T /F` (the
+# reliable Windows tree-kill). SAFETY-CRITICAL and fail-safe:
+#  * the guard is ALWAYS computed from the live process tree (self + ancestors), never
+#    trusted from an omitted/partial caller arg - an extra -Guard only ADDS protection;
+#  * FAILS CLOSED: if the process map can't be built, it refuses (can't verify safety);
+#  * checks the whole TARGET SUBTREE (taskkill /T kills descendants) against the guard, so
+#    a kill whose tree contains the session/an ancestor is refused, not just the root.
+# -DryRun returns the plan without executing, so the decision path is fully unit-testable.
+function Stop-ProcessTree {
+    param(
+        [int]$TargetPid,
+        [int[]]$Guard = @(),
+        [int]$SelfPid = $PID,
+        [hashtable]$ParentMap,
+        [switch]$DryRun
+    )
+    if ($TargetPid -le 0) {
+        return [PSCustomObject]@{ Pid = $TargetPid; Refused = $true; Killed = $false; Reason = 'PID invalido' }
+    }
+    if (-not $ParentMap) { try { $ParentMap = Get-ProcessParentMap } catch { $ParentMap = @{} } }
+    if (-not $ParentMap -or $ParentMap.Count -eq 0) {
+        return [PSCustomObject]@{ Pid = $TargetPid; Refused = $true; Killed = $false; Reason = 'sin mapa de procesos - fail-closed' }
+    }
+    # Full guard = live self+ancestors (always) UNION any caller-supplied protected PIDs.
+    $fullGuard = @(@(Get-AncestorChain $SelfPid $ParentMap) + @($Guard)) | Select-Object -Unique
+    # taskkill /T kills the whole subtree -> a guarded PID ANYWHERE in the target's tree
+    # (root or descendant) must veto the kill, not only the root.
+    $subtree = @($TargetPid) + @(Get-DescendantPids $TargetPid $ParentMap)
+    $blocked = @($subtree | Where-Object { $fullGuard -contains $_ })
+    if ($blocked.Count -gt 0) {
+        return [PSCustomObject]@{ Pid = $TargetPid; Refused = $true; Killed = $false; Reason = ("el arbol incluye PID(s) protegido(s): {0}" -f ($blocked -join ',')) }
+    }
+    $cmd = "taskkill /PID $TargetPid /T /F"
+    if ($DryRun) {
+        return [PSCustomObject]@{ Pid = $TargetPid; Refused = $false; Killed = $false; DryRun = $true; Command = $cmd }
+    }
+    & taskkill /PID $TargetPid /T /F 2>&1 | Out-Null
+    return [PSCustomObject]@{ Pid = $TargetPid; Refused = $false; Killed = ($LASTEXITCODE -eq 0); Command = $cmd }
+}
+
+# ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
 # calls, no side effects - so the pure helpers can be unit-tested in isolation.

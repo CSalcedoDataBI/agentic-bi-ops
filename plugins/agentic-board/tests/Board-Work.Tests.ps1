@@ -730,6 +730,90 @@ Describe 'Invoke-FleetDispatch (governor loop)' {
     }
 }
 
+Describe 'Get-AncestorChain (self + ancestors, cycle-safe)' {
+    It 'walks ParentProcessId from the start PID up to the root' {
+        Get-AncestorChain 100 @{ 100=50; 50=10; 10=0 } | Should -Be @(100, 50, 10)
+    }
+    It 'includes the start PID itself (it is guarded too)' {
+        (Get-AncestorChain 7 @{ 7=0 })[0] | Should -Be 7
+    }
+    It 'stops on a cycle instead of looping forever' {
+        Get-AncestorChain 5 @{ 5=6; 6=5 } | Should -Be @(5, 6)
+    }
+    It 'returns just the start PID when it has no known parent' {
+        Get-AncestorChain 42 @{} | Should -Be @(42)
+    }
+}
+
+Describe 'Get-SessionGuardSet (never-kill set)' {
+    It 'is the current PID plus its ancestor chain' {
+        Mock Get-ProcessParentMap -MockWith { @{ 200=100; 100=1; 1=0 } }
+        $g = Get-SessionGuardSet 200
+        $g | Should -Contain 200
+        $g | Should -Contain 100
+        $g | Should -Contain 1
+    }
+}
+
+Describe 'Remove-GuardedTargets (subtract the guard set)' {
+    It 'drops any target that is in the guard set' {
+        Remove-GuardedTargets @(1,2,3,4) @(2,4) | Should -Be @(1,3)
+    }
+    It 'returns an empty array when every target is guarded' {
+        @(Remove-GuardedTargets @(5,6) @(5,6,7)).Count | Should -Be 0
+    }
+    It 'passes everything through when the guard set is empty' {
+        Remove-GuardedTargets @(1,2) @() | Should -Be @(1,2)
+    }
+}
+
+Describe 'Get-DescendantPids (subtree, cycle-safe)' {
+    It 'returns every transitive child of the root' {
+        (Get-DescendantPids 10 @{ 20=10; 30=20; 40=10 } | Sort-Object) | Should -Be @(20, 30, 40)
+    }
+    It 'returns only the direct+indirect children of the given node' {
+        Get-DescendantPids 20 @{ 20=10; 30=20; 40=10 } | Should -Be @(30)
+    }
+    It 'returns empty for a leaf' {
+        @(Get-DescendantPids 40 @{ 20=10; 40=10 }).Count | Should -Be 0
+    }
+    It 'does not loop on a cycle' {
+        { Get-DescendantPids 1 @{ 1=2; 2=1 } } | Should -Not -Throw
+    }
+}
+
+Describe 'Stop-ProcessTree (tree kill, fail-safe self-exclusion)' {
+    # A tiny process tree: 500 is self; its ancestor chain is 500->300->1. 700 is an
+    # unrelated fleet descendant (child of 600). 900 is 700's child.
+    BeforeAll {
+        $script:PMap = @{ 500=300; 300=1; 1=0; 600=1; 700=600; 900=700 }
+    }
+    It 'REFUSES to kill the current session PID (computed guard, not caller-supplied)' {
+        $r = Stop-ProcessTree -TargetPid 500 -SelfPid 500 -ParentMap $script:PMap -DryRun
+        $r.Refused | Should -BeTrue
+        $r.Killed  | Should -BeFalse
+    }
+    It 'REFUSES to kill an ancestor of the current session even with an empty -Guard' {
+        (Stop-ProcessTree -TargetPid 300 -SelfPid 500 -ParentMap $script:PMap -DryRun).Refused | Should -BeTrue
+    }
+    It 'REFUSES when the target SUBTREE contains a guarded PID (taskkill /T kills descendants)' {
+        # Kill 600 would tree-kill its child 700... but say 700 is in the caller guard.
+        $r = Stop-ProcessTree -TargetPid 600 -SelfPid 500 -ParentMap $script:PMap -Guard @(700) -DryRun
+        $r.Refused | Should -BeTrue
+    }
+    It 'PLANS a tree-deep force kill for a genuinely unrelated PID' {
+        $r = Stop-ProcessTree -TargetPid 700 -SelfPid 500 -ParentMap $script:PMap -DryRun
+        $r.Refused | Should -BeFalse
+        $r.Command | Should -Match 'taskkill /PID 700 /T /F'
+    }
+    It 'FAILS CLOSED when the process map cannot be built (no guard can be verified)' {
+        (Stop-ProcessTree -TargetPid 700 -SelfPid 500 -ParentMap @{} -DryRun).Refused | Should -BeTrue
+    }
+    It 'refuses a non-positive PID' {
+        (Stop-ProcessTree -TargetPid 0 -ParentMap $script:PMap -DryRun).Refused | Should -BeTrue
+    }
+}
+
 Describe 'Get-MachineCapacity (live wrapper wiring)' {
     It 'wires the CIM readings into the pure core' {
         Mock Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Processor' } -MockWith {
