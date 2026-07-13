@@ -97,6 +97,18 @@ Describe 'Format-CatalogTable' {
     }
 }
 
+Describe 'Get-DominantNewline' {
+    It 'returns CRLF when the text contains a CRLF' {
+        Get-DominantNewline -Text "a`r`nb" | Should -Be "`r`n"
+    }
+    It 'returns LF for LF-only text' {
+        Get-DominantNewline -Text "a`nb" | Should -Be "`n"
+    }
+    It 'returns LF for text with no newline at all' {
+        Get-DominantNewline -Text 'single line' | Should -Be "`n"
+    }
+}
+
 Describe 'Get-PluginVersion' {
     It 'extracts the version from minified plugin.json text' {
         Get-PluginVersion -Raw '{"name":"x","version":"0.18.0"}' | Should -Be '0.18.0'

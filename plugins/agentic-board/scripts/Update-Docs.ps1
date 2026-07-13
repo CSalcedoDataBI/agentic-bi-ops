@@ -96,6 +96,15 @@ function Format-CatalogTable {
     $lines -join "`n"
 }
 
+# The newline a file predominantly uses. A Windows working copy with autocrlf
+# checks README out as CRLF; emitting an LF-only generated region into it would
+# read back as "stale" on every -Check and rewrite the region needlessly. So the
+# generator matches the file's own newline. Pure -> testable.
+function Get-DominantNewline {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    if ($Text -match "`r`n") { "`r`n" } else { "`n" }
+}
+
 # Read the version out of a plugin.json's raw text (same regex the release
 # tooling uses). Pure -> testable.
 function Get-PluginVersion {
@@ -157,18 +166,24 @@ $readme    = [System.IO.File]::ReadAllText($ReadmePath)
 $pluginRaw = [System.IO.File]::ReadAllText($pluginJson)
 
 $catalog = Get-CommandCatalog -CommandsDir $commandsDir
-$table   = Format-CatalogTable -Rows $catalog
 $version = Get-PluginVersion -Raw $pluginRaw
 
-# Splice both marked regions. The command block sits on its own lines (blank line
+# Match the README's own newline so the generated region does not read back as
+# "stale" purely from CRLF-vs-LF (Format-CatalogTable emits LF).
+$nl              = Get-DominantNewline -Text $readme
+$table           = (Format-CatalogTable -Rows $catalog) -replace "`r?`n", $nl
+$commandsContent = "$nl$table$nl"
+$versionContent  = "v$version"
+
+# Splice both marked regions. The command block sits on its own lines (newline
 # padding); the version marker is inline, so its content is just the string.
-$updated = Set-MarkedRegion -Text $readme    -Name 'commands' -Content "`n$table`n"
-$updated = Set-MarkedRegion -Text $updated   -Name 'version'  -Content "v$version"
+$updated = Set-MarkedRegion -Text $readme  -Name 'commands' -Content $commandsContent
+$updated = Set-MarkedRegion -Text $updated -Name 'version'  -Content $versionContent
 
 # Which regions differ? Report per-region so the gate message is actionable.
 $stale = @()
-if ((Set-MarkedRegion -Text $readme -Name 'commands' -Content "`n$table`n") -ne $readme) { $stale += 'command catalog' }
-if ((Set-MarkedRegion -Text $readme -Name 'version'  -Content "v$version")  -ne $readme) { $stale += 'version' }
+if ((Set-MarkedRegion -Text $readme -Name 'commands' -Content $commandsContent) -ne $readme) { $stale += 'command catalog' }
+if ((Set-MarkedRegion -Text $readme -Name 'version'  -Content $versionContent)  -ne $readme) { $stale += 'version' }
 
 if ($Check) {
     Write-Host "=== Docs check  ($([System.IO.Path]::GetFileName($ReadmePath))) ===" -ForegroundColor Cyan

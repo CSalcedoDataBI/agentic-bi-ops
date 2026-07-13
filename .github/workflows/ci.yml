@@ -1,8 +1,10 @@
 name: CI
 
-# Runs the Pester test suite on every pull request. A failure here fails the
-# `test` check, which blocks the merge (Board-ReviewGate waits on it, and the
-# check can also be marked "Required" in the branch ruleset — see #201).
+# Two blocking checks on every pull request:
+#   * `test` — the Pester suite (a failure blocks the merge; Board-ReviewGate
+#     waits on it, and it can be marked "Required" in the branch ruleset, see #201).
+#   * `docs` — the docs-freshness gate (#203): regenerate the derived README
+#     regions from source and fail if they drift from what was committed.
 
 on:
   pull_request:
@@ -48,3 +50,25 @@ jobs:
           name: pester-results
           path: testResults.xml
           if-no-files-found: warn
+
+  docs:
+    name: Docs freshness
+    runs-on: ubuntu-latest   # all-LF checkout, no autocrlf: a clean byte-for-byte diff
+    steps:
+      - uses: actions/checkout@v4
+
+      # Regenerate the marked README regions (command catalog from frontmatter +
+      # version from plugin.json) from their sources, rewriting in place.
+      - name: Regenerate derived README regions
+        shell: pwsh
+        run: plugins/agentic-board/scripts/Update-Docs.ps1
+
+      # If regeneration changed anything, the committed README was stale: a command
+      # description or the version moved without the README being regenerated.
+      - name: Fail if the README drifted from its sources
+        run: |
+          if ! git diff --exit-code -- README.md; then
+            echo "::error::README is stale — a command description or the version changed without regenerating."
+            echo "Fix it locally: run 'plugins/agentic-board/scripts/Update-Docs.ps1' and commit README.md."
+            exit 1
+          fi
