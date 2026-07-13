@@ -1154,7 +1154,11 @@ function Get-DispatchPlan {
         [double]$PerSessionGB = 2.0,
         [int]$MaxConcurrent = 0
     )
-    $ramCap  = [int][math]::Floor($FreeRamGB / [math]::Max($PerSessionGB, 0.1))
+    # Clamp degenerate inputs so a corrupt reading can neither produce a negative
+    # ceiling nor (via a negative running count) INFLATE the free-slot math.
+    $Pending = [math]::Max($Pending, 0)
+    $Running = [math]::Max($Running, 0)
+    $ramCap  = [math]::Max([int][math]::Floor($FreeRamGB / [math]::Max($PerSessionGB, 0.1)), 0)
     $coreCap = [math]::Max($Cores - 2, 1)
     # Named caps so the binding constraint can be reported (monitor / log visibility).
     $caps = [ordered]@{ ram = $ramCap; cores = $coreCap }
@@ -1162,9 +1166,10 @@ function Get-DispatchPlan {
     $ceiling  = ($caps.Values | Measure-Object -Minimum).Minimum
     $capBound = ($caps.GetEnumerator() | Sort-Object Value | Select-Object -First 1).Key
     $freeSlots = [math]::Max($ceiling - $Running, 0)
-    $wave      = [math]::Min($freeSlots, [math]::Max($Pending, 0))
-    # Which constraint actually decided the wave, for the narrator.
-    $boundBy = if ($Pending -lt $freeSlots) { 'pending' } else { $capBound }
+    $wave      = [math]::Min($freeSlots, $Pending)
+    # Which constraint actually decided the wave, for the narrator. -le so an exhausted
+    # or empty queue (Pending <= freeSlots, incl. Pending 0) reads as 'pending', not a cap.
+    $boundBy = if ($Pending -le $freeSlots) { 'pending' } else { $capBound }
     # Never deadlock: if the queue has work and no session is live, launch one.
     if ($wave -le 0 -and $Running -le 0 -and $Pending -gt 0) {
         $wave = 1

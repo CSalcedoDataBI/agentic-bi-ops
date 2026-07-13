@@ -644,6 +644,23 @@ Describe 'Get-DispatchPlan (wave size from capacity + caps)' {
         $p = Get-DispatchPlan -FreeRamGB 100 -Cores 1 -Pending 5 -Running 0 -PerSessionGB 2
         $p.WaveSize | Should -Be 1
     }
+    It 'never exposes a negative ceiling on a corrupt (negative) RAM reading' {
+        $p = Get-DispatchPlan -FreeRamGB -1 -Cores 16 -Pending 0 -PerSessionGB 2
+        $p.RamCap      | Should -BeGreaterOrEqual 0
+        $p.Concurrency | Should -BeGreaterOrEqual 0
+        $p.WaveSize    | Should -Be 0
+    }
+    It 'labels an empty queue as pending-bound, not capacity-bound' {
+        $p = Get-DispatchPlan -FreeRamGB 100 -Cores 16 -Pending 0 -Running 14 -PerSessionGB 2
+        $p.WaveSize | Should -Be 0
+        $p.BoundBy  | Should -Be 'pending'
+    }
+    It 'does not let a negative running count inflate the wave past the ceiling' {
+        # ceiling = min(floor(100/2)=50, cores-2=14) = 14; a corrupt Running=-5 must NOT
+        # read as 19 free slots.
+        $p = Get-DispatchPlan -FreeRamGB 100 -Cores 16 -Pending 30 -Running -5 -PerSessionGB 2
+        $p.WaveSize | Should -Be 14
+    }
 }
 
 Describe 'Get-MachineCapacity (live wrapper wiring)' {
