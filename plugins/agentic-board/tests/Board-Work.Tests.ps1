@@ -814,6 +814,97 @@ Describe 'Stop-ProcessTree (tree kill, fail-safe self-exclusion)' {
     }
 }
 
+Describe 'Get-FleetIssueFromCommandLine (issue-precise fingerprint)' {
+    It 'parses the issue from a launch-<n>.ps1 launcher' {
+        Get-FleetIssueFromCommandLine 'pwsh -File C:\x\.agentic-board\launch-42.ps1' | Should -Be 42
+    }
+    It 'parses the issue from a briefing-<n>.txt read' {
+        Get-FleetIssueFromCommandLine 'node claude -p (Get-Content briefing-7.txt)' | Should -Be 7
+    }
+    It 'parses the issue from a --worktrees\issue-<n> path' {
+        Get-FleetIssueFromCommandLine 'C:\repo--worktrees\issue-13\...' | Should -Be 13
+    }
+    It 'returns 0 for an unrelated process' {
+        Get-FleetIssueFromCommandLine 'C:\Windows\explorer.exe' | Should -Be 0
+    }
+    It 'does NOT match a keyword without digits (launch-server, not a fleet artifact)' {
+        Get-FleetIssueFromCommandLine 'node C:\proj\launch-server.js' | Should -Be 0
+    }
+    It 'does NOT over-match a non-generated launch filename (launch-42-test.ps1)' {
+        Get-FleetIssueFromCommandLine 'pwsh -File .\launch-42-test.ps1' | Should -Be 0
+    }
+    It 'does NOT over-match a bare issue-<n> outside a worktree path (reproducer script)' {
+        Get-FleetIssueFromCommandLine 'node tools/issue-123-reproducer.js' | Should -Be 0
+    }
+    It 'is 0 for an empty command line' {
+        Get-FleetIssueFromCommandLine '' | Should -Be 0
+    }
+}
+
+Describe 'Find-FleetOrphansCore (escaped, cross-checked by PID AND issue)' {
+    BeforeAll {
+        $script:Procs = @(
+            [pscustomobject]@{ ProcessId=700; CommandLine='pwsh -File C:\wt\launch-5.ps1' }   # issue 5
+            [pscustomobject]@{ ProcessId=800; CommandLine='pwsh -File C:\wt\launch-6.ps1' }   # issue 6
+            [pscustomobject]@{ ProcessId=900; CommandLine='C:\Windows\notepad.exe' }           # not fleet
+        )
+    }
+    It 'returns fleet processes that are neither a live PID nor a live issue' {
+        $o = Find-FleetOrphansCore $script:Procs @() @(6)   # issue 6 live, 5 escaped
+        @($o).Count     | Should -Be 1
+        $o[0].ProcessId | Should -Be 700
+    }
+    It 'does NOT reap a live wt session whose issue is tracked under a different (host) PID' {
+        # 700 is the real spawned pwsh for issue 5; the registry tracked the host PID, not 700,
+        # but issue 5 IS a live session -> must be excluded by the issue cross-check.
+        @(Find-FleetOrphansCore $script:Procs @() @(5, 6)).ProcessId | Should -Not -Contain 700
+    }
+    It 'excludes a process whose exact PID is a live registry session' {
+        @(Find-FleetOrphansCore $script:Procs @(700) @()).ProcessId | Should -Not -Contain 700
+    }
+    It 'ignores non-fleet processes entirely' {
+        (Find-FleetOrphansCore $script:Procs @() @()).ProcessId | Should -Not -Contain 900
+    }
+}
+
+Describe 'Invoke-FleetReap (guard-safe orphan/fleet kill)' {
+    BeforeAll {
+        # 500 is self (guarded via ParentMap 500->1); 700 is an orphan whose subtree holds
+        # 750 - a LIVE registered session that must be protected.
+        $script:RMap  = @{ 500=1; 1=0; 700=600; 600=1; 750=700 }
+        $script:Cands = @(
+            [pscustomobject]@{ ProcessId=700; CommandLine='pwsh launch-5.ps1' }
+            [pscustomobject]@{ ProcessId=500; CommandLine='pwsh launch-9.ps1' }   # self - must survive
+        )
+    }
+    # By default no live sessions in the fake registry (deterministic).
+    BeforeEach { Mock Read-SessionRegistry -MockWith { @() } }
+
+    It 'plans a kill for the orphan and REFUSES the guarded self under -DryRun' {
+        $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun
+        ($r | Where-Object { $_.Pid -eq 700 }).Refused | Should -BeFalse
+        ($r | Where-Object { $_.Pid -eq 500 }).Refused | Should -BeTrue
+    }
+    It 'FAIL-SAFE: protects a LIVE registry session in a candidate subtree even with NO -Guard' {
+        # 750 (live per the registry) is a descendant of orphan 700; the reaper folds live
+        # registry PIDs into the guard itself, so the kill is vetoed without any caller -Guard.
+        Mock Read-SessionRegistry -MockWith { @([pscustomobject]@{ sessionPid = 750; issue = 5 }) }
+        $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun
+        ($r | Where-Object { $_.Pid -eq 700 }).Refused | Should -BeTrue
+    }
+    It 'reports one result per candidate' {
+        @(Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun).Count | Should -Be 2
+    }
+    It 'does nothing on an empty candidate set' {
+        @(Invoke-FleetReap -Candidates @() -SelfPid 500 -ParentMap $script:RMap -DryRun).Count | Should -Be 0
+    }
+    It 'FAILS CLOSED when the session registry cannot be read (refuses every candidate)' {
+        Mock Read-SessionRegistry -MockWith { throw 'registro corrupto' }
+        $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun
+        @($r | Where-Object { -not $_.Refused }).Count | Should -Be 0
+    }
+}
+
 Describe 'Get-MachineCapacity (live wrapper wiring)' {
     It 'wires the CIM readings into the pure core' {
         Mock Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Processor' } -MockWith {
