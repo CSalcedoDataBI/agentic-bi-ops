@@ -80,4 +80,27 @@ Describe 'Get-AbiosStateDir' {
             Test-Path $dir | Should -BeTrue                        # moving real state is always safe
         } finally { Remove-Item $root -Recurse -Force }
     }
+
+    It 'returns the NEW dir (not the vanished old one) when a concurrent session won the migration' {
+        # Race: two sessions see only .agentic-bi-ops; the other one renames it to
+        # .agentic-board first, so OUR Rename-Item throws. We must return the new dir,
+        # never the old path (which no longer exists) — else write callers resurrect a
+        # split brain. Simulate by making Rename-Item create the new dir and throw.
+        $root = New-TempRoot
+        try {
+            $old = Join-Path $root '.agentic-bi-ops'
+            $new = Join-Path $root '.agentic-board'
+            New-Item -ItemType Directory -Path $old -Force | Out-Null
+
+            Mock Rename-Item -MockWith {
+                New-Item -ItemType Directory -Path $new -Force | Out-Null  # the winner's rename
+                Remove-Item $old -Recurse -Force                          # old moved out from under us
+                throw 'target already exists'
+            }
+
+            $dir = Get-AbiosStateDir -Root $root
+            $dir | Should -Be $new
+            Test-Path $new | Should -BeTrue
+        } finally { Remove-Item $root -Recurse -Force }
+    }
 }

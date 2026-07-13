@@ -43,11 +43,18 @@ function Get-AbiosStateDir {
     $old = Join-Path $Root '.agentic-bi-ops'
 
     # One-time silent migration: old state exists, new doesn't -> move it in place.
-    # If the move fails (dir/file locked by a live session) keep using the old dir;
-    # a later call self-heals once the lock is gone. No state is ever lost.
+    # The rename can fail two ways, and they need opposite handling:
+    #   - a CONCURRENT session (parallel worktree fleet) already migrated it: $new
+    #     now exists and $old is gone -> use $new, or we'd resurrect a split brain.
+    #   - a real LOCK (a live session holds a file): $old is still there -> fall back
+    #     to it in place; a later call self-heals once the lock clears. No state lost.
     if ((Test-Path $old) -and -not (Test-Path $new)) {
         try { Rename-Item -LiteralPath $old -NewName '.agentic-board' -ErrorAction Stop }
-        catch { return $old }
+        catch {
+            if (Test-Path $new) { return $new }   # someone else won the migration
+            if (Test-Path $old) { return $old }   # genuine lock -> use old in place
+            # both gone (old moved out from under us) -> fall through, create $new
+        }
     }
 
     if (-not (Test-Path $new)) {
