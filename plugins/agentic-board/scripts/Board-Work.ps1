@@ -1435,68 +1435,67 @@ function Stop-ProcessTree {
     return [PSCustomObject]@{ Pid = $TargetPid; Refused = $false; Killed = ($LASTEXITCODE -eq 0); Command = $cmd }
 }
 
-# True when a process command line carries any fleet fingerprint (the strong
-# ABIOS_FLEET_SESSION marker, or a launch-/briefing-/worktree artifact substring).
-# PURE. Matched with -like in PowerShell, NOT WQL LIKE (which mangles '\').
-function Test-FleetFingerprint([string]$CommandLine, [string[]]$Fingerprints) {
-    if (-not $CommandLine) { return $false }
-    foreach ($fp in $Fingerprints) {
-        if ($fp -and ($CommandLine -like "*$fp*")) { return $true }
+# The fleet issue a process belongs to, parsed from its command line. PURE. Detection is
+# ISSUE-precise, not a broad substring: a launcher runs `...launch-<n>.ps1`, a CLI reads
+# `...briefing-<n>.txt`, and worktrees live under `...--worktrees\issue-<n>`. Requiring
+# DIGITS right after the artifact keyword avoids matching unrelated scripts (e.g.
+# `launch-server.js`). Returns 0 when the process is not a fleet artifact.
+function Get-FleetIssueFromCommandLine([string]$CommandLine) {
+    if (-not $CommandLine) { return 0 }
+    if ($CommandLine -match '(?:launch-|briefing-|issue-)(\d+)') { return [int]$Matches[1] }
+    return 0
+}
+
+# From a list of {ProcessId, CommandLine}, the ESCAPED fleet orphans. PURE. A process is a
+# fleet process when its command line carries a fleet issue artifact. It is an orphan
+# UNLESS (a) its PID is a live registry session, OR (b) its issue belongs to a live
+# session - the latter is essential for `wt` launches, where the registry tracks the host
+# PID (the real spawned pwsh PID is not registered) so PID-only matching would reap a LIVE
+# session. Returns the non-orphan-safe escaped processes.
+function Find-FleetOrphansCore([object[]]$Processes, [int[]]$LivePids, [int[]]$LiveIssues) {
+    $orphans = @()
+    foreach ($p in @($Processes)) {
+        $issue = Get-FleetIssueFromCommandLine $p.CommandLine
+        if ($issue -le 0) { continue }                             # not a fleet artifact
+        if ($LivePids   -contains [int]$p.ProcessId) { continue }  # tracked live PID
+        if ($LiveIssues -contains $issue)            { continue }  # a live session owns this issue (wt)
+        $orphans += $p
     }
-    return $false
+    return @($orphans)
 }
 
-# From a list of {ProcessId, CommandLine}, the fleet processes that are NOT a live
-# registry session PID = the escaped orphans. PURE -> unit-testable.
-function Find-FleetOrphansCore([object[]]$Processes, [int[]]$LivePids, [string[]]$Fingerprints) {
-    return @($Processes | Where-Object {
-        (Test-FleetFingerprint $_.CommandLine $Fingerprints) -and ($LivePids -notcontains [int]$_.ProcessId)
-    })
-}
-
-# The fingerprint substrings: generic launch artifacts (always) + the strong per-session
-# ABIOS_FLEET_SESSION markers from the registry. The bare per-session workPath is
-# DELIBERATELY NOT used: an in-place start records the MAIN clone path, which would match
-# the coordinator and any sibling tool running in the repo (false-positive orphans the
-# guard set does not protect). Real worktrees are already caught by the '--worktrees'
-# substring, and each spawned session carries the unambiguous launch-/briefing-/marker.
-function Get-FleetFingerprints {
-    $fps = @('--worktrees', 'briefing-', 'launch-')
-    foreach ($s in @(Read-SessionRegistry)) {
-        if ($s.fleetSession) { $fps += [string]$s.fleetSession }
-    }
-    return @($fps | Where-Object { $_ } | Select-Object -Unique)
-}
-
-# Live: fleet-fingerprinted processes whose PID is not a tracked live session. Queries
-# ONLY pwsh.exe (every session's launch-<n>.ps1 launcher) and node.exe (the CLIs -
-# claude/gemini/codex/copilot all run under node). Deliberately NOT 'claude.exe': that is
-# the Claude Desktop host app, whose renderers would be false-positive kill targets (and
-# are NOT in the guard set). Fingerprint matched in PowerShell -like (WQL LIKE mangles '\').
-# Thin -> the pure core is Find-FleetOrphansCore.
+# Live: escaped fleet processes. Queries ONLY pwsh.exe (every session's launch-<n>.ps1
+# launcher) and node.exe (the CLIs - claude/gemini/codex/copilot all run under node).
+# Deliberately NOT 'claude.exe': that is the Claude Desktop host app, whose renderers would
+# be false-positive kill targets (and are NOT in the guard set). Thin -> the pure core is
+# Find-FleetOrphansCore, cross-checking BOTH live PIDs and live issues.
 function Find-FleetOrphans {
     $filter = "Name='pwsh.exe' OR Name='node.exe'"
     $procs = @(Get-CimInstance -ClassName Win32_Process -Filter $filter -ErrorAction SilentlyContinue |
                Select-Object ProcessId, CommandLine)
-    $livePids = @(Read-SessionRegistry | ForEach-Object { [int]$_.sessionPid })
-    return Find-FleetOrphansCore $procs $livePids (Get-FleetFingerprints)
+    $live       = @(Read-SessionRegistry)
+    $livePids   = @($live | ForEach-Object { [int]$_.sessionPid })
+    $liveIssues = @($live | ForEach-Object { [int]$_.issue })
+    return Find-FleetOrphansCore $procs $livePids $liveIssues
 }
 
-# Tree-kill a set of fleet candidates, each through the fail-safe Stop-ProcessTree (so the
-# guard set - self + ancestors - is always excluded). -DryRun plans without killing.
-# Candidates/SelfPid/ParentMap are injectable so the orchestration is unit-testable; live
-# defaults come from Find-FleetOrphans (for -Reap) or the whole fleet (for -KillAll).
+# Tree-kill a set of fleet candidates, each through the fail-safe Stop-ProcessTree (self +
+# ancestors always excluded). The caller passes -Guard = the live registry session PIDs so
+# a legitimate live session inside a candidate's subtree is ALSO protected (taskkill /T
+# kills descendants). -DryRun plans without killing. Candidates/SelfPid/Guard/ParentMap are
+# injectable for unit tests; the live path builds them from the registry.
 function Invoke-FleetReap {
     param(
         [object[]]$Candidates,
         [int]$SelfPid = $PID,
+        [int[]]$Guard = @(),
         [hashtable]$ParentMap,
         [switch]$DryRun
     )
     if (-not $ParentMap) { try { $ParentMap = Get-ProcessParentMap } catch { $ParentMap = @{} } }
     $results = @()
     foreach ($c in @($Candidates)) {
-        $results += Stop-ProcessTree -TargetPid ([int]$c.ProcessId) -SelfPid $SelfPid -ParentMap $ParentMap -DryRun:$DryRun
+        $results += Stop-ProcessTree -TargetPid ([int]$c.ProcessId) -Guard $Guard -SelfPid $SelfPid -ParentMap $ParentMap -DryRun:$DryRun
     }
     return $results
 }

@@ -814,58 +814,58 @@ Describe 'Stop-ProcessTree (tree kill, fail-safe self-exclusion)' {
     }
 }
 
-Describe 'Test-FleetFingerprint (marker/artifact match)' {
-    It 'matches the strong ABIOS_FLEET_SESSION marker in a command line' {
-        Test-FleetFingerprint 'pwsh ... ABIOS_FLEET_SESSION=42-abc123 ...' @('42-abc123') | Should -BeTrue
+Describe 'Get-FleetIssueFromCommandLine (issue-precise fingerprint)' {
+    It 'parses the issue from a launch-<n>.ps1 launcher' {
+        Get-FleetIssueFromCommandLine 'pwsh -File C:\x\.agentic-board\launch-42.ps1' | Should -Be 42
     }
-    It 'matches a launch-/briefing- artifact substring' {
-        Test-FleetFingerprint 'pwsh -File C:\x\launch-42.ps1' @('launch-') | Should -BeTrue
+    It 'parses the issue from a briefing-<n>.txt read' {
+        Get-FleetIssueFromCommandLine 'node claude -p (Get-Content briefing-7.txt)' | Should -Be 7
     }
-    It 'does not match an unrelated process' {
-        Test-FleetFingerprint 'C:\Windows\explorer.exe' @('launch-', '42-abc123') | Should -BeFalse
+    It 'parses the issue from a --worktrees\issue-<n> path' {
+        Get-FleetIssueFromCommandLine 'C:\repo--worktrees\issue-13\...' | Should -Be 13
     }
-    It 'is false for an empty command line' {
-        Test-FleetFingerprint '' @('launch-') | Should -BeFalse
+    It 'returns 0 for an unrelated process' {
+        Get-FleetIssueFromCommandLine 'C:\Windows\explorer.exe' | Should -Be 0
+    }
+    It 'does NOT match a keyword without digits (launch-server, not a fleet artifact)' {
+        Get-FleetIssueFromCommandLine 'node C:\proj\launch-server.js' | Should -Be 0
+    }
+    It 'is 0 for an empty command line' {
+        Get-FleetIssueFromCommandLine '' | Should -Be 0
     }
 }
 
-Describe 'Find-FleetOrphansCore (fingerprinted but not a live registry PID)' {
+Describe 'Find-FleetOrphansCore (escaped, cross-checked by PID AND issue)' {
     BeforeAll {
         $script:Procs = @(
-            [pscustomobject]@{ ProcessId=700; CommandLine='pwsh -File C:\wt\launch-5.ps1' }   # fleet, orphan
-            [pscustomobject]@{ ProcessId=800; CommandLine='node C:\repo--worktrees\issue-6' }  # fleet, tracked
-            [pscustomobject]@{ ProcessId=900; CommandLine='C:\Windows\notepad.exe' }            # not fleet
+            [pscustomobject]@{ ProcessId=700; CommandLine='pwsh -File C:\wt\launch-5.ps1' }   # issue 5
+            [pscustomobject]@{ ProcessId=800; CommandLine='pwsh -File C:\wt\launch-6.ps1' }   # issue 6
+            [pscustomobject]@{ ProcessId=900; CommandLine='C:\Windows\notepad.exe' }           # not fleet
         )
     }
-    It 'returns fleet processes whose PID is NOT a live registry session' {
-        $o = Find-FleetOrphansCore $script:Procs @(800) @('launch-', '--worktrees')
-        @($o).Count            | Should -Be 1
-        $o[0].ProcessId        | Should -Be 700
+    It 'returns fleet processes that are neither a live PID nor a live issue' {
+        $o = Find-FleetOrphansCore $script:Procs @() @(6)   # issue 6 live, 5 escaped
+        @($o).Count     | Should -Be 1
+        $o[0].ProcessId | Should -Be 700
     }
-    It 'returns nothing when every fleet process is tracked' {
-        @(Find-FleetOrphansCore $script:Procs @(700, 800) @('launch-', '--worktrees')).Count | Should -Be 0
+    It 'does NOT reap a live wt session whose issue is tracked under a different (host) PID' {
+        # 700 is the real spawned pwsh for issue 5; the registry tracked the host PID, not 700,
+        # but issue 5 IS a live session -> must be excluded by the issue cross-check.
+        @(Find-FleetOrphansCore $script:Procs @() @(5, 6)).ProcessId | Should -Not -Contain 700
+    }
+    It 'excludes a process whose exact PID is a live registry session' {
+        @(Find-FleetOrphansCore $script:Procs @(700) @()).ProcessId | Should -Not -Contain 700
     }
     It 'ignores non-fleet processes entirely' {
-        (Find-FleetOrphansCore $script:Procs @() @('launch-', '--worktrees')).ProcessId | Should -Not -Contain 900
-    }
-}
-
-Describe 'Get-FleetFingerprints (no main-clone false positives)' {
-    It 'includes the strong marker but NOT the bare workPath (avoids matching the repo/coordinator)' {
-        Mock Read-SessionRegistry -MockWith {
-            @([pscustomobject]@{ issue=5; fleetSession='5-abc123'; workPath='C:\Users\me\Repos\agentic-bi-ops' })
-        }
-        $fps = Get-FleetFingerprints
-        $fps | Should -Contain '5-abc123'
-        $fps | Should -Contain 'launch-'
-        $fps | Should -Not -Contain 'C:\Users\me\Repos\agentic-bi-ops'
+        (Find-FleetOrphansCore $script:Procs @() @()).ProcessId | Should -Not -Contain 900
     }
 }
 
 Describe 'Invoke-FleetReap (guard-safe orphan/fleet kill)' {
     BeforeAll {
-        # 500 is self (guarded via ParentMap 500->1); 700 is a real orphan; nothing else.
-        $script:RMap = @{ 500=1; 1=0; 700=600; 600=1 }
+        # 500 is self (guarded via ParentMap 500->1); 700 is an orphan whose subtree holds
+        # 750 - a LIVE registered session that must be protected via -Guard.
+        $script:RMap  = @{ 500=1; 1=0; 700=600; 600=1; 750=700 }
         $script:Cands = @(
             [pscustomobject]@{ ProcessId=700; CommandLine='pwsh launch-5.ps1' }
             [pscustomobject]@{ ProcessId=500; CommandLine='pwsh launch-9.ps1' }   # self - must survive
@@ -875,6 +875,11 @@ Describe 'Invoke-FleetReap (guard-safe orphan/fleet kill)' {
         $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun
         ($r | Where-Object { $_.Pid -eq 700 }).Refused | Should -BeFalse
         ($r | Where-Object { $_.Pid -eq 500 }).Refused | Should -BeTrue
+    }
+    It 'protects a LIVE registry session that lives inside a candidate subtree (-Guard)' {
+        # 750 (live) is a descendant of orphan 700; passing it as -Guard must veto the kill.
+        $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -Guard @(750) -ParentMap $script:RMap -DryRun
+        ($r | Where-Object { $_.Pid -eq 700 }).Refused | Should -BeTrue
     }
     It 'reports one result per candidate' {
         @(Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun).Count | Should -Be 2
