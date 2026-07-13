@@ -663,6 +663,59 @@ Describe 'Get-DispatchPlan (wave size from capacity + caps)' {
     }
 }
 
+Describe 'Test-SlotFree (governor wait predicate)' {
+    It 'frees when a session finished (running dropped below the baseline)' {
+        Test-SlotFree 3 2 99 85 | Should -BeTrue
+    }
+    It 'frees when the CPU cooled below the threshold' {
+        Test-SlotFree 3 3 40 85 | Should -BeTrue
+    }
+    It 'keeps waiting when nothing finished and the CPU is still hot' {
+        Test-SlotFree 3 3 95 85 | Should -BeFalse
+    }
+}
+
+Describe 'Invoke-FleetDispatch (governor loop)' {
+    It 'launches the whole queue across waves paced by capacity' {
+        $script:running = 0
+        $launch = { param($item, $cli) $script:running++ ; 'ok' }
+        $r = Invoke-FleetDispatch -Queue @(
+                [pscustomobject]@{ issue=1; cli='claude' }, [pscustomobject]@{ issue=2; cli='claude' }
+                [pscustomobject]@{ issue=3; cli='claude' }, [pscustomobject]@{ issue=4; cli='claude' }
+                [pscustomobject]@{ issue=5; cli='claude' }
+             ) -PerSessionGB 2 -LaunchSession $launch `
+               -GetCapacity  { [pscustomobject]@{ FreeRamGB=100; Cores=4 } } `
+               -CountRunning { $script:running } `
+               -WaitForSlot  { $script:running = 0 }   # all sessions finish while we wait
+        @($r).Count | Should -Be 5
+        ($r.issue | Sort-Object) | Should -Be @(1,2,3,4,5)
+        # ceiling = min(floor(100/2)=50, cores-2=2) = 2 -> waves of 2, 2, 1
+        ($r | Group-Object wave | ForEach-Object Count) | Should -Be @(2,2,1)
+    }
+    It 'reroutes a known no-quota CLI to the claude fallback (runtime backoff)' {
+        $seen = @()
+        $launch = { param($item, $cli) $seen += $cli ; 'ok' }.GetNewClosure()
+        $r = Invoke-FleetDispatch -Queue @([pscustomobject]@{ issue=9; cli='gemini' }) `
+               -NoQuotaClis @{ gemini = $true } -LaunchSession $launch `
+               -GetCapacity  { [pscustomobject]@{ FreeRamGB=100; Cores=16 } } `
+               -CountRunning { 0 } -WaitForSlot { }
+        $r[0].cli | Should -Be 'claude'
+    }
+    It 'passes an available CLI through unchanged' {
+        $r = Invoke-FleetDispatch -Queue @([pscustomobject]@{ issue=9; cli='gemini' }) `
+               -LaunchSession { param($item,$cli) 'ok' } `
+               -GetCapacity  { [pscustomobject]@{ FreeRamGB=100; Cores=16 } } `
+               -CountRunning { 0 } -WaitForSlot { }
+        $r[0].cli | Should -Be 'gemini'
+    }
+    It 'requires a LaunchSession hook' {
+        { Invoke-FleetDispatch -Queue @([pscustomobject]@{ issue=1; cli='claude' }) } | Should -Throw
+    }
+    It 'does nothing on an empty queue' {
+        @(Invoke-FleetDispatch -Queue @() -LaunchSession { param($i,$c) 'ok' }).Count | Should -Be 0
+    }
+}
+
 Describe 'Get-MachineCapacity (live wrapper wiring)' {
     It 'wires the CIM readings into the pure core' {
         Mock Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Processor' } -MockWith {

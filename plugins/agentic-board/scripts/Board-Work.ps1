@@ -1185,6 +1185,77 @@ function Get-DispatchPlan {
     }
 }
 
+# A launch slot is free when a session has finished (fewer running than the baseline we
+# started waiting at) OR the CPU has cooled below the threshold. PURE -> unit-testable;
+# Wait-FleetSlot polls live state and calls this.
+function Test-SlotFree([int]$StartRunning, [int]$CurrentRunning, [int]$CpuLoad, [int]$CpuThreshold) {
+    return ($CurrentRunning -lt $StartRunning) -or ($CpuLoad -lt $CpuThreshold)
+}
+
+# Block until a launch slot frees or a timeout elapses. Side-effecting (reads the live
+# registry + capacity, sleeps) -> not unit-tested directly; its decision is Test-SlotFree.
+function Wait-FleetSlot {
+    param([int]$CpuThreshold = 85, [int]$TimeoutSec = 300, [int]$PollSec = 5)
+    $baseline = @(Read-SessionRegistry).Count
+    $waited = 0
+    while ($waited -lt $TimeoutSec) {
+        Start-Sleep -Seconds $PollSec
+        $waited += $PollSec
+        $cur = @(Read-SessionRegistry).Count
+        $cpu = (Get-MachineCapacity).CpuLoadPercent
+        if (Test-SlotFree $baseline $cur $cpu $CpuThreshold) { return }
+    }
+}
+
+# The governor loop. Never fires the whole batch at once: each iteration sizes a wave
+# from live capacity (Get-DispatchPlan), launches it, and - if work remains - blocks on
+# Wait-FleetSlot until a session dies or the CPU cools, then re-plans. A CLI known to be
+# out of quota is skipped for the rest of the run (its issue still launches, on claude).
+# The live operations are injected as hooks so the loop is unit-testable with fakes.
+function Invoke-FleetDispatch {
+    param(
+        [object[]]$Queue,                 # items with .issue and .cli (+ whatever LaunchSession needs)
+        [int]$MaxConcurrent = 0,
+        [double]$PerSessionGB = 2.0,
+        [int]$CpuThreshold = 85,
+        [hashtable]$NoQuotaClis = @{},
+        [scriptblock]$LaunchSession,      # & $LaunchSession $item $cli -> status (the real spawn + register)
+        [scriptblock]$GetCapacity  = { Get-MachineCapacity },
+        [scriptblock]$CountRunning = { @(Read-SessionRegistry).Count },
+        [scriptblock]$WaitForSlot  = { Wait-FleetSlot -CpuThreshold $CpuThreshold }
+    )
+    if (-not $LaunchSession) { throw "Invoke-FleetDispatch requires a -LaunchSession hook." }
+    $items = @($Queue)
+    $idx = 0
+    $waveNum = 0
+    $launched = @()
+    while ($idx -lt $items.Count) {
+        $cap  = & $GetCapacity
+        $run  = [int](& $CountRunning)
+        $plan = Get-DispatchPlan -FreeRamGB $cap.FreeRamGB -Cores $cap.Cores `
+                                 -Pending ($items.Count - $idx) -Running $run `
+                                 -PerSessionGB $PerSessionGB -MaxConcurrent $MaxConcurrent
+        if ($plan.WaveSize -le 0) {
+            # Ceiling full: wait for a slot to free, then re-plan (never a busy spin).
+            & $WaitForSlot | Out-Null
+            continue
+        }
+        $waveNum++
+        for ($k = 0; $k -lt $plan.WaveSize -and $idx -lt $items.Count; $k++, $idx++) {
+            $item = $items[$idx]
+            # Runtime backoff: a CLI known out of quota is skipped for the rest of the run;
+            # the issue still launches on the always-available claude fallback.
+            $cli = $item.cli
+            if ($cli -and $NoQuotaClis.ContainsKey($cli) -and $NoQuotaClis[$cli]) { $cli = 'claude' }
+            $status = & $LaunchSession $item $cli
+            $launched += [PSCustomObject]@{ issue = $item.issue; cli = $cli; wave = $waveNum; status = $status }
+        }
+        # Pace: if work remains, block until the next slot frees before the next wave.
+        if ($idx -lt $items.Count) { & $WaitForSlot | Out-Null }
+    }
+    return $launched
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
@@ -1505,28 +1576,35 @@ if ($Parallel.Count -gt 0) {
             # Pick a CLI per issue (interactive), then pair each worktree with its choice.
             $issueNums = @($started | ForEach-Object { $_.issue })
             $map       = Select-CliPerIssue -Issues $issueNums -Availability $availability
-            $fleetPlan = Build-FleetPlan -Started $started -CliMap $map
-            $launched  = 0
+            $fleetPlan = @(Build-FleetPlan -Started $started -CliMap $map | Where-Object { $_.workPath })
             # One runId ties every session of this dispatch together for the reaper.
             $runId = New-FleetRunId
-            foreach ($entry in $fleetPlan) {
-                if (-not $entry.workPath) { continue }
-                # The picker already resolved through the fallback, but re-resolve at spawn
-                # time so an unavailable CLI never actually launches (defense in depth).
-                $actualCli = Resolve-LaunchCli -Chosen $entry.cli -Availability $availability
+            # Seed the runtime backoff: a CLI that already probed out of quota is skipped for
+            # the rest of the run (its issue still launches, on the claude fallback).
+            $noQuota = @{}
+            foreach ($k in @($availability.Keys)) { if ($availability[$k] -eq 'no-quota') { $noQuota[$k] = $true } }
+            # The spawn+register step, wrapped as the governor's launch hook. The governor
+            # already applied no-quota backoff; Resolve-LaunchCli re-checks availability at
+            # spawn time (defense in depth) so an unavailable CLI never actually launches.
+            $launchHook = {
+                param($entry, $cli)
+                $actualCli = Resolve-LaunchCli -Chosen $cli -Availability $availability
                 $marker    = New-FleetSessionMarker $entry.issue $runId
                 $spawn = Start-WorktreeSession -IssueNum $entry.issue -Repo $entry.repo -Branch $entry.branch `
                                                -WorkPath $entry.workPath -ClaudeAuthVar $ClaudeAuthVar -Cli $actualCli -FleetSession $marker
-                $launched++
                 $via = if ($spawn.usesWt) { "wt" } else { "pwsh" }
                 if ($spawn.process -and -not $spawn.usesWt) {
                     Write-SessionRegistryEntry -IssueNum $entry.issue -SessionPid $spawn.process.Id -Via $via -Cli $actualCli -FleetSession $marker
                 } else {
                     Write-SessionRegistryEntry -IssueNum $entry.issue -Via $via -Cli $actualCli -FleetSession $marker
                 }
-            }
+                $actualCli
+            }.GetNewClosure()
+            # Governor: pace launches in waves sized to machine capacity, instead of firing
+            # the whole batch at once (Invoke-FleetDispatch -> Get-DispatchPlan/Wait-FleetSlot).
+            $dispatched = @(Invoke-FleetDispatch -Queue $fleetPlan -NoQuotaClis $noQuota -LaunchSession $launchHook)
             Write-Host ""
-            Write-Host ("Fleet lanzada: {0} sesion(es). CLI resuelto por issue (fallback claude)." -f $launched) -ForegroundColor Yellow
+            Write-Host ("Fleet lanzada: {0} sesion(es) en oleadas por capacidad (fallback claude)." -f $dispatched.Count) -ForegroundColor Yellow
         }
     } elseif ($Launch) {
         Write-Host ""
