@@ -19,6 +19,7 @@ Describe 'Get-NextVersion' {
     It 'bumps major and zeroes minor+patch' { Get-NextVersion -Current '0.17.3' -Bump major | Should -Be '1.0.0' }
     It 'rejects a non-semver version' { { Get-NextVersion -Current '0.17' } | Should -Throw }
     It 'rejects a version with a suffix' { { Get-NextVersion -Current '1.0.0-rc1' } | Should -Throw }
+    It 'rejects leading zeros (strict semver)' { { Get-NextVersion -Current '01.02.03' } | Should -Throw }
 }
 
 Describe 'Get-PluginVersion' {
@@ -47,6 +48,33 @@ Describe 'Set-VersionInText' {
     }
     It 'throws when there is no version field' {
         { Set-VersionInText -Raw '{"name":"x"}' -NewVersion '1.0.0' } | Should -Throw
+    }
+    It 'throws when there is more than one version field (ambiguous)' {
+        { Set-VersionInText -Raw '{"version":"1.0.0","dep":{"version":"2.0.0"}}' -NewVersion '1.0.1' } | Should -Throw
+    }
+}
+
+Describe 'Set-DescriptionInText' {
+    It 'replaces only the FIRST occurrence of the old string' {
+        $raw = 'A: "old" | B: "old"'
+        Set-DescriptionInText -Raw $raw -Old 'old' -New 'new' | Should -Be 'A: "new" | B: "old"'
+    }
+    It 'preserves everything around the match (formatting kept)' {
+        $raw = '{ "description": "the OLD pitch" }'
+        Set-DescriptionInText -Raw $raw -Old 'the OLD pitch' -New 'the new pitch — dashed' |
+            Should -Be '{ "description": "the new pitch — dashed" }'
+    }
+    It 'throws when the old string is not present' {
+        { Set-DescriptionInText -Raw '{}' -Old 'missing' -New 'x' } | Should -Throw
+    }
+    It 'refuses a replacement that would need JSON escaping (quote)' {
+        { Set-DescriptionInText -Raw 'a old b' -Old 'old' -New 'has a " quote' } | Should -Throw
+    }
+    It 'refuses a replacement with a backslash' {
+        { Set-DescriptionInText -Raw 'a old b' -Old 'old' -New 'a\b' } | Should -Throw
+    }
+    It 'refuses a replacement with a control character (newline)' {
+        { Set-DescriptionInText -Raw 'a old b' -Old 'old' -New "line1`nline2" } | Should -Throw
     }
 }
 

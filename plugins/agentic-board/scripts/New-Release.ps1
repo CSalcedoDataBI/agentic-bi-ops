@@ -76,14 +76,18 @@ param(
 )
 
 # ------------------------------------------------------------------ pure helpers
+# Strict X.Y.Z semver: no leading zeros in a numeric identifier, no pre-release/build
+# suffix (we only ship plain releases). Shared by the bump + the explicit -Version check.
+$script:SemVerRx = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$'
+
 # Bump one part of an X.Y.Z semver. Pure -> unit-testable.
 function Get-NextVersion {
     param(
         [Parameter(Mandatory)][string]$Current,
         [ValidateSet('major','minor','patch')][string]$Bump = 'patch'
     )
-    if ($Current -notmatch '^(\d+)\.(\d+)\.(\d+)$') {
-        throw "Version '$Current' is not X.Y.Z semver."
+    if ($Current -notmatch $script:SemVerRx) {
+        throw "Version '$Current' is not strict X.Y.Z semver."
     }
     $maj = [int]$Matches[1]; $min = [int]$Matches[2]; $pat = [int]$Matches[3]
     switch ($Bump) {
@@ -103,17 +107,41 @@ function Get-PluginVersion {
 }
 
 # Return the raw text with the version field set to $NewVersion (only the value
-# changes; everything else is byte-preserved). Pure -> testable.
+# changes; everything else is byte-preserved). Requires EXACTLY ONE "version" field
+# so a future nested `version` can never be edited by mistake. Pure -> testable.
 function Set-VersionInText {
     param([Parameter(Mandatory)][string]$Raw, [Parameter(Mandatory)][string]$NewVersion)
-    $rx  = [regex]'("version"\s*:\s*")[^"]+(")'
-    if (-not $rx.IsMatch($Raw)) { throw "No version field to bump." }
+    $rx = [regex]'("version"\s*:\s*")[^"]+(")'
+    $n  = $rx.Matches($Raw).Count
+    if ($n -eq 0) { throw "No version field to bump." }
+    if ($n -gt 1) { throw "Found $n 'version' fields in plugin.json — ambiguous, refusing to guess." }
     $rx.Replace($Raw, "`${1}$NewVersion`${2}", 1)
+}
+
+# Return the raw text with the FIRST occurrence of $Old replaced by $New (exact
+# string, so JSON formatting/encoding is preserved). Refuses a replacement value
+# that would need JSON escaping (quote, backslash, or control char) rather than
+# emit invalid JSON. Pure -> testable.
+function Set-DescriptionInText {
+    param(
+        [Parameter(Mandatory)][string]$Raw,
+        [Parameter(Mandatory)][string]$Old,
+        [Parameter(Mandatory)][string]$New
+    )
+    if ($New -match '["\\\x00-\x1f]') {
+        throw "Replacement description contains a character that needs JSON escaping — sync it manually."
+    }
+    $idx = $Raw.IndexOf($Old, [System.StringComparison]::Ordinal)
+    if ($idx -lt 0) { throw "Could not find the current description to replace." }
+    $Raw.Substring(0, $idx) + $New + $Raw.Substring($idx + $Old.Length)
 }
 
 # Compare a parsed plugin.json against a parsed marketplace.json. The marketplace
 # entry whose name matches plugin.name must exist and carry the same description
 # (plugin.json is the source of truth). Pure -> testable with plain objects.
+# Scope note: the marketplace-LEVEL `name`/`description` (the store's own pitch)
+# are intentionally NOT checked — they describe the marketplace, not this plugin,
+# so they are allowed to differ. Only the plugin ENTRY is the identity duplicate.
 function Test-ManifestConsistency {
     param([Parameter(Mandatory)]$Plugin, [Parameter(Mandatory)]$Marketplace)
     $issues = @()
@@ -143,9 +171,13 @@ $changelog  = Join-Path $repoRoot 'CHANGELOG.md'
 
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-$pluginRaw = Get-Content $pluginJson -Raw
+# Read JSON as UTF-8 explicitly: Windows PowerShell's Get-Content -Raw decodes with
+# the ANSI code page, which would mangle the em dash in the descriptions before we
+# ever write it back. [IO.File]::ReadAllText is UTF-8 on every PowerShell version.
+$pluginRaw = [System.IO.File]::ReadAllText($pluginJson)
 $plugin    = $pluginRaw | ConvertFrom-Json
-$market    = Get-Content $marketJson -Raw | ConvertFrom-Json
+$marketRaw = [System.IO.File]::ReadAllText($marketJson)
+$market    = $marketRaw | ConvertFrom-Json
 $current   = Get-PluginVersion -Raw $pluginRaw
 
 $consistency = Test-ManifestConsistency -Plugin $plugin -Marketplace $market
@@ -174,42 +206,48 @@ Write-Host "=== Prepare release  $current -> $next ===" -ForegroundColor Cyan
 Write-Host "  plugin.json : $pluginJson"
 Write-Host "  marketplace : $marketJson"
 Write-Host "  changelog   : $changelog"
+# A release must not ship drifted metadata. Resolve it up front: -SyncManifest fixes
+# it (and we re-check from disk), otherwise the release is blocked — no half-writes.
+$willSync = $SyncManifest -and -not $consistency.Consistent
 if (-not $consistency.Consistent) {
     Write-Host "  Manifest drift detected:" -ForegroundColor Yellow
     $consistency.Issues | ForEach-Object { Write-Host "    - $_" -ForegroundColor Yellow }
     if (-not $SyncManifest) {
-        Write-Host "    (pass -SyncManifest to rewrite the marketplace description from plugin.json)" -ForegroundColor DarkGray
+        Write-Host "    Fix marketplace.json, or re-run with -SyncManifest." -ForegroundColor DarkGray
+        if (-not $DryRun) { throw "Manifest drift — refusing to prepare a release with mismatched manifests." }
     }
 }
 
 if ($DryRun) {
     Write-Host ""
     Write-Host "DRY-RUN — nothing written. Planned:" -ForegroundColor DarkGray
-    Write-Host "  1. set plugin.json version -> $next"
-    if ($SyncManifest -and -not $consistency.Consistent) { Write-Host "  2. sync marketplace description from plugin.json" }
+    if ($willSync) { Write-Host "  1. sync marketplace description from plugin.json" }
+    Write-Host "  2. set plugin.json version -> $next"
     if (-not $NoChangelog) { Write-Host "  3. fold Done issues into CHANGELOG under [$next] (Board-Changelog.ps1 -Write)" }
     Write-Host "  then: review 'git diff' and commit 'chore(release): $next' yourself."
     exit 0
 }
 
-# 1. bump plugin.json
+# 1. sync the marketplace from plugin.json FIRST — a sync that can't succeed throws
+#    here, before we touch plugin.json, so a release never lands half-done.
+if ($willSync) {
+    $entry = $market.plugins | Where-Object { $_.name -eq $plugin.name } | Select-Object -First 1
+    if (-not $entry) {
+        throw "Cannot sync: marketplace.json has no plugins[] entry named '$($plugin.name)'. Fix it manually."
+    }
+    $mpNew = Set-DescriptionInText -Raw $marketRaw -Old $entry.description -New $plugin.description
+    [System.IO.File]::WriteAllText($marketJson, $mpNew, $Utf8NoBom)
+    # Re-check from disk: if anything is still off, fail loudly rather than exit 0.
+    $recheck = Test-ManifestConsistency -Plugin $plugin -Marketplace ([System.IO.File]::ReadAllText($marketJson) | ConvertFrom-Json)
+    if (-not $recheck.Consistent) {
+        throw "marketplace.json still inconsistent after sync: $($recheck.Issues -join '; ')"
+    }
+    Write-Host "  OK  marketplace description synced from plugin.json" -ForegroundColor Green
+}
+
+# 2. bump plugin.json
 [System.IO.File]::WriteAllText($pluginJson, (Set-VersionInText -Raw $pluginRaw -NewVersion $next), $Utf8NoBom)
 Write-Host "  OK  plugin.json version -> $next" -ForegroundColor Green
-
-# 2. optionally sync the marketplace description from plugin.json (exact-string replace)
-if ($SyncManifest -and -not $consistency.Consistent) {
-    $entry = $market.plugins | Where-Object { $_.name -eq $plugin.name } | Select-Object -First 1
-    if ($entry -and $entry.description -ne $plugin.description) {
-        if ($plugin.description -match '["\\]') {
-            Write-Host "  WARN  plugin.json description contains a quote/backslash — sync it manually." -ForegroundColor Yellow
-        } else {
-            $mpRaw = Get-Content $marketJson -Raw
-            $mpNew = $mpRaw.Replace($entry.description, $plugin.description)
-            [System.IO.File]::WriteAllText($marketJson, $mpNew, $Utf8NoBom)
-            Write-Host "  OK  marketplace description synced from plugin.json" -ForegroundColor Green
-        }
-    }
-}
 
 # 3. fold the CHANGELOG (delegates to the existing board-driven generator)
 if (-not $NoChangelog) {
