@@ -1223,6 +1223,24 @@ Describe 'Remove-SessionRegistryEntry (prune one issue, #135)' {
     }
 }
 
+Describe 'Read-SessionRegistry (read-only view, does NOT rewrite the file - Codex #269)' {
+    It 'filters dead PIDs from the RETURN but leaves the file untouched' {
+        $tmp = Join-Path $TestDrive 'ro-sessions.json'
+        @(
+            [pscustomobject]@{ issue = 4; sessionPid = 999999 },   # dead
+            [pscustomobject]@{ issue = 5; sessionPid = $PID }       # live (this test process)
+        ) | ConvertTo-Json -Depth 4 -AsArray | Set-Content $tmp
+        Mock Get-SessionRegistryPath { $tmp }
+        $live = @(Read-SessionRegistry)
+        $live.Count | Should -Be 1
+        [int]$live[0].issue | Should -Be 5
+        # The dead entry must STILL be on disk (not silently pruned) so -Watch/-AutoClean
+        # can see it, classify it done, and tear down its worktree.
+        $onDisk = @(Get-Content $tmp -Raw | ConvertFrom-Json)
+        $onDisk.Count | Should -Be 2
+    }
+}
+
 Describe 'Read-SessionRegistryRaw (no dead-PID pruning, #135 / Codex #269)' {
     It 'returns entries verbatim WITHOUT pruning a dead PID (so the watcher can classify it done)' {
         $tmp = Join-Path $TestDrive 'raw-sessions.json'

@@ -184,13 +184,13 @@ function Read-SessionRegistry {
     $p = Get-SessionRegistryPath
     if (-not $p -or -not (Test-Path $p)) { return @() }
     try { $entries = @(Get-Content $p -Raw | ConvertFrom-Json) } catch { return @() }
-    # Stale cleanup: drop entries whose session process is dead
-    $alive = @($entries | Where-Object { $_.sessionPid -and (Get-Process -Id $_.sessionPid -ErrorAction SilentlyContinue) })
-    if ($alive.Count -ne $entries.Count) {
-        # Pipe (not -InputObject) or a passed array gets double-wrapped by -AsArray
-        $alive | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
-    }
-    return $alive
+    # Filter out entries whose session process is dead - callers only ever want live
+    # sessions. This is a READ-ONLY view: it does NOT rewrite the file. The old version
+    # persisted the pruned list on every read, which silently deleted a dead-PID session
+    # before -Watch/-AutoClean could tear down its worktree (a dead PID is a completion
+    # signal, not garbage) - Codex review, PR #269. The file self-tidies on the next
+    # Write-SessionRegistryEntry (it rebuilds from this filtered read) or Remove-SessionRegistryEntry.
+    return @($entries | Where-Object { $_.sessionPid -and (Get-Process -Id $_.sessionPid -ErrorAction SilentlyContinue) })
 }
 
 function Write-SessionRegistryEntry {
