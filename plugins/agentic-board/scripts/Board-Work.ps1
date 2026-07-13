@@ -1732,8 +1732,12 @@ if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (
 
 # ==============================================================================
 # LOCK MODE: -Lock <n> / -Unlock <n>  -> in ONE step mark an issue owned-elsewhere
-# (post the [abios-claim] fingerprint AND move Status) WITHOUT starting or branching
-# it locally (issue #236). Symmetric: -Unlock posts an UNLOCK claim + Status Backlog.
+# (post the [abios-claim] fingerprint, move Status, AND assign the owner) WITHOUT
+# starting or branching it locally (issue #236). Assigning the owner is what makes
+# the lock EFFECTIVE: it puts the issue in the exact In Progress + assigned state
+# that Invoke-IssueStart's existing multi-session guard refuses (a status move alone
+# would not - that guard requires an assignee). Symmetric: -Unlock posts an UNLOCK
+# claim, moves Status back to Backlog, and unassigns the owner.
 # ==============================================================================
 if ($Lock -gt 0 -or $Unlock -gt 0) {
     if ($ProjectNum -le 0) { throw "-Lock/-Unlock necesitan -ProjectNum <n> para mover el Status." }
@@ -1749,8 +1753,9 @@ if ($Lock -gt 0 -or $Unlock -gt 0) {
     $targetOpt  = if ($locking) { $ctx.inProgId } else { ($ctx.statusNode.options | Where-Object { $_.name -eq 'Backlog' }).id }
     $fingerprint = Format-ClaimFingerprint -Note $note -Computer $env:COMPUTERNAME -ProcessId $PID -Date (Get-Date -Format 'yyyy-MM-dd HH:mm')
 
+    $assignVerb = if ($locking) { "asignar a $Owner" } else { "desasignar a $Owner" }
     if ($DryRun) {
-        Write-Host ("DRY-RUN: #{0} -> Status {1} + comentario [abios-claim] {2} (no ejecutado)." -f $n, $targetName, $note) -ForegroundColor Gray
+        Write-Host ("DRY-RUN: #{0} -> Status {1} + {2} + comentario [abios-claim] {3} (no ejecutado)." -f $n, $targetName, $assignVerb, $note) -ForegroundColor Gray
         Write-Host "Board: $lockUrl" -ForegroundColor Cyan
         exit 0
     }
@@ -1767,6 +1772,16 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
         Write-Host ("OK  #{0} Status -> {1}" -f $n, $targetName) -ForegroundColor Green
     } else {
         Write-Host ("WARN el board no tiene la opcion '{0}' en Status - solo se posteo el comentario {1}." -f $targetName, $note) -ForegroundColor DarkYellow
+    }
+    # Assign (lock) / unassign (unlock) the owner so the In Progress + assigned state
+    # that Invoke-IssueStart's guard checks for is real - a status move alone is not
+    # enough to make -Start refuse (Codex review, PR #268).
+    try {
+        $method = if ($locking) { 'POST' } else { 'DELETE' }
+        gh api "repos/$repo/issues/$n/assignees" -X $method -F "assignees[]=$Owner" | Out-Null
+        Write-Host ("OK  #{0} {1}" -f $n, $assignVerb) -ForegroundColor Green
+    } catch {
+        Write-Host ("WARN no se pudo {0}: {1}" -f $assignVerb, $_) -ForegroundColor DarkYellow
     }
     $verb = if ($locking) { 'bloqueado (otra sesion lo trabaja)' } else { 'desbloqueado (liberado)' }
     Write-Host ("OK  #{0} {1} - [abios-claim] {2} posteado." -f $n, $verb, $note) -ForegroundColor Green
