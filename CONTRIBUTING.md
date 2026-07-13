@@ -77,6 +77,21 @@ New behavior needs a test. Side-effecting scripts expose a dot-source guard (e.g
 - Keep the `gh` remote a bare URL; auth flows through the token env var, never a PAT baked into the
   URL.
 
+## Docs
+
+Two parts of `README.md` are **generated, not hand-written**, so they can't drift: the command
+catalog (from each `commands/*.md` frontmatter `description`) and the version string (from
+plugin.json). They live between `<!-- BEGIN:commands -->`/`<!-- END:commands -->` and
+`<!-- BEGIN:version -->`/`<!-- END:version -->` markers — edit the *source*, then regenerate:
+
+```powershell
+plugins/agentic-board/scripts/Update-Docs.ps1            # rewrite the marked regions in place
+plugins/agentic-board/scripts/Update-Docs.ps1 -Check     # exit 1 if the README is stale (CI gate)
+```
+
+Everything outside the markers stays hand-written. `-Check` is exit-code clean (0 fresh / 1 stale)
+so a docs-freshness gate can block a PR that edited a command's description without regenerating.
+
 ## Releasing
 
 `plugins/agentic-board/.claude-plugin/plugin.json` is the **single source of truth** for the
