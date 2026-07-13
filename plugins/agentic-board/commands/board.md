@@ -142,7 +142,10 @@ matching recipe from the projects-admin references:
     spawning. Add `-Parallel <nums> -Fleet` instead of `-Launch` to probe the available AI CLIs,
     pick one per issue (auto-fallback to `claude` when a choice is unavailable), and launch each
     in its worktree; `-DryRun` shows the probe table without prompting or spawning.
-    Monitor the fleet with `scripts/Board-Work.ps1 -Sessions`. Only parallelize issues
+    Monitor the fleet with `scripts/Board-Work.ps1 -Sessions`, or `-Sessions -Watch -AutoClean`
+    to block until every session finishes (PR merged / issue closed / PID dead) and auto-remove
+    each worktree + branch + registry entry as it completes (`-DryRun` previews the teardown).
+    Only parallelize issues
     that DON'T depend on each other; clean each worktree with `git worktree remove` after its PR
     merges. Requires Windows Terminal for tabs (Windows-only launcher).
   - If many pending items lack Priority/Size, suggest `/board fill` to triage them first.
