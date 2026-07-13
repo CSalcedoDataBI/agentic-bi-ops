@@ -128,6 +128,12 @@ param(
     [switch]$Fleet,
     [switch]$Sessions,
     [int]   $ToReview   = 0,
+    [int]   $Stop       = 0,
+    [int]   $Relaunch   = 0,
+    [switch]$Reap,
+    [switch]$KillAll,
+    [switch]$Force,
+    [int]   $MaxConcurrent = 0,
     [switch]$DryRun,
     [switch]$Branch,
     [switch]$IgnoreBlocked,
@@ -724,7 +730,7 @@ function New-FleetSessionMarker([int]$IssueNum, [string]$RunId) {
 # launch-<issue>.ps1 and launching `pwsh -NoExit -File <script>` puts ZERO ';' on
 # wt's command line, so wt opens exactly one tab. The briefing is likewise passed by
 # file so no long/quoted text ever hits the command line.
-function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY", [string]$Cli = 'claude', [string]$fleetSession = '') {
+function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY", [string]$Cli = 'claude', [string]$fleetSession = '', [string]$logPath = '') {
     $tabTitle  = "issue-$issueNum"
     # Defense-in-depth: this name is interpolated into the spawned launch script,
     # so it MUST be a bare env-var identifier - never let ';'/quotes/spaces through.
@@ -780,6 +786,20 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
         $markerLine   = '$env:ABIOS_FLEET_SESSION=''{0}''' -f $fleetSession
         $launchScript = ($markerLine, $launchScript) -join "`r`n"
     }
+    # Session log redirection (#198): capture the whole session stream to a file the
+    # -Sessions dashboard tails, while still showing it live in the tab. Start-Transcript
+    # is adapter-agnostic (works for every CLI). Opt-in via $logPath so the golden claude
+    # parity (which passes none) stays byte-identical. Single-quotes doubled so a path with
+    # a ' cannot break the literal.
+    if ($logPath) {
+        $safeLog = $logPath -replace "'", "''"
+        $safeDir = (Split-Path -Parent $logPath) -replace "'", "''"
+        $transcript = @(
+            ('New-Item -ItemType Directory -Force -Path ''{0}'' *> $null' -f $safeDir)
+            ('Start-Transcript -Path ''{0}'' -Append *> $null' -f $safeLog)
+        ) -join "`r`n"
+        $launchScript = ($transcript, $launchScript) -join "`r`n"
+    }
     # The launch script lives next to the briefing (same dir the caller chose).
     $launchScriptFile = Join-Path (Split-Path -Parent $briefingFile) "launch-$issueNum.ps1"
     $safeScriptPath   = $launchScriptFile   # a plain path arg (its own arg element -> Start-Process quotes it)
@@ -827,7 +847,10 @@ function Start-WorktreeSession {
     )
     $abios = Get-AbiosDir
     $briefingFile = if ($abios) { Join-Path $abios "briefing-$IssueNum.txt" } else { Join-Path $WorkPath "briefing-$IssueNum.txt" }
-    $plan  = Build-WorktreeLaunch $IssueNum $WorkPath $briefingFile "abios-parallel" $ClaudeAuthVar $Cli $FleetSession
+    # Redirect this session's stream to logs/issue-<n>.log so the -Sessions dashboard can
+    # tail it (Start-Transcript, wired inside the launch script).
+    $logPath = Get-SessionLogPath $IssueNum
+    $plan  = Build-WorktreeLaunch $IssueNum $WorkPath $briefingFile "abios-parallel" $ClaudeAuthVar $Cli $FleetSession $logPath
 
     if ($Preview) {
         Write-Host ("  [preview] #{0}: {1} {2}" -f $IssueNum, $plan.launcher, ($plan.args -join ' ')) -ForegroundColor Gray
@@ -1502,21 +1525,28 @@ function Invoke-FleetReap {
         [int]$SelfPid = $PID,
         [int[]]$Guard = @(),
         [hashtable]$ParentMap,
+        [switch]$KillLive,   # whole-fleet teardown (-KillAll): DO kill tracked live sessions
         [switch]$DryRun
     )
     if (-not $ParentMap) { try { $ParentMap = Get-ProcessParentMap } catch { $ParentMap = @{} } }
-    # Always protect every live registry session, regardless of the caller-supplied guard.
-    # FAIL CLOSED: a registry READ FAILURE (throw) is distinct from a legitimately empty
-    # registry - if we cannot enumerate live sessions we cannot verify safety, so refuse
-    # everything rather than proceed with an empty guard.
-    $liveGuard = $null
-    try { $liveGuard = @(Read-SessionRegistry | ForEach-Object { [int]$_.sessionPid }) } catch { $liveGuard = $null }
-    if ($null -eq $liveGuard) {
-        return @(@($Candidates) | ForEach-Object {
-            [PSCustomObject]@{ Pid = [int]$_.ProcessId; Refused = $true; Killed = $false; Reason = 'no se pudo leer el registro de sesiones - fail-closed' }
-        })
+    # -Reap protects every live registry session (only escaped orphans should die); -KillAll
+    # (-KillLive) tears the whole fleet down, so it does NOT fold the live PIDs - but the
+    # coordinator is STILL safe because Stop-ProcessTree always excludes self + ancestors.
+    if ($KillLive) {
+        $fullGuard = @($Guard)
+    } else {
+        # FAIL CLOSED: a registry READ FAILURE (throw) is distinct from a legitimately empty
+        # registry - if we cannot enumerate live sessions we cannot verify safety, so refuse
+        # everything rather than proceed with an empty guard.
+        $liveGuard = $null
+        try { $liveGuard = @(Read-SessionRegistry | ForEach-Object { [int]$_.sessionPid }) } catch { $liveGuard = $null }
+        if ($null -eq $liveGuard) {
+            return @(@($Candidates) | ForEach-Object {
+                [PSCustomObject]@{ Pid = [int]$_.ProcessId; Refused = $true; Killed = $false; Reason = 'no se pudo leer el registro de sesiones - fail-closed' }
+            })
+        }
+        $fullGuard = @(@($Guard) + $liveGuard) | Select-Object -Unique
     }
-    $fullGuard = @(@($Guard) + $liveGuard) | Select-Object -Unique
     $results = @()
     foreach ($c in @($Candidates)) {
         $results += Stop-ProcessTree -TargetPid ([int]$c.ProcessId) -Guard $fullGuard -SelfPid $SelfPid -ParentMap $ParentMap -DryRun:$DryRun
@@ -1530,6 +1560,73 @@ function Invoke-FleetReap {
 # calls, no side effects - so the pure helpers can be unit-tested in isolation.
 # ==============================================================================
 if ($env:ABIOS_BOARDWORK_DOTSOURCE) { return }
+
+# ==============================================================================
+# KILL-LAYER MODES (Phase 2, local-only - no GH_TOKEN needed). Every kill goes
+# through the fail-safe Stop-ProcessTree (self + ancestors always excluded) and
+# DEFAULTS to a dry-run listing; add -Force to actually kill.
+# ==============================================================================
+if ($Reap -or $KillAll) {
+    $killLive = [bool]$KillAll
+    if ($KillAll) {
+        $filter = "Name='pwsh.exe' OR Name='node.exe'"
+        $procs  = @(Get-CimInstance -ClassName Win32_Process -Filter $filter -ErrorAction SilentlyContinue | Select-Object ProcessId, CommandLine)
+        $candidates = @($procs | Where-Object { (Get-FleetIssueFromCommandLine $_.CommandLine) -gt 0 })
+        $label = "TODA la flota (-KillAll)"
+    } else {
+        $candidates = @(Find-FleetOrphans)
+        $label = "huerfanos escapados (-Reap)"
+    }
+    Write-Host ("=== Fleet reap: {0} ===" -f $label) -ForegroundColor Cyan
+    if ($candidates.Count -eq 0) { Write-Host "  No hay candidatos. Nada que hacer." -ForegroundColor DarkGray; exit 0 }
+    $plan = @(Invoke-FleetReap -Candidates $candidates -KillLive:$killLive -DryRun)
+    foreach ($r in $plan) {
+        $cand  = $candidates | Where-Object { [int]$_.ProcessId -eq $r.Pid } | Select-Object -First 1
+        $issue = if ($cand) { Get-FleetIssueFromCommandLine $cand.CommandLine } else { 0 }
+        if ($r.Refused) { Write-Host ("  #{0,-4} PID {1} PROTEGIDO: {2}" -f $issue, $r.Pid, $r.Reason) -ForegroundColor DarkYellow }
+        else            { Write-Host ("  #{0,-4} PID {1} -> {2}" -f $issue, $r.Pid, $r.Command) -ForegroundColor Yellow }
+    }
+    $killable = @($plan | Where-Object { -not $_.Refused })
+    if (-not $Force) {
+        Write-Host ""
+        Write-Host ("  {0} matable(s), {1} protegido(s). Re-ejecuta con -Force para matarlos." -f $killable.Count, ($plan.Count - $killable.Count)) -ForegroundColor Cyan
+        exit 0
+    }
+    $done = @(Invoke-FleetReap -Candidates $candidates -KillLive:$killLive)
+    Write-Host ("  Matados: {0} de {1} candidato(s)." -f @($done | Where-Object { $_.Killed }).Count, $done.Count) -ForegroundColor Green
+    exit 0
+}
+
+if ($Stop -gt 0) {
+    $sess = @(Read-SessionRegistry | Where-Object { $_.issue -eq $Stop }) | Select-Object -First 1
+    if (-not $sess) { Write-Host "  No hay sesion viva registrada para #$Stop." -ForegroundColor DarkYellow; exit 0 }
+    $r = Stop-ProcessTree -TargetPid ([int]$sess.sessionPid) -DryRun:(-not $Force)
+    if ($r.Refused)  { Write-Host ("  #{0} PID {1} PROTEGIDO: {2}" -f $Stop, $r.Pid, $r.Reason) -ForegroundColor DarkYellow; exit 0 }
+    if (-not $Force) { Write-Host ("  #{0} -> {1}`n  (re-ejecuta con -Force para matar)" -f $Stop, $r.Command) -ForegroundColor Cyan; exit 0 }
+    Write-Host ("  #{0} PID {1} killed={2}" -f $Stop, $r.Pid, $r.Killed) -ForegroundColor Green
+    exit 0
+}
+
+if ($Relaunch -gt 0) {
+    $sess = @(Read-SessionRegistry | Where-Object { $_.issue -eq $Relaunch }) | Select-Object -First 1
+    if (-not $sess) { Write-Host "  No hay sesion registrada para #$Relaunch." -ForegroundColor DarkYellow; exit 0 }
+    $cli = if ($sess.cli) { $sess.cli } else { 'claude' }
+    if (-not $Force) {
+        Write-Host ("  Relaunch #{0}: mataria PID {1} y relanzaria [{2}] en {3}." -f $Relaunch, $sess.sessionPid, $cli, $sess.workPath) -ForegroundColor Cyan
+        Write-Host "  (re-ejecuta con -Force para ejecutar)" -ForegroundColor DarkGray
+        exit 0
+    }
+    Stop-ProcessTree -TargetPid ([int]$sess.sessionPid) | Out-Null
+    $oauthPresent = [bool][System.Environment]::GetEnvironmentVariable('CLAUDE_CODE_OAUTH_TOKEN','User')
+    $authVar      = Resolve-ClaudeAuthVar $PSBoundParameters.ContainsKey('ClaudeAuthVar') $ClaudeAuthVar $oauthPresent
+    $marker       = New-FleetSessionMarker $Relaunch (New-FleetRunId)
+    $spawn = Start-WorktreeSession -IssueNum $Relaunch -Repo $sess.repo -Branch $sess.branch -WorkPath $sess.workPath -ClaudeAuthVar $authVar -Cli $cli -FleetSession $marker
+    $via = if ($spawn.usesWt) { 'wt' } else { 'pwsh' }
+    if ($spawn.process -and -not $spawn.usesWt) { Write-SessionRegistryEntry -IssueNum $Relaunch -SessionPid $spawn.process.Id -Via $via -Cli $cli -FleetSession $marker }
+    else { Write-SessionRegistryEntry -IssueNum $Relaunch -Via $via -Cli $cli -FleetSession $marker }
+    Write-Host ("  Relaunched #{0} [{1}]." -f $Relaunch, $cli) -ForegroundColor Green
+    exit 0
+}
 
 # -- Token (respect GH_TOKEN if gh-account already set it) ---------------------
 if (-not $env:GH_TOKEN) {
@@ -1870,7 +1967,8 @@ if ($Parallel.Count -gt 0) {
             }.GetNewClosure()
             # Governor: pace launches in waves sized to machine capacity, instead of firing
             # the whole batch at once (Invoke-FleetDispatch -> Get-DispatchPlan/Wait-FleetSlot).
-            $dispatched = @(Invoke-FleetDispatch -Queue $fleetPlan -NoQuotaClis $noQuota -LaunchSession $launchHook)
+            # -MaxConcurrent (0 = capacity-only) caps how many run at once.
+            $dispatched = @(Invoke-FleetDispatch -Queue $fleetPlan -NoQuotaClis $noQuota -LaunchSession $launchHook -MaxConcurrent $MaxConcurrent)
             Write-Host ""
             Write-Host ("Fleet lanzada: {0} sesion(es) en oleadas por capacidad (fallback claude)." -f $dispatched.Count) -ForegroundColor Yellow
         }

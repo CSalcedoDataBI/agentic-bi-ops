@@ -341,6 +341,15 @@ Describe 'Build-WorktreeLaunch fleet marker (ABIOS_FLEET_SESSION)' {
         { Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' "x'; rm -rf /; #" } |
             Should -Throw
     }
+    It 'redirects the session stream to the log via Start-Transcript when -logPath is set (#198)' {
+        $p = Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' '42-abc123' 'C:\st\logs\issue-42.log'
+        $p.launchScript | Should -Match 'Start-Transcript -Path ''C:\\st\\logs\\issue-42\.log'''
+        $p.launchScript | Should -Match 'New-Item -ItemType Directory -Force'
+    }
+    It 'adds no transcript when -logPath is omitted (golden parity preserved)' {
+        $p = Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude'
+        $p.launchScript | Should -Not -Match 'Start-Transcript'
+    }
     It 'rejects an underscore (WQL LIKE single-char wildcard - unsafe as a fingerprint)' {
         { Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' '42_abc' } |
             Should -Throw
@@ -902,6 +911,14 @@ Describe 'Invoke-FleetReap (guard-safe orphan/fleet kill)' {
         Mock Read-SessionRegistry -MockWith { throw 'registro corrupto' }
         $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun
         @($r | Where-Object { -not $_.Refused }).Count | Should -Be 0
+    }
+    It '-KillLive (-KillAll): kills a tracked live session but STILL protects self' {
+        # A live session at 750 (descendant of orphan 700). -KillAll must reap 700's tree
+        # (incl. 750) yet never touch self (500).
+        Mock Read-SessionRegistry -MockWith { @([pscustomobject]@{ sessionPid = 750; issue = 5 }) }
+        $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -KillLive -DryRun
+        ($r | Where-Object { $_.Pid -eq 700 }).Refused | Should -BeFalse   # live session NOT protected
+        ($r | Where-Object { $_.Pid -eq 500 }).Refused | Should -BeTrue    # self ALWAYS protected
     }
 }
 
