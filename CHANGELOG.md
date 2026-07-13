@@ -1,7 +1,11 @@
 # Changelog
 
-
 ## [Unreleased]
+
+## [0.18.0] - 2026-07-13
+### Added
+- **chore: consolidate duplicate plugin.json + wire version bump/changelog into release** (#206)
+- **hardening: rename internal state dir .agentic-bi-ops -> .agentic-board (with migration + fallback)** (#244)
 
 ## [0.17.0] - 2026-07-10
 ### Added
