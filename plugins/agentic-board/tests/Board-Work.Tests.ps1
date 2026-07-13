@@ -581,6 +581,47 @@ Describe 'Build-FleetPlan' {
     }
 }
 
+Describe 'Get-MachineCapacityCore (pure capacity math)' {
+    It 'averages LoadPercentage across CPU sockets' {
+        (Get-MachineCapacityCore @(20, 40) 4194304 8388608 8).CpuLoadPercent | Should -Be 30
+    }
+    It 'treats no readings as 0% (momentary null LoadPercentage)' {
+        (Get-MachineCapacityCore @() 4194304 8388608 8).CpuLoadPercent | Should -Be 0
+    }
+    It 'ignores null entries when averaging' {
+        (Get-MachineCapacityCore @(50, $null) 4194304 8388608 8).CpuLoadPercent | Should -Be 50
+    }
+    It 'converts free/total physical KB to GB' {
+        $c = Get-MachineCapacityCore @(0) 4194304 16777216 8   # 4 GB free, 16 GB total (in KB)
+        $c.FreeRamGB  | Should -Be 4
+        $c.TotalRamGB | Should -Be 16
+    }
+    It 'passes the logical core count through' {
+        (Get-MachineCapacityCore @(0) 1048576 2097152 12).Cores | Should -Be 12
+    }
+    It 'never reports a negative CPU or RAM' {
+        $c = Get-MachineCapacityCore @() 0 0 1
+        $c.CpuLoadPercent | Should -BeGreaterOrEqual 0
+        $c.FreeRamGB      | Should -BeGreaterOrEqual 0
+    }
+}
+
+Describe 'Get-MachineCapacity (live wrapper wiring)' {
+    It 'wires the CIM readings into the pure core' {
+        Mock Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Processor' } -MockWith {
+            @([pscustomobject]@{ LoadPercentage = 10 }, [pscustomobject]@{ LoadPercentage = 30 })
+        }
+        Mock Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_OperatingSystem' } -MockWith {
+            [pscustomobject]@{ FreePhysicalMemory = 4194304; TotalVisibleMemorySize = 8388608 }
+        }
+        $c = Get-MachineCapacity -LogicalCores 8
+        $c.CpuLoadPercent | Should -Be 20
+        $c.FreeRamGB      | Should -Be 4
+        $c.TotalRamGB     | Should -Be 8
+        $c.Cores          | Should -Be 8
+    }
+}
+
 Describe 'non-claude adapters' {
     It 'gemini BuildLaunch uses -p and --approval-mode yolo --skip-trust' {
         $ctx = @{ BriefingFile = 'C:\b\brief.txt' }
