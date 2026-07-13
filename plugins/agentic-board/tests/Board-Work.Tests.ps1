@@ -814,6 +814,76 @@ Describe 'Stop-ProcessTree (tree kill, fail-safe self-exclusion)' {
     }
 }
 
+Describe 'Test-FleetFingerprint (marker/artifact match)' {
+    It 'matches the strong ABIOS_FLEET_SESSION marker in a command line' {
+        Test-FleetFingerprint 'pwsh ... ABIOS_FLEET_SESSION=42-abc123 ...' @('42-abc123') | Should -BeTrue
+    }
+    It 'matches a launch-/briefing- artifact substring' {
+        Test-FleetFingerprint 'pwsh -File C:\x\launch-42.ps1' @('launch-') | Should -BeTrue
+    }
+    It 'does not match an unrelated process' {
+        Test-FleetFingerprint 'C:\Windows\explorer.exe' @('launch-', '42-abc123') | Should -BeFalse
+    }
+    It 'is false for an empty command line' {
+        Test-FleetFingerprint '' @('launch-') | Should -BeFalse
+    }
+}
+
+Describe 'Find-FleetOrphansCore (fingerprinted but not a live registry PID)' {
+    BeforeAll {
+        $script:Procs = @(
+            [pscustomobject]@{ ProcessId=700; CommandLine='pwsh -File C:\wt\launch-5.ps1' }   # fleet, orphan
+            [pscustomobject]@{ ProcessId=800; CommandLine='node C:\repo--worktrees\issue-6' }  # fleet, tracked
+            [pscustomobject]@{ ProcessId=900; CommandLine='C:\Windows\notepad.exe' }            # not fleet
+        )
+    }
+    It 'returns fleet processes whose PID is NOT a live registry session' {
+        $o = Find-FleetOrphansCore $script:Procs @(800) @('launch-', '--worktrees')
+        @($o).Count            | Should -Be 1
+        $o[0].ProcessId        | Should -Be 700
+    }
+    It 'returns nothing when every fleet process is tracked' {
+        @(Find-FleetOrphansCore $script:Procs @(700, 800) @('launch-', '--worktrees')).Count | Should -Be 0
+    }
+    It 'ignores non-fleet processes entirely' {
+        (Find-FleetOrphansCore $script:Procs @() @('launch-', '--worktrees')).ProcessId | Should -Not -Contain 900
+    }
+}
+
+Describe 'Get-FleetFingerprints (no main-clone false positives)' {
+    It 'includes the strong marker but NOT the bare workPath (avoids matching the repo/coordinator)' {
+        Mock Read-SessionRegistry -MockWith {
+            @([pscustomobject]@{ issue=5; fleetSession='5-abc123'; workPath='C:\Users\me\Repos\agentic-bi-ops' })
+        }
+        $fps = Get-FleetFingerprints
+        $fps | Should -Contain '5-abc123'
+        $fps | Should -Contain 'launch-'
+        $fps | Should -Not -Contain 'C:\Users\me\Repos\agentic-bi-ops'
+    }
+}
+
+Describe 'Invoke-FleetReap (guard-safe orphan/fleet kill)' {
+    BeforeAll {
+        # 500 is self (guarded via ParentMap 500->1); 700 is a real orphan; nothing else.
+        $script:RMap = @{ 500=1; 1=0; 700=600; 600=1 }
+        $script:Cands = @(
+            [pscustomobject]@{ ProcessId=700; CommandLine='pwsh launch-5.ps1' }
+            [pscustomobject]@{ ProcessId=500; CommandLine='pwsh launch-9.ps1' }   # self - must survive
+        )
+    }
+    It 'plans a kill for the orphan and REFUSES the guarded self under -DryRun' {
+        $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun
+        ($r | Where-Object { $_.Pid -eq 700 }).Refused | Should -BeFalse
+        ($r | Where-Object { $_.Pid -eq 500 }).Refused | Should -BeTrue
+    }
+    It 'reports one result per candidate' {
+        @(Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun).Count | Should -Be 2
+    }
+    It 'does nothing on an empty candidate set' {
+        @(Invoke-FleetReap -Candidates @() -SelfPid 500 -ParentMap $script:RMap -DryRun).Count | Should -Be 0
+    }
+}
+
 Describe 'Get-MachineCapacity (live wrapper wiring)' {
     It 'wires the CIM readings into the pure core' {
         Mock Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Processor' } -MockWith {
