@@ -1174,8 +1174,8 @@ Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
 }
 
 Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
-    It 'plans kill -> worktree remove -> branch delete -> registry prune, in order, under -DryRun' {
-        $s = [pscustomobject]@{ issue = 9; branch = 'issue-9-x'; workPath = 'C:\wt\issue-9'; sessionPid = 4321 }
+    It 'plans kill -> worktree remove -> branch delete -> registry prune for a pwsh session, under -DryRun' {
+        $s = [pscustomobject]@{ issue = 9; branch = 'issue-9-x'; workPath = 'C:\wt\issue-9'; sessionPid = 4321; via = 'pwsh' }
         $acts = @(Invoke-SessionCleanup -Session $s -DryRun)
         $acts.Count | Should -Be 4
         $acts[0] | Should -Match 'kill PID 4321'
@@ -1183,8 +1183,15 @@ Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
         $acts[2] | Should -Match 'branch -D issue-9-x'
         $acts[3] | Should -Match 'prune #9'
     }
+    It 'does NOT kill a wt session PID (it is the host/launcher, not the tab) - Codex #269' {
+        $s = [pscustomobject]@{ issue = 8; branch = 'issue-8-w'; workPath = 'C:\wt\issue-8'; sessionPid = 4321; via = 'wt' }
+        $acts = @(Invoke-SessionCleanup -Session $s -DryRun)
+        ($acts -join ' ') | Should -Not -Match 'kill PID 4321'
+        ($acts -join ' ') | Should -Match 'NO mato PID'
+        ($acts -join ' ') | Should -Match 'prune #8'
+    }
     It 'skips the PID-kill step when the session has no sessionPid' {
-        $s = [pscustomobject]@{ issue = 5; branch = 'issue-5-y'; workPath = 'C:\wt\issue-5'; sessionPid = 0 }
+        $s = [pscustomobject]@{ issue = 5; branch = 'issue-5-y'; workPath = 'C:\wt\issue-5'; sessionPid = 0; via = 'pwsh' }
         $acts = @(Invoke-SessionCleanup -Session $s -DryRun)
         ($acts -join ' ') | Should -Not -Match 'kill PID'
         ($acts -join ' ') | Should -Match 'prune #5'

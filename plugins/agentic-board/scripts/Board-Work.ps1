@@ -1716,9 +1716,18 @@ function Remove-SessionRegistryEntry {
 function Invoke-SessionCleanup {
     param([object]$Session, [switch]$DryRun)
     $actions = @()
-    if ($Session.sessionPid) {
-        $actions += "kill PID $($Session.sessionPid) (libera el handle del worktree)"
+    # Kill ONLY a session whose tracked PID is genuinely its own spawned shell: a standalone
+    # `pwsh` window (via='pwsh') records $spawn.process.Id, so killing that releases the
+    # worktree handle. A `wt` tab and an in-place -Start record the HOST/launcher PID (the
+    # tab's real shell is not tracked), so killing it could take down the host process and
+    # unrelated tabs - NEVER do that (Codex review, PR #269). Stop-ProcessTree also guards
+    # self + ancestors as a backstop. For wt/in-place, skip the kill and let the worktree
+    # removal report a held handle if the untracked shell still has it open.
+    if ($Session.sessionPid -and $Session.via -eq 'pwsh') {
+        $actions += "kill PID $($Session.sessionPid) (ventana pwsh propia - libera el worktree)"
         if (-not $DryRun) { Stop-ProcessTree -TargetPid ([int]$Session.sessionPid) | Out-Null }
+    } elseif ($Session.via -eq 'wt') {
+        $actions += "NO mato PID (sesion wt: el shell real de la pestana no se rastrea; cierra la pestana si el worktree queda bloqueado)"
     }
     # Removing the worktree is the step that can genuinely fail (a held handle - see the
     # tab-shell gotcha). Success = the path is gone afterwards. Only when it is do we delete
