@@ -1616,11 +1616,24 @@ if ($Relaunch -gt 0) {
         Write-Host "  (re-ejecuta con -Force para ejecutar)" -ForegroundColor DarkGray
         exit 0
     }
-    Stop-ProcessTree -TargetPid ([int]$sess.sessionPid) | Out-Null
+    # Honor the guarded stop: if it was refused (self/ancestor, or fail-closed no-map) the
+    # old session is still alive - do NOT relaunch or rewrite the registry.
+    $stopRes = Stop-ProcessTree -TargetPid ([int]$sess.sessionPid)
+    if ($stopRes.Refused) {
+        Write-Host ("  Relaunch #{0} ABORTADO: no se pudo detener PID {1}: {2}" -f $Relaunch, $stopRes.Pid, $stopRes.Reason) -ForegroundColor Red
+        exit 1
+    }
     $oauthPresent = [bool][System.Environment]::GetEnvironmentVariable('CLAUDE_CODE_OAUTH_TOKEN','User')
     $authVar      = Resolve-ClaudeAuthVar $PSBoundParameters.ContainsKey('ClaudeAuthVar') $ClaudeAuthVar $oauthPresent
     $marker       = New-FleetSessionMarker $Relaunch (New-FleetRunId)
     $spawn = Start-WorktreeSession -IssueNum $Relaunch -Repo $sess.repo -Branch $sess.branch -WorkPath $sess.workPath -ClaudeAuthVar $authVar -Cli $cli -FleetSession $marker
+    # Start-WorktreeSession returns $null on a failed/missing-worktree spawn. Registering
+    # then would fall back to the coordinator PID and poison the registry - so only record a
+    # session that actually launched.
+    if (-not $spawn) {
+        Write-Host ("  Relaunch #{0} FALLO: el worktree no existe o no se pudo lanzar - registro intacto." -f $Relaunch) -ForegroundColor Red
+        exit 1
+    }
     $via = if ($spawn.usesWt) { 'wt' } else { 'pwsh' }
     if ($spawn.process -and -not $spawn.usesWt) { Write-SessionRegistryEntry -IssueNum $Relaunch -SessionPid $spawn.process.Id -Via $via -Cli $cli -FleetSession $marker }
     else { Write-SessionRegistryEntry -IssueNum $Relaunch -Via $via -Cli $cli -FleetSession $marker }
