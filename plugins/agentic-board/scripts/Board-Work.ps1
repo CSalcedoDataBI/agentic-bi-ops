@@ -210,8 +210,9 @@ function Write-SessionRegistryEntry {
     }
     if (-not $trackPid) { return }
     # Preserve fields already recorded for this issue (e.g. repo set at start time)
-    # when a later launch updates only the PID/via.
-    $prev = @(Read-SessionRegistry | Where-Object { $_.issue -eq $IssueNum }) | Select-Object -First 1
+    # when a later launch updates only the PID/via. Read RAW: a relaunch after the old
+    # PID died must still inherit the prior branch/repo/workPath.
+    $prev = @(Read-SessionRegistryRaw | Where-Object { $_.issue -eq $IssueNum }) | Select-Object -First 1
     if (-not $Repo -and $prev) { $Repo = $prev.repo }
     if (-not $Branch -and $prev) { $Branch = $prev.branch }
     if (-not $WorkPath -and $prev) { $WorkPath = $prev.workPath }
@@ -221,7 +222,12 @@ function Write-SessionRegistryEntry {
     # in-place re-start of an issue that was previously fleet-launched) must NOT keep
     # advertising the old marker, or the reaper would target a fingerprint that no
     # longer matches the tracked process. Every fleet launch writes it explicitly.
-    $entries = @(Read-SessionRegistry | Where-Object { $_.issue -ne $IssueNum })
+    # Rebuild from the RAW registry (remove ONLY the issue being written), not the
+    # dead-PID-filtered view - otherwise starting/relaunching one issue would silently
+    # drop other issues' finished-but-uncleaned sessions before -Watch/-AutoClean can
+    # tear down their worktrees (Codex review, PR #269). The file self-tidies via
+    # Remove-SessionRegistryEntry (auto-clean), not as a side-effect of unrelated writes.
+    $entries = @(Read-SessionRegistryRaw | Where-Object { $_.issue -ne $IssueNum })
     $entries += [PSCustomObject]@{
         issue        = $IssueNum
         repo         = $Repo

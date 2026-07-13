@@ -1241,6 +1241,20 @@ Describe 'Read-SessionRegistry (read-only view, does NOT rewrite the file - Code
     }
 }
 
+Describe 'Write-SessionRegistryEntry preserves other issues (Codex #269)' {
+    It 'keeps a different issue''s dead-PID session when writing a new one' {
+        $tmp = Join-Path $TestDrive 'w-sessions.json'
+        @([pscustomobject]@{ issue = 100; branch = 'issue-100-a'; workPath = 'C:\wt\100'; sessionPid = 999999 }) |
+            ConvertTo-Json -Depth 4 -AsArray | Set-Content $tmp
+        Mock Get-SessionRegistryPath { $tmp }
+        # Explicit alive SessionPid ($PID) avoids the CIM parent-PID lookup.
+        Write-SessionRegistryEntry -IssueNum 200 -Branch 'issue-200-b' -WorkPath 'C:\wt\200' -Repo 'o/r' -SessionPid $PID
+        $onDisk = @(Get-Content $tmp -Raw | ConvertFrom-Json)
+        ($onDisk | Where-Object { $_.issue -eq 100 }).Count | Should -Be 1   # dead entry preserved for -Watch
+        ($onDisk | Where-Object { $_.issue -eq 200 }).Count | Should -Be 1   # new entry written
+    }
+}
+
 Describe 'Read-SessionRegistryRaw (no dead-PID pruning, #135 / Codex #269)' {
     It 'returns entries verbatim WITHOUT pruning a dead PID (so the watcher can classify it done)' {
         $tmp = Join-Path $TestDrive 'raw-sessions.json'
