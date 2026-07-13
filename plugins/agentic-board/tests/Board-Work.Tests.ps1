@@ -765,6 +765,19 @@ Describe 'Get-LogTailLines (dashboard log tail)' {
         Set-Content -LiteralPath $f -Value "a`nb`n`n`n" -Encoding UTF8
         Get-LogTailLines $f 2 | Should -Be @('a', 'b')
     }
+    It 'returns the single line intact when the tail is exactly one line ($start -eq $end slice)' {
+        $f = Join-Path $TestDrive 'one.log'
+        Set-Content -LiteralPath $f -Value "only" -Encoding UTF8
+        # PS unwraps a 1-element result on capture; an indexing caller wraps with @(...).
+        $r = @(Get-LogTailLines $f 3)
+        $r.Count | Should -Be 1
+        $r[0]    | Should -Be 'only'
+    }
+    It 'returns an empty array for a whitespace-only file' {
+        $f = Join-Path $TestDrive 'blank.log'
+        Set-Content -LiteralPath $f -Value "`n `n`n" -Encoding UTF8
+        @(Get-LogTailLines $f 3).Count | Should -Be 0
+    }
 }
 
 Describe 'Get-SessionMetrics (live PID CPU/RAM)' {

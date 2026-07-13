@@ -874,6 +874,9 @@ function Get-SessionLogPath([int]$Issue) {
 # not exist yet (a session may not have produced output). Reads the whole file - fleet
 # logs are small and this stays simple + testable.
 function Get-LogTailLines([string]$Path, [int]$Count = 3) {
+    # Emits 0..N lines. NOTE: PowerShell unwraps a single-element result on capture
+    # ($r = Get-LogTailLines ...), so a caller that indexes must wrap it: @($tail)[0].
+    # Show-SessionFleet iterates with foreach, which is safe for a scalar or an array.
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return @() }
     $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
     # Drop trailing blank lines so the tail shows real output, not padding.
@@ -919,7 +922,9 @@ function Show-SessionFleet {
         $cli = if ($s.cli) { $s.cli } else { "claude" }
         Write-Host ("  #{0,-4} {1}  [{2}]" -f $s.issue, $s.branch, $cli) -ForegroundColor Yellow
         # Live CPU/RAM for the tracked PID (mockable Get-Process behind Get-SessionMetrics).
-        $metric = Format-SessionMetric (Get-SessionMetrics ([int]$s.sessionPid))
+        # Best-effort: a provider exception or a bad pid must never crash the dashboard loop.
+        $metric = "metricas n/d"
+        try { $metric = Format-SessionMetric (Get-SessionMetrics ([int]$s.sessionPid)) } catch { }
         Write-Host ("        PID {0} via {1} | {2} | host {3} | desde {4}" -f $s.sessionPid, $via, $metric, $s.host, $s.started) -ForegroundColor DarkGray
         if ($s.workPath) { Write-Host ("        {0}" -f $s.workPath) -ForegroundColor DarkGray }
         if ($s.repo -and $s.branch) {
@@ -930,9 +935,11 @@ function Show-SessionFleet {
                 }
             } catch { }
         }
-        # Tail of the session's redirected stream, when it has produced output.
-        $tail = Get-LogTailLines (Get-SessionLogPath ([int]$s.issue)) 3
-        foreach ($ln in $tail) { Write-Host ("        | {0}" -f $ln) -ForegroundColor DarkGray }
+        # Tail of the session's redirected stream, when it has produced output (best-effort).
+        try {
+            $tail = Get-LogTailLines (Get-SessionLogPath ([int]$s.issue)) 3
+            foreach ($ln in $tail) { Write-Host ("        | {0}" -f $ln) -ForegroundColor DarkGray }
+        } catch { }
     }
     Write-Host ""
     Write-Host ("Total: {0} sesion(es) viva(s). Las de PID muerto se podaron automaticamente." -f $sessions.Count) -ForegroundColor Cyan
