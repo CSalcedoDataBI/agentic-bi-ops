@@ -53,7 +53,7 @@ full context. Or do it by hand:
 
 ## Tests
 
-The suite lives in `plugins/agentic-board/tests/` (16 files, 213 tests). Run it locally before
+The suite lives in `plugins/agentic-board/tests/`. Run it locally before
 opening a PR — CI runs the same suite on every PR and **blocks the merge on any failure**:
 
 ```powershell
@@ -76,6 +76,26 @@ New behavior needs a test. Side-effecting scripts expose a dot-source guard (e.g
   the same one-time migration + fallback.
 - Keep the `gh` remote a bare URL; auth flows through the token env var, never a PAT baked into the
   URL.
+
+## Releasing
+
+`plugins/agentic-board/.claude-plugin/plugin.json` is the **single source of truth** for the
+version; the plugin entry in `.claude-plugin/marketplace.json` mirrors its `name` + `description`
+(nothing restates the version). `scripts/New-Release.ps1` prepares a release and **stops before
+committing** so you review the diff first:
+
+```powershell
+# from the repo root
+plugins/agentic-board/scripts/New-Release.ps1 -Check          # validate manifests + semver (no writes)
+plugins/agentic-board/scripts/New-Release.ps1 -Bump minor -DryRun   # preview current -> next
+plugins/agentic-board/scripts/New-Release.ps1 -Bump patch     # bump plugin.json + fold the CHANGELOG
+```
+
+It bumps the version (targeted, so the rest of `plugin.json` is byte-preserved), folds the board's
+Done issues into `CHANGELOG.md` under the new version (via `Board-Changelog.ps1`), and validates
+that `marketplace.json` hasn't drifted from `plugin.json` (`-SyncManifest` rewrites it from the
+source of truth). Then review `git diff` and commit `chore(release): X.Y.Z` yourself — tagging and
+pushing stay manual. `-Check` is exit-code clean (0 ok / 1 drift) so a CI gate can call it.
 
 ## Good first issues
 
