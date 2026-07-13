@@ -127,6 +127,10 @@ param(
     [switch]$Launch,
     [switch]$Fleet,
     [switch]$Sessions,
+    [switch]$Watch,
+    [switch]$AutoClean,
+    [int]   $WatchPollSec    = 30,
+    [int]   $WatchTimeoutSec = 1800,
     [int]   $ToReview   = 0,
     [int]   $Stop       = 0,
     [int]   $Relaunch   = 0,
@@ -1638,6 +1642,133 @@ function Invoke-FleetReap {
 }
 
 # ==============================================================================
+# WATCH LAYER (issue #135): auto-detect when the parallel/-Launch sessions finish and
+# (opt-in) auto-clean their worktrees + branches + registry entries. Detection is
+# read-only polling of observable state; the cleanup is guarded and DI-testable.
+# ==============================================================================
+
+# Is a watched session DONE? PURE -> unit-testable. A session finishes when its PR is
+# MERGED, its issue is CLOSED, or its host process is dead (the tab exited). Precedence
+# (merged > closed > pid-dead) picks the most informative reason. Returns {done, reason}.
+function Get-SessionCompletion {
+    param([string]$PrState = '', [string]$IssueState = '', [bool]$PidAlive = $true)
+    if ($PrState -eq 'MERGED')    { return [pscustomobject]@{ done = $true;  reason = 'PR merged' } }
+    if ($IssueState -eq 'CLOSED') { return [pscustomobject]@{ done = $true;  reason = 'issue cerrado' } }
+    if (-not $PidAlive)           { return [pscustomobject]@{ done = $true;  reason = 'proceso terminado' } }
+    return [pscustomobject]@{ done = $false; reason = 'en progreso' }
+}
+
+# Live completion of one registered session: PR state of its head branch + issue state +
+# whether the host PID is alive. Best-effort (never throws) so a transient gh failure just
+# reads as "still in progress". Wrapped so the watch loop is testable via an injected probe.
+function Get-SessionLiveStatus {
+    param([object]$Session)
+    $prState = ''; $issueState = ''
+    if ($Session.repo -and $Session.branch) {
+        try {
+            $prs = gh pr list --repo $Session.repo --head $Session.branch --state all --json state --limit 1 2>$null | ConvertFrom-Json
+            if ($prs -and $prs.Count -gt 0) { $prState = $prs[0].state }
+        } catch { }
+    }
+    if ($Session.repo -and $Session.issue) {
+        try {
+            $iss = gh issue view $Session.issue --repo $Session.repo --json state 2>$null | ConvertFrom-Json
+            if ($iss) { $issueState = $iss.state }
+        } catch { }
+    }
+    $pidAlive = [bool]($Session.sessionPid -and (Get-Process -Id $Session.sessionPid -ErrorAction SilentlyContinue))
+    return Get-SessionCompletion -PrState $prState -IssueState $issueState -PidAlive $pidAlive
+}
+
+# Remove one issue's entry from sessions.json (raw read, so a dead-PID pruning pass does
+# not interfere). No-op when the registry is absent. Used by auto-clean.
+function Remove-SessionRegistryEntry {
+    param([int]$IssueNum)
+    $p = Get-SessionRegistryPath
+    if (-not $p -or -not (Test-Path $p)) { return }
+    try { $entries = @(Get-Content $p -Raw | ConvertFrom-Json) } catch { return }
+    $kept = @($entries | Where-Object { [int]$_.issue -ne $IssueNum })
+    $kept | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
+}
+
+# Tear down a finished session: kill the tab shell FIRST (the `pwsh -NoExit` left cwd'd
+# inside the worktree keeps a handle -> `git worktree remove` fails with Permission denied),
+# then remove the worktree, delete the local branch, and prune the registry entry. Returns
+# the ordered list of action descriptions; with -DryRun it performs NONE of them (so the
+# planned teardown is unit-testable). The PID kill goes through the fail-safe Stop-ProcessTree
+# (self + ancestors never killed).
+function Invoke-SessionCleanup {
+    param([object]$Session, [switch]$DryRun)
+    $actions = @()
+    if ($Session.sessionPid) {
+        $actions += "kill PID $($Session.sessionPid) (libera el handle del worktree)"
+        if (-not $DryRun) { Stop-ProcessTree -TargetPid ([int]$Session.sessionPid) | Out-Null }
+    }
+    if ($Session.workPath) {
+        $actions += "git worktree remove --force $($Session.workPath)"
+        if (-not $DryRun) { git worktree remove --force $Session.workPath 2>&1 | Out-Null }
+    }
+    if ($Session.branch) {
+        $actions += "git branch -D $($Session.branch)"
+        if (-not $DryRun) { git branch -D $Session.branch 2>&1 | Out-Null }
+    }
+    $actions += "prune #$($Session.issue) de sessions.json"
+    if (-not $DryRun) { Remove-SessionRegistryEntry -IssueNum ([int]$Session.issue) }
+    return $actions
+}
+
+# Poll the registered sessions until all finish or the timeout hits. DI-testable: inject
+# -GetStatus (per-session probe), -Now (clock) and -Sleep so the loop runs with no gh, no
+# real time, no real sleep. With -AutoClean, each session is torn down once as it completes
+# (idempotent via a seen-set). Returns {allDone, timedOut, cleaned}.
+function Invoke-SessionWatch {
+    param(
+        [int]$PollSec = 30,
+        [int]$TimeoutSec = 1800,
+        [switch]$AutoClean,
+        [switch]$DryRun,
+        [scriptblock]$GetStatus = { param($s) Get-SessionLiveStatus $s },
+        [scriptblock]$ReadSessions = { Read-SessionRegistry },
+        [scriptblock]$Now = { Get-Date },
+        [scriptblock]$Sleep = { param($sec) Start-Sleep -Seconds $sec }
+    )
+    $start   = & $Now
+    $cleaned = @{}
+    while ($true) {
+        $sessions = @(& $ReadSessions)
+        if ($sessions.Count -eq 0) {
+            Write-Host "  No hay sesiones vivas que observar." -ForegroundColor DarkGray
+            return [pscustomobject]@{ allDone = $true; timedOut = $false; cleaned = @($cleaned.Keys) }
+        }
+        $pending = 0
+        foreach ($s in $sessions) {
+            $st = & $GetStatus $s
+            if ($st.done) {
+                Write-Host ("  #{0,-4} LISTO: {1}" -f $s.issue, $st.reason) -ForegroundColor Green
+                if ($AutoClean -and -not $cleaned.ContainsKey([int]$s.issue)) {
+                    $cleaned[[int]$s.issue] = $true
+                    foreach ($a in (Invoke-SessionCleanup -Session $s -DryRun:$DryRun)) {
+                        Write-Host ("         - {0}" -f $a) -ForegroundColor DarkGray
+                    }
+                }
+            } else {
+                $pending++
+                Write-Host ("  #{0,-4} ...   {1}" -f $s.issue, $st.reason) -ForegroundColor DarkGray
+            }
+        }
+        if ($pending -eq 0) {
+            Write-Host "  Todas las sesiones terminaron." -ForegroundColor Green
+            return [pscustomobject]@{ allDone = $true; timedOut = $false; cleaned = @($cleaned.Keys) }
+        }
+        if ((((& $Now) - $start)).TotalSeconds -ge $TimeoutSec) {
+            Write-Host ("  Timeout ({0}s) con {1} sesion(es) aun en progreso." -f $TimeoutSec, $pending) -ForegroundColor DarkYellow
+            return [pscustomobject]@{ allDone = $false; timedOut = $true; cleaned = @($cleaned.Keys) }
+        }
+        & $Sleep $PollSec
+    }
+}
+
+# ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
 # calls, no side effects - so the pure helpers can be unit-tested in isolation.
@@ -1791,10 +1922,24 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
 
 # ==============================================================================
 # MODE 0: -Sessions  -> monitor the local parallel-session fleet
+#         -Sessions -Watch [-AutoClean]  -> block until the sessions finish, then
+#         (opt-in) tear down their worktrees/branches/registry entries (issue #135).
 # ==============================================================================
 if ($Sessions) {
     Show-BranchDrift
     Show-SessionFleet
+    if ($Watch) {
+        Write-Host ""
+        Write-Host ("=== Watch (poll {0}s, timeout {1}s{2}) ===" -f $WatchPollSec, $WatchTimeoutSec, $(if ($AutoClean) { ', auto-clean' } else { '' })) -ForegroundColor Cyan
+        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun | Out-Null
+    }
+    exit 0
+}
+
+# -Watch without -Sessions and without a -Parallel run: still a valid standalone watch.
+if ($Watch -and $Parallel.Count -eq 0) {
+    Write-Host ("=== Watch (poll {0}s, timeout {1}s{2}) ===" -f $WatchPollSec, $WatchTimeoutSec, $(if ($AutoClean) { ', auto-clean' } else { '' })) -ForegroundColor Cyan
+    Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun | Out-Null
     exit 0
 }
 
@@ -2186,6 +2331,15 @@ if ($Parallel.Count -gt 0) {
             Write-Host ""
             Write-Host ("Lanzadas: {0} sesion(es). Cada una trabaja su issue hasta el PR + review gate." -f $launched) -ForegroundColor Yellow
         }
+    }
+
+    # -Watch: after launching, block here polling until every session finishes, then
+    # (with -AutoClean) tear down its worktree/branch/registry entry (issue #135). Skipped
+    # under -DryRun (nothing was spawned) and when nothing was launched.
+    if ($Watch -and -not $DryRun -and ($Launch -or $Fleet)) {
+        Write-Host ""
+        Write-Host ("=== Watch (poll {0}s, timeout {1}s{2}) ===" -f $WatchPollSec, $WatchTimeoutSec, $(if ($AutoClean) { ', auto-clean' } else { '' })) -ForegroundColor Cyan
+        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean | Out-Null
     }
 
     Write-Host ""

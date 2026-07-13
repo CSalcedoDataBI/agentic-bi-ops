@@ -1151,3 +1151,103 @@ Describe 'Get-AllPages (board pagination - issue #246)' {
         ($all | Where-Object { $_.content.number -eq 239 }).Count | Should -Be 1
     }
 }
+
+Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
+    It 'is done when the PR is MERGED' {
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true
+        $r.done | Should -BeTrue; $r.reason | Should -Match 'merged'
+    }
+    It 'is done when the issue is CLOSED' {
+        $r = Get-SessionCompletion -PrState 'OPEN' -IssueState 'CLOSED' -PidAlive $true
+        $r.done | Should -BeTrue; $r.reason | Should -Match 'cerrado'
+    }
+    It 'is done when the host PID is dead' {
+        $r = Get-SessionCompletion -PrState '' -IssueState 'OPEN' -PidAlive $false
+        $r.done | Should -BeTrue; $r.reason | Should -Match 'termin'
+    }
+    It 'is NOT done while the PR is open, the issue open, and the PID alive' {
+        (Get-SessionCompletion -PrState 'OPEN' -IssueState 'OPEN' -PidAlive $true).done | Should -BeFalse
+    }
+    It 'prefers the MERGED reason over pid-dead' {
+        (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false).reason | Should -Match 'merged'
+    }
+}
+
+Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
+    It 'plans kill -> worktree remove -> branch delete -> registry prune, in order, under -DryRun' {
+        $s = [pscustomobject]@{ issue = 9; branch = 'issue-9-x'; workPath = 'C:\wt\issue-9'; sessionPid = 4321 }
+        $acts = @(Invoke-SessionCleanup -Session $s -DryRun)
+        $acts.Count | Should -Be 4
+        $acts[0] | Should -Match 'kill PID 4321'
+        $acts[1] | Should -Match 'worktree remove --force'
+        $acts[2] | Should -Match 'branch -D issue-9-x'
+        $acts[3] | Should -Match 'prune #9'
+    }
+    It 'skips the PID-kill step when the session has no sessionPid' {
+        $s = [pscustomobject]@{ issue = 5; branch = 'issue-5-y'; workPath = 'C:\wt\issue-5'; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s -DryRun)
+        ($acts -join ' ') | Should -Not -Match 'kill PID'
+        ($acts -join ' ') | Should -Match 'prune #5'
+    }
+}
+
+Describe 'Remove-SessionRegistryEntry (prune one issue, #135)' {
+    It 'removes only the named issue and keeps the rest' {
+        $tmp = Join-Path $TestDrive 'sessions.json'
+        @(
+            [pscustomobject]@{ issue = 1; branch = 'a' },
+            [pscustomobject]@{ issue = 2; branch = 'b' }
+        ) | ConvertTo-Json -Depth 4 -AsArray | Set-Content $tmp
+        Mock Get-SessionRegistryPath { $tmp }
+        Remove-SessionRegistryEntry -IssueNum 1
+        $after = @(Get-Content $tmp -Raw | ConvertFrom-Json)
+        $after.Count | Should -Be 1
+        [int]$after[0].issue | Should -Be 2
+    }
+    It 'is a no-op when the registry file is absent' {
+        Mock Get-SessionRegistryPath { Join-Path $TestDrive 'missing.json' }
+        { Remove-SessionRegistryEntry -IssueNum 1 } | Should -Not -Throw
+    }
+}
+
+Describe 'Invoke-SessionWatch (DI poll loop, #135)' {
+    It 'returns allDone when every session is finished on the first poll' {
+        $r = Invoke-SessionWatch `
+            -ReadSessions { @([pscustomobject]@{ issue = 1 }, [pscustomobject]@{ issue = 2 }) } `
+            -GetStatus    { param($s) [pscustomobject]@{ done = $true; reason = 'PR merged' } } `
+            -Now { Get-Date } -Sleep { param($sec) }
+        $r.allDone  | Should -BeTrue
+        $r.timedOut | Should -BeFalse
+    }
+    It 'returns allDone when the registry is empty' {
+        $r = Invoke-SessionWatch -ReadSessions { @() } -Now { Get-Date } -Sleep { param($sec) }
+        $r.allDone | Should -BeTrue
+    }
+    It 'times out when a session stays in progress' {
+        $script:t = 0
+        $r = Invoke-SessionWatch -TimeoutSec 5 `
+            -ReadSessions { @([pscustomobject]@{ issue = 1 }) } `
+            -GetStatus    { param($s) [pscustomobject]@{ done = $false; reason = 'en progreso' } } `
+            -Now  { $script:t += 10; [datetime]::new(2026,1,1,0,0,0).AddSeconds($script:t) } `
+            -Sleep { param($sec) }
+        $r.timedOut | Should -BeTrue
+        $r.allDone  | Should -BeFalse
+    }
+    It 'auto-cleans each finished session exactly once' {
+        Mock Invoke-SessionCleanup { @('mock teardown') }
+        $r = Invoke-SessionWatch -AutoClean `
+            -ReadSessions { @([pscustomobject]@{ issue = 7 }) } `
+            -GetStatus    { param($s) [pscustomobject]@{ done = $true; reason = 'issue cerrado' } } `
+            -Now { Get-Date } -Sleep { param($sec) }
+        Should -Invoke Invoke-SessionCleanup -Times 1 -Exactly
+        $r.cleaned | Should -Contain 7
+    }
+    It 'does NOT clean when -AutoClean is off' {
+        Mock Invoke-SessionCleanup { @('should not run') }
+        Invoke-SessionWatch `
+            -ReadSessions { @([pscustomobject]@{ issue = 7 }) } `
+            -GetStatus    { param($s) [pscustomobject]@{ done = $true; reason = 'x' } } `
+            -Now { Get-Date } -Sleep { param($sec) } | Out-Null
+        Should -Invoke Invoke-SessionCleanup -Times 0 -Exactly
+    }
+}
