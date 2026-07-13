@@ -678,7 +678,7 @@ Describe 'Test-SlotFree (governor wait predicate)' {
 Describe 'Invoke-FleetDispatch (governor loop)' {
     It 'launches the whole queue across waves paced by capacity' {
         $script:running = 0
-        $launch = { param($item, $cli) $script:running++ ; 'ok' }
+        $launch = { param($item, $cli) $script:running++ ; $cli }   # hook returns the actual CLI
         $r = Invoke-FleetDispatch -Queue @(
                 [pscustomobject]@{ issue=1; cli='claude' }, [pscustomobject]@{ issue=2; cli='claude' }
                 [pscustomobject]@{ issue=3; cli='claude' }, [pscustomobject]@{ issue=4; cli='claude' }
@@ -693,26 +693,40 @@ Describe 'Invoke-FleetDispatch (governor loop)' {
         ($r | Group-Object wave | ForEach-Object Count) | Should -Be @(2,2,1)
     }
     It 'reroutes a known no-quota CLI to the claude fallback (runtime backoff)' {
-        $seen = @()
-        $launch = { param($item, $cli) $seen += $cli ; 'ok' }.GetNewClosure()
         $r = Invoke-FleetDispatch -Queue @([pscustomobject]@{ issue=9; cli='gemini' }) `
-               -NoQuotaClis @{ gemini = $true } -LaunchSession $launch `
+               -NoQuotaClis @{ gemini = $true } -LaunchSession { param($item, $cli) $cli } `
                -GetCapacity  { [pscustomobject]@{ FreeRamGB=100; Cores=16 } } `
                -CountRunning { 0 } -WaitForSlot { }
         $r[0].cli | Should -Be 'claude'
     }
     It 'passes an available CLI through unchanged' {
         $r = Invoke-FleetDispatch -Queue @([pscustomobject]@{ issue=9; cli='gemini' }) `
-               -LaunchSession { param($item,$cli) 'ok' } `
+               -LaunchSession { param($item,$cli) $cli } `
                -GetCapacity  { [pscustomobject]@{ FreeRamGB=100; Cores=16 } } `
                -CountRunning { 0 } -WaitForSlot { }
         $r[0].cli | Should -Be 'gemini'
+    }
+    It 'records the CLI the hook actually launched, not the pre-launch guess' {
+        # The hook re-resolves availability and returns the CLI it really used.
+        $r = Invoke-FleetDispatch -Queue @([pscustomobject]@{ issue=9; cli='gemini' }) `
+               -LaunchSession { param($item,$cli) 'claude' } `
+               -GetCapacity  { [pscustomobject]@{ FreeRamGB=100; Cores=16 } } `
+               -CountRunning { 0 } -WaitForSlot { }
+        $r[0].cli | Should -Be 'claude'
+    }
+    It 'terminates (does not hang/spin) when slots never free' {
+        # ceiling full forever + a no-op waiter: the stall guard must break, not loop.
+        $r = Invoke-FleetDispatch -Queue @([pscustomobject]@{ issue=1; cli='claude' }) `
+               -MaxStalls 3 -LaunchSession { param($i,$c) $c } `
+               -GetCapacity  { [pscustomobject]@{ FreeRamGB=100; Cores=16 } } `
+               -CountRunning { 999 } -WaitForSlot { }   # always full, waiting frees nothing
+        @($r).Count | Should -Be 0
     }
     It 'requires a LaunchSession hook' {
         { Invoke-FleetDispatch -Queue @([pscustomobject]@{ issue=1; cli='claude' }) } | Should -Throw
     }
     It 'does nothing on an empty queue' {
-        @(Invoke-FleetDispatch -Queue @() -LaunchSession { param($i,$c) 'ok' }).Count | Should -Be 0
+        @(Invoke-FleetDispatch -Queue @() -LaunchSession { param($i,$c) $c }).Count | Should -Be 0
     }
 }
 

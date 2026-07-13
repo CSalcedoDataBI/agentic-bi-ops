@@ -1218,8 +1218,9 @@ function Invoke-FleetDispatch {
         [int]$MaxConcurrent = 0,
         [double]$PerSessionGB = 2.0,
         [int]$CpuThreshold = 85,
+        [int]$MaxStalls = 120,            # consecutive zero-wave waits before giving up (never hang)
         [hashtable]$NoQuotaClis = @{},
-        [scriptblock]$LaunchSession,      # & $LaunchSession $item $cli -> status (the real spawn + register)
+        [scriptblock]$LaunchSession,      # & $LaunchSession $item $cli -> the actual CLI launched
         [scriptblock]$GetCapacity  = { Get-MachineCapacity },
         [scriptblock]$CountRunning = { @(Read-SessionRegistry).Count },
         [scriptblock]$WaitForSlot  = { Wait-FleetSlot -CpuThreshold $CpuThreshold }
@@ -1228,6 +1229,7 @@ function Invoke-FleetDispatch {
     $items = @($Queue)
     $idx = 0
     $waveNum = 0
+    $stalls = 0
     $launched = @()
     while ($idx -lt $items.Count) {
         $cap  = & $GetCapacity
@@ -1236,10 +1238,18 @@ function Invoke-FleetDispatch {
                                  -Pending ($items.Count - $idx) -Running $run `
                                  -PerSessionGB $PerSessionGB -MaxConcurrent $MaxConcurrent
         if ($plan.WaveSize -le 0) {
-            # Ceiling full: wait for a slot to free, then re-plan (never a busy spin).
+            # Ceiling full (sessions still running): wait for a slot to free, then re-plan.
+            # Bounded so a fleet of hung sessions that never free a slot can't loop forever -
+            # after MaxStalls consecutive zero-wave waits, give up and report the remainder.
+            $stalls++
+            if ($stalls -ge $MaxStalls) {
+                Write-Host ("  WARN governor: {0} issue(s) sin lanzar - no se liberaron slots tras {1} esperas." -f ($items.Count - $idx), $stalls) -ForegroundColor DarkYellow
+                break
+            }
             & $WaitForSlot | Out-Null
             continue
         }
+        $stalls = 0
         $waveNum++
         for ($k = 0; $k -lt $plan.WaveSize -and $idx -lt $items.Count; $k++, $idx++) {
             $item = $items[$idx]
@@ -1247,8 +1257,10 @@ function Invoke-FleetDispatch {
             # the issue still launches on the always-available claude fallback.
             $cli = $item.cli
             if ($cli -and $NoQuotaClis.ContainsKey($cli) -and $NoQuotaClis[$cli]) { $cli = 'claude' }
-            $status = & $LaunchSession $item $cli
-            $launched += [PSCustomObject]@{ issue = $item.issue; cli = $cli; wave = $waveNum; status = $status }
+            # Record the CLI the hook ACTUALLY launched (its return), not our pre-launch guess,
+            # so the dispatch result stays accurate if the hook re-resolves availability.
+            $actual = & $LaunchSession $item $cli
+            $launched += [PSCustomObject]@{ issue = $item.issue; cli = $actual; wave = $waveNum }
         }
         # Pace: if work remains, block until the next slot frees before the next wave.
         if ($idx -lt $items.Count) { & $WaitForSlot | Out-Null }
