@@ -1324,6 +1324,67 @@ function Invoke-FleetDispatch {
 }
 
 # ==============================================================================
+# Kill layer (Phase 2 task reaper foundation). Every kill path is guarded by
+# Get-SessionGuardSet (this session's PID + ancestor chain) so the tool can never
+# terminate itself, its terminal host, or the Claude host above it. Fleet sessions
+# are (re)parented DESCENDANTS -> not in the guard set -> stay killable.
+# ==============================================================================
+
+# Walk ParentProcessId from a start PID to the root over a pid->parentPid map. PURE ->
+# unit-testable. Returns start + ancestors, and is cycle-safe (a $seen set stops a loop).
+function Get-AncestorChain([int]$StartPid, [hashtable]$ParentMap) {
+    $chain = @()
+    $seen  = @{}
+    $cur   = $StartPid
+    while ($cur -and $cur -gt 0 -and -not $seen.ContainsKey($cur)) {
+        $chain += $cur
+        $seen[$cur] = $true
+        $cur = if ($ParentMap.ContainsKey($cur)) { [int]$ParentMap[$cur] } else { 0 }
+    }
+    return @($chain)
+}
+
+# Live pid->parentPid map from CIM. Thin (one reading) -> mocked in tests.
+function Get-ProcessParentMap {
+    $map = @{}
+    foreach ($p in @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)) {
+        $map[[int]$p.ProcessId] = [int]$p.ParentProcessId
+    }
+    return $map
+}
+
+# The never-kill set: the given session PID (default this process) + its ancestor chain.
+# ANCESTORS, not descendants: the fleet sessions are descendants and must stay killable,
+# but the coordinator + its hosts must never be a target.
+function Get-SessionGuardSet([int]$SelfPid = $PID) {
+    return @(Get-AncestorChain $SelfPid (Get-ProcessParentMap))
+}
+
+# Subtract the guard set from a target list. PURE -> unit-testable.
+function Remove-GuardedTargets([int[]]$Targets, [int[]]$Guard) {
+    return @($Targets | Where-Object { $Guard -notcontains $_ })
+}
+
+# Tree-deep force kill of a PID and every descendant via `taskkill /PID <id> /T /F`
+# (the reliable Windows tree-kill). REFUSES any PID in the guard set. -DryRun returns the
+# plan without executing, so the whole decision path is unit-testable with no real kill.
+function Stop-ProcessTree {
+    param([int]$TargetPid, [int[]]$Guard = @(), [switch]$DryRun)
+    if ($TargetPid -le 0) {
+        return [PSCustomObject]@{ Pid = $TargetPid; Refused = $true; Killed = $false; Reason = 'PID invalido' }
+    }
+    if ($Guard -contains $TargetPid) {
+        return [PSCustomObject]@{ Pid = $TargetPid; Refused = $true; Killed = $false; Reason = 'en el guard set (sesion actual o ancestro)' }
+    }
+    $cmd = "taskkill /PID $TargetPid /T /F"
+    if ($DryRun) {
+        return [PSCustomObject]@{ Pid = $TargetPid; Refused = $false; Killed = $false; DryRun = $true; Command = $cmd }
+    }
+    & taskkill /PID $TargetPid /T /F 2>&1 | Out-Null
+    return [PSCustomObject]@{ Pid = $TargetPid; Refused = $false; Killed = ($LASTEXITCODE -eq 0); Command = $cmd }
+}
+
+# ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
 # calls, no side effects - so the pure helpers can be unit-tested in isolation.
