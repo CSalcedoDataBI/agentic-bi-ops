@@ -1100,6 +1100,45 @@ function Build-FleetPlan([object[]]$Started, [hashtable]$CliMap) {
 }
 
 # ==============================================================================
+# Governor - machine capacity (Phase 2). Get-DispatchPlan/Invoke-FleetDispatch
+# pace launches to what the box can carry: free RAM / per-session budget, capped
+# by cores-2, and pausing while CPU is saturated.
+# ==============================================================================
+
+# Normalize raw readings into a capacity snapshot. PURE -> unit-testable (the live
+# CIM calls are isolated in Get-MachineCapacity). CpuLoads is the per-socket
+# LoadPercentage array (Win32_Processor returns one instance per socket); free/total
+# are physical memory in KB (Win32_OperatingSystem reports KB).
+function Get-MachineCapacityCore([object[]]$CpuLoads, [double]$FreePhysicalKB, [double]$TotalPhysicalKB, [int]$LogicalCores) {
+    # LoadPercentage can be momentarily $null; drop those before averaging, default 0.
+    $vals = @($CpuLoads | Where-Object { $_ -ne $null } | ForEach-Object { [double]$_ })
+    $cpu  = if ($vals.Count) { [int][math]::Round((($vals | Measure-Object -Average).Average), 0) } else { 0 }
+    if ($cpu -lt 0) { $cpu = 0 }
+    $freeGB  = [math]::Round(([math]::Max($FreePhysicalKB, 0)  / 1MB), 2)   # KB -> GB (1MB numeric = 1048576)
+    $totalGB = [math]::Round(([math]::Max($TotalPhysicalKB, 0) / 1MB), 2)
+    [PSCustomObject]@{
+        CpuLoadPercent = $cpu
+        FreeRamGB      = $freeGB
+        TotalRamGB     = $totalGB
+        Cores          = $LogicalCores
+    }
+}
+
+# Live capacity: read CPU load + physical memory via CIM and fold into the pure core.
+# CPU via Win32_Processor.LoadPercentage, NEVER Get-Counter (fails c0000bb8 on this
+# localized Windows - see the Phase 2 spec). LogicalCores defaults to the real count
+# but is injectable so the governor can cap/override and tests stay deterministic.
+function Get-MachineCapacity {
+    param([int]$LogicalCores = [Environment]::ProcessorCount)
+    $procs = @(Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue)
+    $loads = @($procs | ForEach-Object { $_.LoadPercentage })
+    $os    = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $free  = if ($os) { [double]$os.FreePhysicalMemory }     else { 0 }
+    $total = if ($os) { [double]$os.TotalVisibleMemorySize } else { 0 }
+    Get-MachineCapacityCore $loads $free $total $LogicalCores
+}
+
+# ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
 # calls, no side effects - so the pure helpers can be unit-tested in isolation.
