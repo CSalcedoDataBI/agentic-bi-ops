@@ -204,7 +204,11 @@ function Write-SessionRegistryEntry {
     if (-not $Branch -and $prev) { $Branch = $prev.branch }
     if (-not $WorkPath -and $prev) { $WorkPath = $prev.workPath }
     if (-not $Via -and $prev) { $Via = $prev.via }
-    if (-not $FleetSession -and $prev) { $FleetSession = $prev.fleetSession }
+    # NOTE: fleetSession is deliberately NOT carried forward. It is a per-LAUNCH
+    # fingerprint, not stable session identity - a later marker-less update (e.g. an
+    # in-place re-start of an issue that was previously fleet-launched) must NOT keep
+    # advertising the old marker, or the reaper would target a fingerprint that no
+    # longer matches the tracked process. Every fleet launch writes it explicitly.
     $entries = @(Read-SessionRegistry | Where-Object { $_.issue -ne $IssueNum })
     $entries += [PSCustomObject]@{
         issue        = $IssueNum
@@ -767,8 +771,11 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
     # environment for the whole script and inherited by the CLI child + grandchild. The
     # marker is validated to a bare token so it can never break out of the '...' literal.
     if ($fleetSession) {
-        if ($fleetSession -notmatch '^[A-Za-z0-9_-]+$') {
-            throw "FleetSession '$fleetSession' is not a bare marker token."
+        # Exact marker shape (<issue>-<runId>): digits, a single '-', then alphanumerics.
+        # '_' is deliberately NOT allowed - it is a WQL LIKE single-char wildcard, and this
+        # token is matched as a process fingerprint by the reaper (a '_' would over-match).
+        if ($fleetSession -notmatch '^[0-9]+-[A-Za-z0-9]+$') {
+            throw "FleetSession '$fleetSession' is not a valid marker token (<issue>-<runId>)."
         }
         $markerLine   = '$env:ABIOS_FLEET_SESSION=''{0}''' -f $fleetSession
         $launchScript = ($markerLine, $launchScript) -join "`r`n"

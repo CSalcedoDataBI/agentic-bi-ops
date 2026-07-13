@@ -341,6 +341,14 @@ Describe 'Build-WorktreeLaunch fleet marker (ABIOS_FLEET_SESSION)' {
         { Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' "x'; rm -rf /; #" } |
             Should -Throw
     }
+    It 'rejects an underscore (WQL LIKE single-char wildcard - unsafe as a fingerprint)' {
+        { Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' '42_abc' } |
+            Should -Throw
+    }
+    It 'rejects a marker that is not <issue>-<runId> shaped' {
+        { Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' 'abc-123' } |
+            Should -Throw
+    }
 }
 
 Describe 'Get-BranchDriftWarning (foreign-checkout guard)' {
