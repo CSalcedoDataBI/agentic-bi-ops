@@ -606,6 +606,46 @@ Describe 'Get-MachineCapacityCore (pure capacity math)' {
     }
 }
 
+Describe 'Get-DispatchPlan (wave size from capacity + caps)' {
+    It 'bounds the wave by free RAM / per-session budget' {
+        $p = Get-DispatchPlan -FreeRamGB 5 -Cores 16 -Pending 10 -PerSessionGB 2
+        $p.WaveSize | Should -Be 2          # floor(5/2)=2, well under cores-2 and pending
+        $p.BoundBy  | Should -Be 'ram'
+    }
+    It 'bounds the wave by cores-2 (the platform concurrency cap)' {
+        $p = Get-DispatchPlan -FreeRamGB 100 -Cores 4 -Pending 10 -PerSessionGB 2
+        $p.WaveSize | Should -Be 2          # cores-2 = 2
+        $p.BoundBy  | Should -Be 'cores'
+    }
+    It 'bounds the wave by an explicit -MaxConcurrent' {
+        $p = Get-DispatchPlan -FreeRamGB 100 -Cores 16 -Pending 10 -PerSessionGB 2 -MaxConcurrent 3
+        $p.WaveSize | Should -Be 3
+        $p.BoundBy  | Should -Be 'maxconcurrent'
+    }
+    It 'never launches more than the pending count' {
+        $p = Get-DispatchPlan -FreeRamGB 100 -Cores 16 -Pending 1 -PerSessionGB 2
+        $p.WaveSize | Should -Be 1
+        $p.BoundBy  | Should -Be 'pending'
+    }
+    It 'subtracts the sessions already running from the free slots' {
+        # allowed concurrent = min(floor(100/2)=50, cores-2=14, none) = 14; running 12 -> 2 free
+        $p = Get-DispatchPlan -FreeRamGB 100 -Cores 16 -Pending 10 -Running 12 -PerSessionGB 2
+        $p.WaveSize | Should -Be 2
+    }
+    It 'guarantees forward progress: >=1 when nothing runs and RAM looks exhausted' {
+        $p = Get-DispatchPlan -FreeRamGB 0.5 -Cores 16 -Pending 3 -Running 0 -PerSessionGB 2
+        $p.WaveSize | Should -Be 1          # ramCap floor=0, but launch 1 to avoid deadlock
+    }
+    It 'returns 0 when the concurrency ceiling is already full' {
+        $p = Get-DispatchPlan -FreeRamGB 100 -Cores 16 -Pending 5 -Running 14 -PerSessionGB 2
+        $p.WaveSize | Should -Be 0
+    }
+    It 'keeps cores-2 at a floor of 1 on a tiny box' {
+        $p = Get-DispatchPlan -FreeRamGB 100 -Cores 1 -Pending 5 -Running 0 -PerSessionGB 2
+        $p.WaveSize | Should -Be 1
+    }
+}
+
 Describe 'Get-MachineCapacity (live wrapper wiring)' {
     It 'wires the CIM readings into the pure core' {
         Mock Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Processor' } -MockWith {

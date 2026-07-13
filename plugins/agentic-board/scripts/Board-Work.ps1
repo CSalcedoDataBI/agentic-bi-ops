@@ -1138,6 +1138,48 @@ function Get-MachineCapacity {
     Get-MachineCapacityCore $loads $free $total $LogicalCores
 }
 
+# How many sessions to launch in the next wave. PURE -> unit-testable. The concurrency
+# ceiling is the MIN of: free RAM / per-session budget, cores-2 (the same cap the
+# platform uses, floored at 1), and an explicit -MaxConcurrent. The wave is the free
+# slots under that ceiling (ceiling - already running), never more than the pending
+# count. Forward-progress guard: when nothing is running yet, always launch at least 1
+# even if RAM looks exhausted (each session is recoverable in its own worktree, so the
+# governor may be aggressive rather than deadlock).
+function Get-DispatchPlan {
+    param(
+        [double]$FreeRamGB,
+        [int]$Cores,
+        [int]$Pending,
+        [int]$Running = 0,
+        [double]$PerSessionGB = 2.0,
+        [int]$MaxConcurrent = 0
+    )
+    $ramCap  = [int][math]::Floor($FreeRamGB / [math]::Max($PerSessionGB, 0.1))
+    $coreCap = [math]::Max($Cores - 2, 1)
+    # Named caps so the binding constraint can be reported (monitor / log visibility).
+    $caps = [ordered]@{ ram = $ramCap; cores = $coreCap }
+    if ($MaxConcurrent -gt 0) { $caps['maxconcurrent'] = $MaxConcurrent }
+    $ceiling  = ($caps.Values | Measure-Object -Minimum).Minimum
+    $capBound = ($caps.GetEnumerator() | Sort-Object Value | Select-Object -First 1).Key
+    $freeSlots = [math]::Max($ceiling - $Running, 0)
+    $wave      = [math]::Min($freeSlots, [math]::Max($Pending, 0))
+    # Which constraint actually decided the wave, for the narrator.
+    $boundBy = if ($Pending -lt $freeSlots) { 'pending' } else { $capBound }
+    # Never deadlock: if the queue has work and no session is live, launch one.
+    if ($wave -le 0 -and $Running -le 0 -and $Pending -gt 0) {
+        $wave = 1
+        $boundBy = 'progress-floor'
+    }
+    [PSCustomObject]@{
+        WaveSize     = [int]$wave
+        Concurrency  = [int]$ceiling
+        RamCap       = [int]$ramCap
+        CoreCap      = [int]$coreCap
+        BoundBy      = $boundBy
+        PerSessionGB = $PerSessionGB
+    }
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
