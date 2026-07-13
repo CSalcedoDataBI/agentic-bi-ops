@@ -296,6 +296,53 @@ Describe 'Build-WorktreeLaunch adapter parity' {
     }
 }
 
+Describe 'New-FleetSessionMarker (reaper fingerprint token)' {
+    It 'builds a <issue>-<runId> marker' {
+        New-FleetSessionMarker 42 'abc123' | Should -Be '42-abc123'
+    }
+    It 'strips characters that are unsafe in an env value / -like match' {
+        New-FleetSessionMarker 7 "a b'; rm/-x" | Should -Be '7-abrmx'
+    }
+    It 'is a bare token safe to embed and to match by -like (no quotes/spaces)' {
+        New-FleetSessionMarker 190 (New-FleetRunId) | Should -Match '^\d+-[A-Za-z0-9]+$'
+    }
+    It 'New-FleetRunId yields an 8-char lowercase-hex token' {
+        New-FleetRunId | Should -Match '^[0-9a-f]{8}$'
+    }
+}
+
+Describe 'Build-WorktreeLaunch fleet marker (ABIOS_FLEET_SESSION)' {
+    BeforeAll { Mock Get-Command -ParameterFilter { $Name -eq 'wt' } -MockWith { $null } }
+    It 'stamps ABIOS_FLEET_SESSION with the given marker when -FleetSession is passed' {
+        $p = Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' '42-abc123'
+        $p.launchScript | Should -Match "\`$env:ABIOS_FLEET_SESSION='42-abc123'"
+    }
+    It 'sets the marker BEFORE the CLI run line so the child + grandchild inherit it' {
+        $p = Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' '42-abc123'
+        $markerIdx = ($p.launchScript -split "`r?`n" | Select-String 'ABIOS_FLEET_SESSION').LineNumber
+        $runIdx    = ($p.launchScript -split "`r?`n" | Select-String 'claude -p ').LineNumber
+        $markerIdx | Should -BeLessThan $runIdx
+    }
+    It 'surfaces the marker on the returned plan object' {
+        $p = Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' '42-abc123'
+        $p.fleetSession | Should -Be '42-abc123'
+    }
+    It 'stamps every adapter, not just claude (adapter-agnostic prefix)' {
+        $p = Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'gemini' '42-abc123'
+        $p.launchScript | Should -Match "ABIOS_FLEET_SESSION='42-abc123'"
+        $p.launchScript | Should -Match 'gemini -p '
+    }
+    It 'adds NOTHING when -FleetSession is omitted (golden parity preserved)' {
+        $p = Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude'
+        $p.launchScript | Should -Not -Match 'ABIOS_FLEET_SESSION'
+        $p.fleetSession | Should -BeNullOrEmpty
+    }
+    It 'rejects a marker with injection characters (defense in depth)' {
+        { Build-WorktreeLaunch 42 'C:\wt' 'C:\brief.txt' 'abios-parallel' 'ANTHROPIC_API_KEY' 'claude' "x'; rm -rf /; #" } |
+            Should -Throw
+    }
+}
+
 Describe 'Get-BranchDriftWarning (foreign-checkout guard)' {
     BeforeAll {
         # Build a session-registry entry shaped like Write-SessionRegistryEntry writes.

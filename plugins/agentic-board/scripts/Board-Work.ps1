@@ -184,7 +184,8 @@ function Read-SessionRegistry {
 function Write-SessionRegistryEntry {
     param(
         [int]$IssueNum, [string]$Branch, [string]$WorkPath, [string]$Repo = "",
-        [int]$SessionPid = 0, [string]$Via = "", [string]$Cli = 'claude'
+        [int]$SessionPid = 0, [string]$Via = "", [string]$Cli = 'claude',
+        [string]$FleetSession = ''
     )
     $p = Get-SessionRegistryPath
     if (-not $p) { return }
@@ -203,17 +204,19 @@ function Write-SessionRegistryEntry {
     if (-not $Branch -and $prev) { $Branch = $prev.branch }
     if (-not $WorkPath -and $prev) { $WorkPath = $prev.workPath }
     if (-not $Via -and $prev) { $Via = $prev.via }
+    if (-not $FleetSession -and $prev) { $FleetSession = $prev.fleetSession }
     $entries = @(Read-SessionRegistry | Where-Object { $_.issue -ne $IssueNum })
     $entries += [PSCustomObject]@{
-        issue      = $IssueNum
-        repo       = $Repo
-        branch     = $Branch
-        workPath   = $WorkPath
-        sessionPid = $trackPid
-        via        = $Via
-        cli        = $Cli
-        host       = $env:COMPUTERNAME
-        started    = (Get-Date -Format "yyyy-MM-dd HH:mm")
+        issue        = $IssueNum
+        repo         = $Repo
+        branch       = $Branch
+        workPath     = $WorkPath
+        sessionPid   = $trackPid
+        via          = $Via
+        cli          = $Cli
+        fleetSession = $FleetSession
+        host         = $env:COMPUTERNAME
+        started      = (Get-Date -Format "yyyy-MM-dd HH:mm")
     }
     $entries | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
 }
@@ -685,6 +688,24 @@ function Get-SessionBriefing {
             "Work ONLY this issue - never touch other worktrees or issues. When the PR is merged and your findings recorded, you are done.")
 }
 
+# -- Fleet session marker (reaper fingerprint) ---------------------------------
+# Every fleet-spawned session is stamped at launch with ABIOS_FLEET_SESSION=<issue>-<runId>
+# in its generated launch-<n>.ps1, so the child (claude/gemini/...) and its CLI grandchild
+# carry it in their environment. The task reaper (Find-FleetOrphans) keys on this marker -
+# a far stronger discriminator than a bare binary name, since the operator runs many
+# unrelated claude/node processes.
+
+# A short per-run token that ties together all sessions launched in one dispatch.
+function New-FleetRunId { [guid]::NewGuid().ToString('N').Substring(0, 8) }
+
+# Compose the marker for one session. PURE -> unit-testable. The runId is reduced to a bare
+# alphanumeric token so the marker is safe to embed verbatim in a single-quoted env
+# assignment AND to match later with a WQL/`-like` fingerprint (no quotes, spaces or slashes).
+function New-FleetSessionMarker([int]$IssueNum, [string]$RunId) {
+    $safe = ($RunId -replace '[^A-Za-z0-9]', '')
+    return ("{0}-{1}" -f $IssueNum, $safe)
+}
+
 # Build the exact launch command for a worktree session. Returns an object
 # { launcher, args, briefingFile, launchScriptFile, launchScript } WITHOUT spawning -
 # pure enough to unit-test and to preview under -DryRun. Windows Terminal tab when
@@ -699,7 +720,7 @@ function Get-SessionBriefing {
 # launch-<issue>.ps1 and launching `pwsh -NoExit -File <script>` puts ZERO ';' on
 # wt's command line, so wt opens exactly one tab. The briefing is likewise passed by
 # file so no long/quoted text ever hits the command line.
-function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY", [string]$Cli = 'claude') {
+function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefingFile, [string]$windowName = "abios-parallel", [string]$claudeAuthVar = "ANTHROPIC_API_KEY", [string]$Cli = 'claude', [string]$fleetSession = '') {
     $tabTitle  = "issue-$issueNum"
     # Defense-in-depth: this name is interpolated into the spawned launch script,
     # so it MUST be a bare env-var identifier - never let ';'/quotes/spaces through.
@@ -742,6 +763,16 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
     $adapter = Get-CliAdapters | Where-Object { $_.Name -eq $Cli } | Select-Object -First 1
     if (-not $adapter) { throw "Unknown CLI adapter '$Cli'." }
     $launchScript = & $adapter.BuildLaunch $ctx
+    # Stamp the reaper fingerprint FIRST (adapter-agnostic prefix), so it is in the
+    # environment for the whole script and inherited by the CLI child + grandchild. The
+    # marker is validated to a bare token so it can never break out of the '...' literal.
+    if ($fleetSession) {
+        if ($fleetSession -notmatch '^[A-Za-z0-9_-]+$') {
+            throw "FleetSession '$fleetSession' is not a bare marker token."
+        }
+        $markerLine   = '$env:ABIOS_FLEET_SESSION=''{0}''' -f $fleetSession
+        $launchScript = ($markerLine, $launchScript) -join "`r`n"
+    }
     # The launch script lives next to the briefing (same dir the caller chose).
     $launchScriptFile = Join-Path (Split-Path -Parent $briefingFile) "launch-$issueNum.ps1"
     $safeScriptPath   = $launchScriptFile   # a plain path arg (its own arg element -> Start-Process quotes it)
@@ -753,6 +784,7 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
             briefingFile     = $briefingFile
             launchScriptFile = $launchScriptFile
             launchScript     = $launchScript
+            fleetSession     = $fleetSession
             usesWt           = $true
         }
     }
@@ -762,6 +794,7 @@ function Build-WorktreeLaunch([int]$issueNum, [string]$workPath, [string]$briefi
         briefingFile     = $briefingFile
         launchScriptFile = $launchScriptFile
         launchScript     = $launchScript
+        fleetSession     = $fleetSession
         usesWt           = $false
     }
 }
@@ -782,11 +815,12 @@ function Start-WorktreeSession {
         [int]$IssueNum, [string]$Repo, [string]$Branch, [string]$WorkPath,
         [string]$ClaudeAuthVar = "ANTHROPIC_API_KEY",
         [string]$Cli = 'claude',
+        [string]$FleetSession = '',
         [switch]$Preview
     )
     $abios = Get-AbiosDir
     $briefingFile = if ($abios) { Join-Path $abios "briefing-$IssueNum.txt" } else { Join-Path $WorkPath "briefing-$IssueNum.txt" }
-    $plan  = Build-WorktreeLaunch $IssueNum $WorkPath $briefingFile "abios-parallel" $ClaudeAuthVar $Cli
+    $plan  = Build-WorktreeLaunch $IssueNum $WorkPath $briefingFile "abios-parallel" $ClaudeAuthVar $Cli $FleetSession
 
     if ($Preview) {
         Write-Host ("  [preview] #{0}: {1} {2}" -f $IssueNum, $plan.launcher, ($plan.args -join ' ')) -ForegroundColor Gray
@@ -1380,19 +1414,22 @@ if ($Parallel.Count -gt 0) {
             $map       = Select-CliPerIssue -Issues $issueNums -Availability $availability
             $fleetPlan = Build-FleetPlan -Started $started -CliMap $map
             $launched  = 0
+            # One runId ties every session of this dispatch together for the reaper.
+            $runId = New-FleetRunId
             foreach ($entry in $fleetPlan) {
                 if (-not $entry.workPath) { continue }
                 # The picker already resolved through the fallback, but re-resolve at spawn
                 # time so an unavailable CLI never actually launches (defense in depth).
                 $actualCli = Resolve-LaunchCli -Chosen $entry.cli -Availability $availability
+                $marker    = New-FleetSessionMarker $entry.issue $runId
                 $spawn = Start-WorktreeSession -IssueNum $entry.issue -Repo $entry.repo -Branch $entry.branch `
-                                               -WorkPath $entry.workPath -ClaudeAuthVar $ClaudeAuthVar -Cli $actualCli
+                                               -WorkPath $entry.workPath -ClaudeAuthVar $ClaudeAuthVar -Cli $actualCli -FleetSession $marker
                 $launched++
                 $via = if ($spawn.usesWt) { "wt" } else { "pwsh" }
                 if ($spawn.process -and -not $spawn.usesWt) {
-                    Write-SessionRegistryEntry -IssueNum $entry.issue -SessionPid $spawn.process.Id -Via $via -Cli $actualCli
+                    Write-SessionRegistryEntry -IssueNum $entry.issue -SessionPid $spawn.process.Id -Via $via -Cli $actualCli -FleetSession $marker
                 } else {
-                    Write-SessionRegistryEntry -IssueNum $entry.issue -Via $via -Cli $actualCli
+                    Write-SessionRegistryEntry -IssueNum $entry.issue -Via $via -Cli $actualCli -FleetSession $marker
                 }
             }
             Write-Host ""
@@ -1409,11 +1446,13 @@ if ($Parallel.Count -gt 0) {
         }
         if ($DryRun) {
             Write-Host "----- LAUNCH (preview, -DryRun no lanza nada) -----" -ForegroundColor Cyan
+            $runId = New-FleetRunId
             foreach ($r in $planned) {
                 # Use the SAME path logic as real creation so the preview matches (see
                 # New-IssueWorktree / Get-IssueWorktreePath - the grouped-worktree layout).
                 $previewPath = Get-IssueWorktreePath $r.repo $r.issue (Split-Path (Get-Location) -Parent)
-                Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $previewPath -ClaudeAuthVar $ClaudeAuthVar -Preview | Out-Null
+                $marker = New-FleetSessionMarker $r.issue $runId
+                Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $previewPath -ClaudeAuthVar $ClaudeAuthVar -FleetSession $marker -Preview | Out-Null
             }
         } else {
             Write-Host "----- LANZANDO SESIONES CLAUDE -----" -ForegroundColor Cyan
@@ -1435,17 +1474,20 @@ if ($Parallel.Count -gt 0) {
                 exit 0
             }
             $launched = 0
+            # One runId ties every session of this launch together for the reaper.
+            $runId = New-FleetRunId
             foreach ($r in $started) {
                 if ($r.workPath) {
-                    $spawn = Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $r.workPath -ClaudeAuthVar $ClaudeAuthVar
+                    $marker = New-FleetSessionMarker $r.issue $runId
+                    $spawn = Start-WorktreeSession -IssueNum $r.issue -Repo $r.repo -Branch $r.branch -WorkPath $r.workPath -ClaudeAuthVar $ClaudeAuthVar -FleetSession $marker
                     $launched++
                     # Track the spawned session's own PID (pwsh window is reliable; a wt
                     # launcher forks and exits, so keep the host PID there).
                     $via = if ($spawn.usesWt) { "wt" } else { "pwsh" }
                     if ($spawn.process -and -not $spawn.usesWt) {
-                        Write-SessionRegistryEntry -IssueNum $r.issue -SessionPid $spawn.process.Id -Via $via
+                        Write-SessionRegistryEntry -IssueNum $r.issue -SessionPid $spawn.process.Id -Via $via -FleetSession $marker
                     } else {
-                        Write-SessionRegistryEntry -IssueNum $r.issue -Via $via
+                        Write-SessionRegistryEntry -IssueNum $r.issue -Via $via -FleetSession $marker
                     }
                 }
             }
