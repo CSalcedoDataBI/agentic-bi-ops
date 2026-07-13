@@ -898,6 +898,11 @@ Describe 'Invoke-FleetReap (guard-safe orphan/fleet kill)' {
     It 'does nothing on an empty candidate set' {
         @(Invoke-FleetReap -Candidates @() -SelfPid 500 -ParentMap $script:RMap -DryRun).Count | Should -Be 0
     }
+    It 'FAILS CLOSED when the session registry cannot be read (refuses every candidate)' {
+        Mock Read-SessionRegistry -MockWith { throw 'registro corrupto' }
+        $r = Invoke-FleetReap -Candidates $script:Cands -SelfPid 500 -ParentMap $script:RMap -DryRun
+        @($r | Where-Object { -not $_.Refused }).Count | Should -Be 0
+    }
 }
 
 Describe 'Get-MachineCapacity (live wrapper wiring)' {

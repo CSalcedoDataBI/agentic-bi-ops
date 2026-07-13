@@ -1506,8 +1506,16 @@ function Invoke-FleetReap {
     )
     if (-not $ParentMap) { try { $ParentMap = Get-ProcessParentMap } catch { $ParentMap = @{} } }
     # Always protect every live registry session, regardless of the caller-supplied guard.
-    $liveGuard = @()
-    try { $liveGuard = @(Read-SessionRegistry | ForEach-Object { [int]$_.sessionPid }) } catch { }
+    # FAIL CLOSED: a registry READ FAILURE (throw) is distinct from a legitimately empty
+    # registry - if we cannot enumerate live sessions we cannot verify safety, so refuse
+    # everything rather than proceed with an empty guard.
+    $liveGuard = $null
+    try { $liveGuard = @(Read-SessionRegistry | ForEach-Object { [int]$_.sessionPid }) } catch { $liveGuard = $null }
+    if ($null -eq $liveGuard) {
+        return @(@($Candidates) | ForEach-Object {
+            [PSCustomObject]@{ Pid = [int]$_.ProcessId; Refused = $true; Killed = $false; Reason = 'no se pudo leer el registro de sesiones - fail-closed' }
+        })
+    }
     $fullGuard = @(@($Guard) + $liveGuard) | Select-Object -Unique
     $results = @()
     foreach ($c in @($Candidates)) {
