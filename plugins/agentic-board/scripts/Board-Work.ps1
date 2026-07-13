@@ -130,6 +130,8 @@ param(
     [int]   $ToReview   = 0,
     [int]   $Stop       = 0,
     [int]   $Relaunch   = 0,
+    [int]   $Lock       = 0,
+    [int]   $Unlock     = 0,
     [switch]$Reap,
     [switch]$KillAll,
     [switch]$Force,
@@ -437,6 +439,73 @@ function Get-LastClaim([string]$repo, [int]$issueNum) {
     return (gh api "repos/$repo/issues/$issueNum/comments" --jq '[.[] | select(.body | startswith("[abios-claim]"))] | last | .body' 2>$null)
 }
 
+# Build the durable [abios-claim] fingerprint comment body. Pure -> unit-testable,
+# and the single source of the fingerprint format: -Start posts it (claim/TAKEOVER)
+# and the -Lock/-Unlock subcommand posts it (LOCK/UNLOCK) so they never drift.
+function Format-ClaimFingerprint {
+    param([string]$Note, [string]$Computer, [int]$ProcessId, [string]$Date, [string]$Branch = '')
+    $tail = if ($Branch) { " - rama $Branch" } else { "" }
+    return "[abios-claim] $Note por sesion Claude en $Computer (PID $ProcessId) - $Date$tail"
+}
+
+# Decide whether an issue already has landed/active work that -Start should refuse,
+# EVEN with no [abios-claim] comment (issue #236: a session can merge to main without
+# posting a formal claim, and the assignee is always the shared bot owner). Pure ->
+# unit-testable. $Prs: objects with .number/.state (OPEN|MERGED|CLOSED); $Commits:
+# objects with .sha (already filtered to those citing this issue on the default
+# branch). Returns a human reason or '' (no refusal). Precedence: a MERGED PR or an
+# integrated commit means the work is DONE; an OPEN PR means a session is mid-flight.
+# CLOSED-unmerged PRs are ignored so an abandoned attempt never blocks a fresh start.
+function Get-PriorWorkRefusal {
+    param([object[]]$Prs = @(), [object[]]$Commits = @())
+    $merged = @($Prs | Where-Object { $_.state -eq 'MERGED' })
+    if ($merged.Count -gt 0) {
+        return "ya tiene un PR MERGED (#$($merged[0].number)) - el trabajo ya esta en la rama por defecto"
+    }
+    if (@($Commits).Count -gt 0) {
+        $sha   = "$($Commits[0].sha)"
+        $short = if ($sha.Length -ge 7) { $sha.Substring(0, 7) } else { $sha }
+        return "un commit ($short) ya cita este issue en la rama por defecto - trabajo integrado"
+    }
+    $open = @($Prs | Where-Object { $_.state -eq 'OPEN' })
+    if ($open.Count -gt 0) {
+        return "tiene un PR abierto (#$($open[0].number)) - otra sesion probablemente lo trabaja"
+    }
+    return ''
+}
+
+# Gather landed/active work signals for an issue: PRs that would close it, and
+# default-branch commits whose subject cites (#n). Best-effort (never throws) so a
+# transient gh failure degrades to "no prior work" instead of blocking a start.
+# Wrapped so Invoke-IssueStart's PR/commit-aware refusal is unit-testable via a mock.
+function Get-IssueLinkedWork {
+    param([string]$Repo, [int]$IssueNum)
+    $prs = @(); $commits = @()
+    $rp = $Repo -split '/'
+    try {
+        $data = gh api graphql -f query='
+query($o:String!,$r:String!,$n:Int!){
+  repository(owner:$o,name:$r){
+    issue(number:$n){
+      closedByPullRequestsReferences(first:10, includeClosedPrs:true){
+        nodes { number state }
+      }
+    }
+  }
+}' -F "o=$($rp[0])" -F "r=$($rp[1])" -F "n=$IssueNum" 2>$null | ConvertFrom-Json
+        $prs = @($data.data.repository.issue.closedByPullRequestsReferences.nodes)
+    } catch { }
+    # GitHub commit search indexes the DEFAULT branch. Filter to the exact (#n) token
+    # so #12 never matches #123 (substring search would).
+    try {
+        $hits = gh search commits "#$IssueNum" --repo $Repo --json sha,commit --limit 20 2>$null | ConvertFrom-Json
+        $rx = "\(#$IssueNum\)"
+        $commits = @($hits | Where-Object { $_.commit.message -match $rx } |
+                     ForEach-Object { [pscustomobject]@{ sha = $_.sha } })
+    } catch { }
+    return [pscustomobject]@{ prs = $prs; commits = $commits }
+}
+
 # Where an issue's worktree lives: <parent>/<repo>--worktrees/issue-<n>. Pure ->
 # unit-testable. All worktrees are GROUPED under one `<repo>--worktrees` folder
 # (instead of scattered siblings `<repo>--issue-<n>`), which keeps the repo's parent
@@ -544,6 +613,20 @@ function Invoke-IssueStart {
         return $result
     }
 
+    # PR/commit-aware refusal (issue #236): even with NO [abios-claim] comment and the
+    # shared bot owner, a merged/open PR or an integrated commit citing (#n) means the
+    # issue is already worked - refuse so a second session cannot clobber landed work.
+    if (-not $TakeOver) {
+        $linked = Get-IssueLinkedWork $repo $IssueNum
+        $priorReason = Get-PriorWorkRefusal -Prs $linked.prs -Commits $linked.commits
+        if ($priorReason) {
+            $result.skipped = "YA TRABAJADO: $priorReason"
+            Write-Host "  SKIP #${IssueNum}: $($result.skipped)" -ForegroundColor Red
+            Write-Host "         Re-ejecuta con -TakeOver si de verdad quieres re-trabajarlo." -ForegroundColor Yellow
+            return $result
+        }
+    }
+
     $branchName    = Get-IssueSlugBranch $IssueNum $item.content.title
     $result.branch = $branchName
 
@@ -576,7 +659,7 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
 
     # -- Execute: claim fingerprint (multi-session diagnostics) -----------------
     $claimNote = if ($TakeOver) { "TAKEOVER" } else { "claim" }
-    $fingerprint = "[abios-claim] $claimNote por sesion Claude en $env:COMPUTERNAME (PID $PID) - $(Get-Date -Format 'yyyy-MM-dd HH:mm') - rama $branchName"
+    $fingerprint = Format-ClaimFingerprint -Note $claimNote -Computer $env:COMPUTERNAME -ProcessId $PID -Date (Get-Date -Format 'yyyy-MM-dd HH:mm') -Branch $branchName
     try {
         gh issue comment $IssueNum --repo $repo --body $fingerprint | Out-Null
         Write-Host "  OK  Claim registrado ($claimNote)" -ForegroundColor Green
@@ -1646,6 +1729,65 @@ if (-not $env:GH_TOKEN) {
     $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
 }
 if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
+
+# ==============================================================================
+# LOCK MODE: -Lock <n> / -Unlock <n>  -> in ONE step mark an issue owned-elsewhere
+# (post the [abios-claim] fingerprint, move Status, AND assign the owner) WITHOUT
+# starting or branching it locally (issue #236). Assigning the owner is what makes
+# the lock EFFECTIVE: it puts the issue in the exact In Progress + assigned state
+# that Invoke-IssueStart's existing multi-session guard refuses (a status move alone
+# would not - that guard requires an assignee). Symmetric: -Unlock posts an UNLOCK
+# claim, moves Status back to Backlog, and unassigns the owner.
+# ==============================================================================
+if ($Lock -gt 0 -or $Unlock -gt 0) {
+    if ($ProjectNum -le 0) { throw "-Lock/-Unlock necesitan -ProjectNum <n> para mover el Status." }
+    $lockUrl = Get-BoardUrl $ProjectNum
+    $locking = ($Lock -gt 0)
+    $n       = if ($locking) { $Lock } else { $Unlock }
+    $ctx     = Resolve-BoardStatus $Owner $ProjectNum
+    $item    = Get-BoardItem $ctx.projectId $n
+    if (-not $item) { throw "Issue #$n no esta en el board #$ProjectNum." }
+    $repo       = $item.content.repository.nameWithOwner
+    $note       = if ($locking) { 'LOCK' } else { 'UNLOCK' }
+    $targetName = if ($locking) { 'In Progress' } else { 'Backlog' }
+    $targetOpt  = if ($locking) { $ctx.inProgId } else { ($ctx.statusNode.options | Where-Object { $_.name -eq 'Backlog' }).id }
+    $fingerprint = Format-ClaimFingerprint -Note $note -Computer $env:COMPUTERNAME -ProcessId $PID -Date (Get-Date -Format 'yyyy-MM-dd HH:mm')
+
+    $assignVerb = if ($locking) { "asignar a $Owner" } else { "desasignar a $Owner" }
+    if ($DryRun) {
+        Write-Host ("DRY-RUN: #{0} -> Status {1} + {2} + comentario [abios-claim] {3} (no ejecutado)." -f $n, $targetName, $assignVerb, $note) -ForegroundColor Gray
+        Write-Host "Board: $lockUrl" -ForegroundColor Cyan
+        exit 0
+    }
+
+    gh issue comment $n --repo $repo --body $fingerprint | Out-Null
+    if ($targetOpt) {
+        gh api graphql -f query='
+mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
+  updateProjectV2ItemFieldValue(input:{
+    projectId:$proj, itemId:$item, fieldId:$field,
+    value:{singleSelectOptionId:$opt}
+  }) { projectV2Item { id } }
+}' -f "proj=$($ctx.projectId)" -f "item=$($item.id)" -f "field=$($ctx.statusNode.id)" -f "opt=$targetOpt" | Out-Null
+        Write-Host ("OK  #{0} Status -> {1}" -f $n, $targetName) -ForegroundColor Green
+    } else {
+        Write-Host ("WARN el board no tiene la opcion '{0}' en Status - solo se posteo el comentario {1}." -f $targetName, $note) -ForegroundColor DarkYellow
+    }
+    # Assign (lock) / unassign (unlock) the owner so the In Progress + assigned state
+    # that Invoke-IssueStart's guard checks for is real - a status move alone is not
+    # enough to make -Start refuse (Codex review, PR #268).
+    try {
+        $method = if ($locking) { 'POST' } else { 'DELETE' }
+        gh api "repos/$repo/issues/$n/assignees" -X $method -F "assignees[]=$Owner" | Out-Null
+        Write-Host ("OK  #{0} {1}" -f $n, $assignVerb) -ForegroundColor Green
+    } catch {
+        Write-Host ("WARN no se pudo {0}: {1}" -f $assignVerb, $_) -ForegroundColor DarkYellow
+    }
+    $verb = if ($locking) { 'bloqueado (otra sesion lo trabaja)' } else { 'desbloqueado (liberado)' }
+    Write-Host ("OK  #{0} {1} - [abios-claim] {2} posteado." -f $n, $verb, $note) -ForegroundColor Green
+    Write-Host "Board: $lockUrl" -ForegroundColor Cyan
+    exit 0
+}
 
 # ==============================================================================
 # MODE 0: -Sessions  -> monitor the local parallel-session fleet

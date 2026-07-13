@@ -30,11 +30,14 @@ for the user to pick (they can answer with just the number):
 /scan       → escanear ESTE proyecto por trabajo sin trackear (TODOs, checklists, planes) → issues + plan
 /skills     → ciclo de vida de Agent Skills (organize / audit / bootstrap)
 /knowledge  → registro de referencias externas por dominio (add / harvest / wiki)
+/abios-feedback → ¿bug o mejora para ESTA herramienta? la captura como issue SANITIZADO en el repo del tool
 ```
 
 If the user picks one of the **otros módulos** (or types its name), do NOT run a board
 sub-action — tell them it is a separate command and to invoke it directly (`/scan`, `/skills`,
-`/knowledge`); this menu lists them only so the whole tool is discoverable from one entry point.
+`/knowledge`, `/abios-feedback`); this menu lists them only so the whole tool is discoverable
+from one entry point. `abios-feedback` matters: users assume the plugin has no feedback channel —
+it does, and it sanitizes private data before filing to the tool's own public board.
 
 When they answer with a board option (number or name), execute that sub-action following the
 instructions below.
@@ -70,8 +73,13 @@ matching recipe from the projects-admin references:
      what, where) — dead-PID entries are pruned automatically.
      **Multi-session lock:** `-Start` also refuses an issue already In Progress + assigned
      (another Claude session probably has it — the last `[abios-claim]` fingerprint comment is
-     shown). `-TakeOver` retakes it on purpose (dead session / deliberate handoff) and posts a
-     TAKEOVER claim. Every successful start posts a claim comment (hostname, PID, time, branch).
+     shown). It ALSO refuses when the issue already has a MERGED/OPEN PR or a default-branch
+     commit citing `(#n)` — even with no claim comment and the shared bot owner — so a second
+     session cannot clobber already-landed work. `-TakeOver` retakes it on purpose (dead session
+     / deliberate handoff) and posts a TAKEOVER claim. Every successful start posts a claim
+     comment (hostname, PID, time, branch). To reserve an issue for ANOTHER machine without
+     starting it here, use `Board-Work.ps1 -ProjectNum <n> -Lock <issueNum>` (posts the LOCK
+     claim + moves Status to In Progress; symmetric `-Unlock <issueNum>` releases it).
   4. **Start it.** Run with `-ProjectNum <n> -Start <issueNum> -Branch` — moves the item to
      In Progress, assigns the owner, creates + checks out the work branch `issue-<num>-<slug>`
      (when the cwd is a clone of the issue's repo), and prints the full issue context (body,

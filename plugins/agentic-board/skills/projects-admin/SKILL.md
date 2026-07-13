@@ -185,6 +185,15 @@ Notes:
 - **Multi-session lock**: `-Start` refuses an issue already In Progress + assigned (shows the
   last `[abios-claim]` fingerprint comment: hostname, PID, time, branch). `-TakeOver` retakes it
   deliberately and posts a TAKEOVER claim. GitHub is the lock — it works across machines too.
+- **PR/commit-aware refusal**: `-Start` also refuses when the issue already has a **MERGED PR**,
+  an **OPEN PR**, or a default-branch **commit citing `(#n)`** — even with NO `[abios-claim]`
+  comment and the shared bot owner (a session can land work on `main` without posting a formal
+  claim). This stops a second session from clobbering already-merged work. `-TakeOver` overrides.
+- **Explicit lock (`-Lock <n>` / `-Unlock <n>`)**: mark an issue owned-elsewhere in ONE step —
+  posts the `[abios-claim]` LOCK fingerprint AND moves Status to In Progress — WITHOUT starting or
+  branching it locally (needs `-ProjectNum`). Symmetric `-Unlock <n>` posts an UNLOCK claim and
+  moves Status back to Backlog. Use it to reserve an issue for another machine/session. `-DryRun`
+  previews.
 - **Session registry**: every successful `-Start` records `{issue, branch, workPath, sessionPid,
   host, started}` in `.agentic-board/sessions.json` next to the MAIN clone (shared across
   worktrees, gitignored). The pending list shows live local sessions; entries with dead PIDs are

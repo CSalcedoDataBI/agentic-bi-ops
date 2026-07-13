@@ -412,8 +412,9 @@ Describe 'Get-BranchDriftWarning (foreign-checkout guard)' {
 
 Describe 'Invoke-IssueStart safety refusals + dry-run' {
     BeforeEach {
-        Mock Get-IssueBlockers { @() }          # not blocked unless a test overrides
-        Mock Get-LastClaim     { '' }           # never hit the network for the claim
+        Mock Get-IssueBlockers   { @() }        # not blocked unless a test overrides
+        Mock Get-LastClaim       { '' }         # never hit the network for the claim
+        Mock Get-IssueLinkedWork { [pscustomobject]@{ prs = @(); commits = @() } }  # no prior work
     }
 
     It 'skips a CLOSED issue without starting it' {
@@ -468,6 +469,74 @@ Describe 'Invoke-IssueStart safety refusals + dry-run' {
         $r.dryRun  | Should -BeTrue
         $r.skipped | Should -Be ''
         $r.branch  | Should -Match '^issue-1-'
+    }
+
+    It 'refuses an issue with a MERGED PR even without a claim (#236)' {
+        Mock Get-BoardItem       { New-FakeItem }   # Backlog, unassigned - old lock would pass
+        Mock Get-IssueLinkedWork { [pscustomobject]@{ prs = @([pscustomobject]@{ number = 9; state = 'MERGED' }); commits = @() } }
+        $r = Invoke-IssueStart -IssueNum 1 -Ctx $script:Ctx -Owner 'me'
+        $r.started | Should -BeFalse
+        $r.skipped | Should -Match 'YA TRABAJADO'
+        $r.skipped | Should -Match 'MERGED'
+    }
+
+    It 'refuses an issue with an integrated commit citing it (#236)' {
+        Mock Get-BoardItem       { New-FakeItem }
+        Mock Get-IssueLinkedWork { [pscustomobject]@{ prs = @(); commits = @([pscustomobject]@{ sha = 'abcdef1234' }) } }
+        $r = Invoke-IssueStart -IssueNum 1 -Ctx $script:Ctx -Owner 'me'
+        $r.started | Should -BeFalse
+        $r.skipped | Should -Match 'YA TRABAJADO'
+    }
+
+    It '-TakeOver overrides the PR/commit refusal (reaches the plan)' {
+        Mock Get-BoardItem       { New-FakeItem }
+        Mock Get-IssueLinkedWork { [pscustomobject]@{ prs = @([pscustomobject]@{ number = 9; state = 'MERGED' }); commits = @() } }
+        $r = Invoke-IssueStart -IssueNum 1 -Ctx $script:Ctx -Owner 'me' -TakeOver -DryRunStart
+        $r.skipped | Should -Be ''
+        $r.dryRun  | Should -BeTrue
+    }
+}
+
+Describe 'Format-ClaimFingerprint (single source of the [abios-claim] format)' {
+    It 'builds a claim line with the branch tail' {
+        $s = Format-ClaimFingerprint -Note 'claim' -Computer 'BOX' -ProcessId 42 -Date '2026-07-13 10:00' -Branch 'issue-1-x'
+        $s | Should -Be '[abios-claim] claim por sesion Claude en BOX (PID 42) - 2026-07-13 10:00 - rama issue-1-x'
+    }
+    It 'omits the branch tail when no branch is given (LOCK/UNLOCK)' {
+        $s = Format-ClaimFingerprint -Note 'LOCK' -Computer 'BOX' -ProcessId 42 -Date '2026-07-13 10:00'
+        $s | Should -Be '[abios-claim] LOCK por sesion Claude en BOX (PID 42) - 2026-07-13 10:00'
+        $s | Should -Not -Match 'rama'
+    }
+}
+
+Describe 'Get-PriorWorkRefusal (PR/commit-aware -Start refusal, #236)' {
+    It 'returns no refusal when there is no prior work' {
+        Get-PriorWorkRefusal -Prs @() -Commits @() | Should -Be ''
+    }
+    It 'refuses on a MERGED PR' {
+        $r = Get-PriorWorkRefusal -Prs @([pscustomobject]@{ number = 9; state = 'MERGED' }) -Commits @()
+        $r | Should -Match 'MERGED'
+        $r | Should -Match '#9'
+    }
+    It 'refuses on an integrated commit' {
+        $r = Get-PriorWorkRefusal -Prs @() -Commits @([pscustomobject]@{ sha = 'abcdef1234567' })
+        $r | Should -Match 'commit'
+        $r | Should -Match 'abcdef1'      # short sha
+    }
+    It 'refuses on an OPEN PR (mid-flight)' {
+        $r = Get-PriorWorkRefusal -Prs @([pscustomobject]@{ number = 7; state = 'OPEN' }) -Commits @()
+        $r | Should -Match 'abierto'
+        $r | Should -Match '#7'
+    }
+    It 'ignores a CLOSED-unmerged PR (abandoned attempt must not block)' {
+        Get-PriorWorkRefusal -Prs @([pscustomobject]@{ number = 3; state = 'CLOSED' }) -Commits @() | Should -Be ''
+    }
+    It 'prefers the MERGED-PR reason over an OPEN PR' {
+        $r = Get-PriorWorkRefusal -Prs @(
+            [pscustomobject]@{ number = 7; state = 'OPEN' },
+            [pscustomobject]@{ number = 9; state = 'MERGED' }
+        ) -Commits @()
+        $r | Should -Match 'MERGED'
     }
 }
 
