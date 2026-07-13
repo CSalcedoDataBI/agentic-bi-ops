@@ -87,6 +87,11 @@ Describe 'Format-CatalogTable' {
         (Format-CatalogTable -Rows $rows) -split "`n" | Select-Object -Last 1 |
             Should -Be '| `/x` | a \| b |'
     }
+    It 'does not double-escape a pipe an author already escaped' {
+        $rows = @([pscustomobject]@{ Name = '/x'; Description = 'a \| b' })
+        (Format-CatalogTable -Rows $rows) -split "`n" | Select-Object -Last 1 |
+            Should -Be '| `/x` | a \| b |'
+    }
     It 'renders just the header for an empty catalog' {
         (Format-CatalogTable -Rows @()) | Should -Be "| Command | What it does |`n|---|---|"
     }
@@ -133,6 +138,18 @@ Describe 'Set-MarkedRegion' {
     }
     It 'throws when the region name appears more than once (ambiguous)' {
         $t = "<!-- BEGIN:x -->a<!-- END:x --> <!-- BEGIN:x -->b<!-- END:x -->"
+        { Set-MarkedRegion -Text $t -Name 'x' -Content 'y' } | Should -Throw
+    }
+    It 'throws on a stray extra BEGIN inside the region (would be silently swallowed)' {
+        $t = "<!-- BEGIN:x -->old<!-- BEGIN:x -->more<!-- END:x -->"
+        { Set-MarkedRegion -Text $t -Name 'x' -Content 'y' } | Should -Throw
+    }
+    It 'throws on a stray trailing END (would be left behind)' {
+        $t = "<!-- BEGIN:x -->old<!-- END:x --><!-- END:x -->"
+        { Set-MarkedRegion -Text $t -Name 'x' -Content 'y' } | Should -Throw
+    }
+    It 'throws when the markers are out of order (END before BEGIN)' {
+        $t = "<!-- END:x -->old<!-- BEGIN:x -->"
         { Set-MarkedRegion -Text $t -Name 'x' -Content 'y' } | Should -Throw
     }
     It 'is idempotent: re-running with the same content is a no-op' {

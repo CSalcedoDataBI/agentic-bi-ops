@@ -88,7 +88,9 @@ function Format-CatalogTable {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Rows)
     $lines = @('| Command | What it does |', '|---|---|')
     foreach ($r in $Rows) {
-        $desc = $r.Description -replace '\|', '\|'
+        # Escape only pipes that are not already backslash-escaped, so a description
+        # an author wrote as `a \| b` is not double-escaped into `a \\| b`.
+        $desc = $r.Description -replace '(?<!\\)\|', '\|'
         $lines += "| ``$($r.Name)`` | $desc |"
     }
     $lines -join "`n"
@@ -115,13 +117,18 @@ function Set-MarkedRegion {
         [Parameter(Mandatory)][AllowEmptyString()][string]$Content
     )
     $n  = [regex]::Escape($Name)
+    # Count BEGIN and END markers independently: matching only complete BEGIN..END
+    # pairs would let a stray extra BEGIN (inside the region) or a trailing END slip
+    # through, and the splice would silently mangle them. Require exactly one of each.
+    $nb = ([regex]::Matches($Text, '<!--\s*BEGIN:' + $n + '\b[^>]*-->')).Count
+    $ne = ([regex]::Matches($Text, '<!--\s*END:'   + $n + '\s*-->')).Count
+    if ($nb -eq 0 -and $ne -eq 0) { throw "No '$Name' marker region found (expected <!-- BEGIN:$Name --> ... <!-- END:$Name -->)." }
+    if ($nb -ne 1 -or $ne -ne 1) { throw "Malformed '$Name' markers: expected exactly one BEGIN and one END, found $nb BEGIN / $ne END." }
     $rx = [regex]::new(
         '(<!--\s*BEGIN:' + $n + '\b[^>]*-->)(.*?)(<!--\s*END:' + $n + '\s*-->)',
         [System.Text.RegularExpressions.RegexOptions]::Singleline)
-    $count = $rx.Matches($Text).Count
-    if ($count -eq 0) { throw "No '$Name' marker region found (expected <!-- BEGIN:$Name --> ... <!-- END:$Name -->)." }
-    if ($count -gt 1) { throw "Found $count '$Name' marker regions - expected exactly one." }
     $m = $rx.Match($Text)
+    if (-not $m.Success) { throw "'$Name' markers are out of order (END appears before BEGIN)." }
     $Text.Substring(0, $m.Index) +
         $m.Groups[1].Value + $Content + $m.Groups[3].Value +
         $Text.Substring($m.Index + $m.Length)
