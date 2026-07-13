@@ -861,9 +861,51 @@ function Start-WorktreeSession {
     return $plan
 }
 
+# -- Dashboard helpers (Phase 2 monitor) ---------------------------------------
+# Where a spawned session's stream is redirected (log redirection wired in #198).
+# Pure given the state dir -> the dashboard reads the tail if the file exists.
+function Get-SessionLogPath([int]$Issue) {
+    $dir = Get-AbiosDir
+    if (-not $dir) { return $null }
+    return (Join-Path (Join-Path $dir "logs") "issue-$Issue.log")
+}
+
+# Last $Count non-blank lines of a log, oldest-first. Returns @() when the file does
+# not exist yet (a session may not have produced output). Reads the whole file - fleet
+# logs are small and this stays simple + testable.
+function Get-LogTailLines([string]$Path, [int]$Count = 3) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return @() }
+    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    # Drop trailing blank lines so the tail shows real output, not padding.
+    $end = $lines.Count - 1
+    while ($end -ge 0 -and [string]::IsNullOrWhiteSpace($lines[$end])) { $end-- }
+    if ($end -lt 0) { return @() }
+    $start = [math]::Max(0, $end - $Count + 1)
+    return @($lines[$start..$end])
+}
+
+# Live RAM (MB working set) + CPU (cumulative processor seconds) for a session PID.
+# Alive=$false when the process is gone. Get-Process is the only reading -> mockable.
+function Get-SessionMetrics([int]$SessionPid) {
+    $p = Get-Process -Id $SessionPid -ErrorAction SilentlyContinue
+    if (-not $p) { return [PSCustomObject]@{ Alive = $false; RamMB = 0; CpuSec = 0 } }
+    [PSCustomObject]@{
+        Alive  = $true
+        RamMB  = [int][math]::Round(($p.WorkingSet64 / 1MB), 0)
+        CpuSec = [int][math]::Round(([double]$p.CPU), 0)
+    }
+}
+
+# One-line CPU/RAM cell for the dashboard. Pure -> unit-testable.
+function Format-SessionMetric([object]$Metrics) {
+    if (-not $Metrics -or -not $Metrics.Alive) { return "PID muerto" }
+    return ("RAM {0} MB | CPU {1}s" -f $Metrics.RamMB, $Metrics.CpuSec)
+}
+
 # Monitor the local parallel-session fleet: list every LIVE registered session
 # (Read-SessionRegistry prunes dead-PID entries on the way in) with its branch,
-# worktree, launch method and - best-effort - the PR opened for its branch.
+# worktree, launch method, CLI, live PID CPU/RAM, log tail and - best-effort - the
+# PR opened for its branch.
 function Show-SessionFleet {
     $sessions = @(Read-SessionRegistry)
     Write-Host "=== Flota de sesiones activas (esta maquina) ===" -ForegroundColor Cyan
@@ -874,8 +916,11 @@ function Show-SessionFleet {
     }
     foreach ($s in ($sessions | Sort-Object issue)) {
         $via = if ($s.via) { $s.via } else { "-" }
-        Write-Host ("  #{0,-4} {1}" -f $s.issue, $s.branch) -ForegroundColor Yellow
-        Write-Host ("        PID {0} via {1} | host {2} | desde {3}" -f $s.sessionPid, $via, $s.host, $s.started) -ForegroundColor DarkGray
+        $cli = if ($s.cli) { $s.cli } else { "claude" }
+        Write-Host ("  #{0,-4} {1}  [{2}]" -f $s.issue, $s.branch, $cli) -ForegroundColor Yellow
+        # Live CPU/RAM for the tracked PID (mockable Get-Process behind Get-SessionMetrics).
+        $metric = Format-SessionMetric (Get-SessionMetrics ([int]$s.sessionPid))
+        Write-Host ("        PID {0} via {1} | {2} | host {3} | desde {4}" -f $s.sessionPid, $via, $metric, $s.host, $s.started) -ForegroundColor DarkGray
         if ($s.workPath) { Write-Host ("        {0}" -f $s.workPath) -ForegroundColor DarkGray }
         if ($s.repo -and $s.branch) {
             try {
@@ -885,6 +930,9 @@ function Show-SessionFleet {
                 }
             } catch { }
         }
+        # Tail of the session's redirected stream, when it has produced output.
+        $tail = Get-LogTailLines (Get-SessionLogPath ([int]$s.issue)) 3
+        foreach ($ln in $tail) { Write-Host ("        | {0}" -f $ln) -ForegroundColor DarkGray }
     }
     Write-Host ""
     Write-Host ("Total: {0} sesion(es) viva(s). Las de PID muerto se podaron automaticamente." -f $sessions.Count) -ForegroundColor Cyan
