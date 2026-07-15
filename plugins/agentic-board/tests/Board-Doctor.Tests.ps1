@@ -88,11 +88,17 @@ Describe 'Board-Doctor parameter binding survives the dot-source' {
         $replayAt | Should -BeGreaterThan 0
         $replayAt | Should -BeLessThan $firstUse
     }
-    It 'fails closed when the PR listing cannot be trusted' {
-        # No PRs must never read as "nothing is merged": that would reclassify every merged
-        # branch as stale and offer 57 of them to -Fix.
+    It 'fails closed on every source it cannot vouch for' {
+        # No PRs must never read as "nothing is merged" (that would reclassify every merged
+        # branch as stale and offer 57 to -Fix); an empty branch/worktree inventory must never
+        # read as "nothing to clean"; and an unreadable registry must never read as "no live
+        # sessions" (that would strip a live branch of its veto). Raised by the Codex review
+        # of PR #280 - each of these failed OPEN before.
         $src = Get-Content $script:Script -Raw
-        $src | Should -Match 'if \(\$LASTEXITCODE -ne 0 -or \$null -eq \$prJson\)'
+        $src | Should -Match 'if \(\$LASTEXITCODE -ne 0 -or \$null -eq \$prJson\)'   # gh pr list
+        $src | Should -Match "'git for-each-ref' fallo"                              # branch inventory
+        $src | Should -Match "'git worktree list' fallo"                             # worktree inventory
+        $src | Should -Match 'if \(-not \$registryTrusted\)'                         # registry veto
     }
 }
 
@@ -204,6 +210,31 @@ Describe 'Get-BranchClass (branches with no PR)' {
         $r = Invoke-Classify @{ Dirty = 'unknown' }
         $r.Class | Should -Be 'dirty'
         $r.Reason | Should -Match 'no pude comprobar'
+    }
+}
+
+Describe 'Get-WorktreeDirtyState (the last guard before --force)' {
+    # Raised by the Codex review of PR #280: the dangerous side-effect paths were not pinned.
+    It 'reports a clean worktree as clean' {
+        Get-WorktreeDirtyState -ExitCode 0 -StatusLines @() | Should -Be 'clean'
+    }
+    It 'reports any status output as dirty' {
+        Get-WorktreeDirtyState -ExitCode 0 -StatusLines @('?? scratch.txt') | Should -Be 'dirty'
+    }
+    It 'treats a git failure as unknown, never clean' {
+        Get-WorktreeDirtyState -ExitCode 128 -StatusLines @() | Should -Be 'unknown'
+    }
+    It 'treats a missing worktree directory as unknown, never clean' {
+        Get-WorktreeDirtyState -ExitCode 0 -StatusLines @() -PathExists $false | Should -Be 'unknown'
+    }
+    It 'is not fooled by whitespace-only output' {
+        Get-WorktreeDirtyState -ExitCode 0 -StatusLines @('', '   ') | Should -Be 'clean'
+    }
+    It 'asks git for ALL untracked files rather than inheriting status.showUntrackedFiles' {
+        # With `status.showUntrackedFiles=no` a bare --porcelain calls a worktree full of
+        # untracked scratch files CLEAN, and the removal runs --force. Pin the flag at the call.
+        $src = Get-Content $script:Script -Raw
+        $src | Should -Match 'status --porcelain --untracked-files=all'
     }
 }
 

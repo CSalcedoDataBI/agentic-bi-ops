@@ -162,6 +162,23 @@ function Select-BranchPr {
     return (@($Prs | Sort-Object { [int]$_.number } -Descending) | Select-Object -First 1)
 }
 
+# Read a `git status --porcelain` result into clean|dirty|unknown. PURE -> unit-testable, which
+# matters because this is the last thing standing between `worktree remove --force` and somebody's
+# uncommitted files. FAIL CLOSED: a non-zero exit or a missing directory is 'unknown', never
+# 'clean' (the #277 rule). Kept separate from the git call so the decision can be tested without
+# a repo; the call site is responsible for passing --untracked-files=all.
+function Get-WorktreeDirtyState {
+    param(
+        [int]$ExitCode = 0,
+        [string[]]$StatusLines = @(),
+        [bool]$PathExists = $true
+    )
+    if (-not $PathExists) { return 'unknown' }
+    if ($ExitCode -ne 0)  { return 'unknown' }
+    if ((@($StatusLines) -join "`n").Trim()) { return 'dirty' }
+    return 'clean'
+}
+
 # Classify ONE branch. PURE -> unit-testable: every fact arrives as an argument.
 #
 # The merge verdict delegates to Get-SessionCompletion, so "merged" here means exactly what
@@ -281,7 +298,11 @@ if ($defaultBranch) { $protected += $defaultBranch }
 $protected = @($protected | Where-Object { $_ } | Select-Object -Unique)
 
 # --- git: the branch inventory -------------------------------------------------
+# Fail closed here too, for the same reason as the PR listing: a failed for-each-ref returns
+# nothing, which is indistinguishable from "this repo has no branches" and would print a
+# reassuring empty audit. An empty answer we cannot vouch for is not an answer.
 $refLines = @(git for-each-ref --format='%(refname:short)|%(objectname)|%(committerdate:iso8601)' refs/heads 2>$null)
+if ($LASTEXITCODE -ne 0) { throw "'git for-each-ref' fallo - no puedo inventariar las ramas locales, y un inventario vacio se leeria como 'no hay nada que limpiar'." }
 $branches = @()
 foreach ($l in $refLines) {
     $parts = $l -split '\|', 3
@@ -295,7 +316,12 @@ foreach ($l in $refLines) {
 }
 
 # --- git: the worktree inventory ----------------------------------------------
-$wtRecords = Get-WorktreeRecords -Porcelain ((git worktree list --porcelain 2>$null) -join "`n")
+# Fail closed: if this fails, every branch looks worktree-less, which silently switches OFF the
+# dirty-files guard and the "never delete my own worktree" guard - the two things standing
+# between -Fix and someone's uncommitted work.
+$wtPorcelain = (git worktree list --porcelain 2>$null) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw "'git worktree list' fallo - sin el inventario de worktrees no puedo saber cuales tienen cambios sin commitear, asi que no es seguro seguir." }
+$wtRecords = Get-WorktreeRecords -Porcelain $wtPorcelain
 $wtByBranch = @{}
 foreach ($w in $wtRecords) { if ($w.Branch) { $wtByBranch[$w.Branch] = $w } }
 # Ghost worktrees: git itself flags a registered worktree whose directory is gone.
@@ -333,8 +359,22 @@ foreach ($p in $allPrs) {
 }
 
 # --- registry: protection only ------------------------------------------------
+# The registry never decides what EXISTS - but it is the only thing that marks a branch as
+# owned by a live session, and that is a veto over deletion. So "unreadable" must not collapse
+# into "no live sessions": Read-SessionRegistry returns @() for BOTH, and a merged branch that
+# a live session is still working would then land in the deletable pile. Parse-check the file
+# ourselves and remember whether the answer is trustworthy; -Fix refuses if it is not.
 $liveBranches = @()
-try { $liveBranches = @(Read-SessionRegistry | ForEach-Object { $_.branch } | Where-Object { $_ }) } catch { }
+$registryTrusted = $true
+try {
+    $regPath = Get-SessionRegistryPath
+    if ($regPath -and (Test-Path $regPath)) {
+        $null = Get-Content $regPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    $liveBranches = @(Read-SessionRegistry | ForEach-Object { $_.branch } | Where-Object { $_ })
+} catch {
+    $registryTrusted = $false
+}
 
 # --- classify -----------------------------------------------------------------
 $now = Get-Date
@@ -346,11 +386,12 @@ foreach ($b in $branches) {
     # closed: an unreadable worktree must not read as "clean" (the #277 rule).
     $dirty = 'clean'
     if ($wtPath -and -not $wt.Prunable) {
-        if (Test-Path $wtPath) {
-            $out = @(git -C $wtPath status --porcelain 2>&1)
-            if ($LASTEXITCODE -ne 0)             { $dirty = 'unknown' }
-            elseif (($out -join "`n").Trim())    { $dirty = 'dirty' }
-        } else { $dirty = 'unknown' }
+        # --untracked-files=all is NOT redundant: `status.showUntrackedFiles=no` in the user's
+        # config makes a bare --porcelain report a worktree full of untracked scratch files as
+        # CLEAN, and the removal below runs --force. Pin the mode instead of inheriting config.
+        $exists = [bool](Test-Path $wtPath)
+        $out = if ($exists) { @(git -C $wtPath status --porcelain --untracked-files=all 2>&1) } else { @() }
+        $dirty = Get-WorktreeDirtyState -ExitCode $(if ($exists) { $LASTEXITCODE } else { 0 }) -StatusLines $out -PathExists $exists
     }
     $rows += Get-BranchClass -Name $b.Name -Tip $b.Tip -Prs @($prsByBranch[$b.Name]) `
         -CommitDate $b.CommitDate -Now $now -StaleDays $StaleDays `
@@ -470,6 +511,12 @@ function Remove-BranchAndWorktree {
         }
     }
     return $did
+}
+
+# The read-only report is still honest with a broken registry (it just cannot say "active"), but
+# -Fix leans on it to veto deleting a live session's branch. Without it, refuse to delete.
+if (-not $registryTrusted) {
+    throw "No pude leer .agentic-board/sessions.json (corrupto o bloqueado). Es lo unico que marca las ramas de sesiones vivas, y sin el una rama mergeada que otra sesion sigue trabajando entraria en la lista de borrado. Arregla o borra ese archivo y reintenta; el inventario read-only (sin -Fix) sigue funcionando."
 }
 
 # A real -Fix cannot run where Read-Host is unavailable (`pwsh -NonInteractive`, CI, a piped

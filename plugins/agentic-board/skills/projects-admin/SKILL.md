@@ -285,6 +285,14 @@ branch already proven merged by its PR (#273/PR #275). The proof is the PR, not 
   fail-closed rule). Those keeps are expected states, not alarms — the teardown creates them
   deliberately and says it leaves them "for the audit path".
 - Never removes the worktree it is running in.
+- Fails closed on every input it cannot vouch for, because an empty answer here is
+  indistinguishable from a reassuring one: if `gh pr list` errors or hits `-PrLimit`, if
+  `git for-each-ref` / `git worktree list` fails, or if `sessions.json` is corrupt, it refuses
+  rather than print "nothing to clean" or hand `-Fix` a list built from missing facts. A broken
+  registry blocks `-Fix` only — the read-only audit still works, it just cannot say `active`.
+- `-Fix` needs an interactive terminal (the per-branch confirmation IS the safety contract), so
+  it refuses up front under `pwsh -NonInteractive`/CI. `-Fix -DryRun` asks nothing and is safe
+  to script.
 
 ---
 
