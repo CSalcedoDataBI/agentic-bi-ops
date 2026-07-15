@@ -205,6 +205,15 @@ Describe 'Remove-BranchAndWorktree asks git, not the disk (#287)' {
         # signal that actually decides whether `git branch -D` can succeed.
         ($script:RemoveFn -match '-Branch \$Row\.Branch') | Should -BeTrue
     }
+    It 'resolves the path BEFORE the remove, while there is still a directory to resolve (#291)' {
+        # A detached worktree is invisible to the branch signal, so the path is the only signal
+        # left - and it only works once both sides spell the directory the same way. Resolving
+        # after the removal would be too late: the directory may be gone.
+        $res = $script:RemoveFn.IndexOf('Resolve-GitPathForm')
+        $rm  = $script:RemoveFn.IndexOf('git worktree remove --force $Row.WorktreePath 2>&1')
+        $res | Should -BeGreaterThan 0
+        $res | Should -BeLessThan $rm
+    }
     It 'never lets Test-Path of the worktree path veto the delete again' {
         # Test-Path may still REPORT a leftover folder - that note is useful. What must never come
         # back is the folder VETOING the branch delete, i.e. a Test-Path whose body bails out.

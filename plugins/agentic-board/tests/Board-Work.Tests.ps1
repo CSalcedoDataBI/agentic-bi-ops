@@ -1236,6 +1236,62 @@ Describe 'Worktree registry helpers live here now (#289)' {
     }
 }
 
+Describe 'Resolve-GitPathForm (make our path comparable to git''s, #291)' {
+    # Found by a Codex review of #287/#289. Test-WorktreeStillRegistered proves "still there" by
+    # NAME: branch first, path second. Both can miss the SAME registered worktree - the branch
+    # signal is blind to a DETACHED one, and the path signal is blind when the two strings spell
+    # one directory differently. "Could not find it" then read as "gone" and licensed the delete.
+    #
+    # The strings differ for a real reason, so the cure is to stop them differing at the source.
+    # Build a REAL short name rather than assuming %TEMP% carries one: it does on this machine and
+    # on the windows-latest runner (RUNNER~1), but that is the runner's business, not a contract.
+    # 8.3 generation can also be off per-volume (fsutil 8dot3name), so skip rather than fail there.
+    BeforeAll {
+        $script:LongDir = Join-Path $TestDrive 'un-nombre-muy-largo-para-forzar-8dot3'
+        $script:ShortDir = ''
+        if ($IsWindows) {
+            New-Item -ItemType Directory -Path $script:LongDir -Force | Out-Null
+            try {
+                $fso = New-Object -ComObject Scripting.FileSystemObject
+                $script:ShortDir = $fso.GetFolder($script:LongDir).ShortPath
+            } catch { $script:ShortDir = '' }
+        }
+    }
+
+    It 'expands an 8.3 short name into the long form git prints' {
+        # THE #291 ROOT CAUSE, pinned on a path we shortened ourselves.
+        if (-not $script:ShortDir -or $script:ShortDir -notlike '*~*') {
+            Set-ItResult -Skipped -Because 'this volume does not generate 8.3 short names'
+            return
+        }
+        $resolved = Resolve-GitPathForm $script:ShortDir
+        $resolved | Should -Not -Match '~'
+        $resolved | Should -BeLike '*un-nombre-muy-largo-para-forzar-8dot3'
+    }
+    It 'makes the short and long spellings of one directory match in the registry check' {
+        # The end-to-end point of the resolver, at the level the caller cares about. Measured:
+        # (Resolve-Path).Path and the FileSystemObject both PRESERVE the short form - only
+        # Get-Item/DirectoryInfo expand it - which is why the resolver is written the way it is.
+        if (-not $script:ShortDir -or $script:ShortDir -notlike '*~*') {
+            Set-ItResult -Skipped -Because 'this volume does not generate 8.3 short names'
+            return
+        }
+        $gitForm = (Get-Item -LiteralPath $script:LongDir).FullName.Replace([char]92, '/')
+        $p = "worktree $gitForm`nHEAD 222`ndetached`n"      # detached => the branch signal is blind
+        Test-WorktreeStillRegistered -Porcelain $p -Path $script:ShortDir | Should -BeFalse                        # raw: misses it
+        Test-WorktreeStillRegistered -Porcelain $p -Path (Resolve-GitPathForm $script:ShortDir) | Should -BeTrue   # resolved: catches it
+    }
+    It 'returns a non-existent path unchanged instead of throwing' {
+        # We cannot expand what is not there - and need not: git cannot hold a LIVE worktree at a
+        # path that does not exist, so the raw fallback cannot hide one.
+        $gone = Join-Path $env:TEMP 'definitely-not-here-291'
+        (Resolve-GitPathForm $gone) | Should -Be $gone
+    }
+    It 'returns empty for an empty path rather than throwing' {
+        (Resolve-GitPathForm '') | Should -Be ''
+    }
+}
+
 Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
     It 'plans kill -> worktree remove -> branch delete -> registry prune for a pwsh session, under -DryRun' {
         $s = [pscustomobject]@{ issue = 9; branch = 'issue-9-x'; workPath = 'C:\wt\issue-9'; sessionPid = 4321; via = 'pwsh' }
@@ -1331,6 +1387,40 @@ Describe 'Invoke-SessionCleanup asks git, not the disk (#289)' {
         $LASTEXITCODE | Should -Not -Be 0
         $out | Should -Match 'not a working tree'
         Test-Path $script:Work2 | Should -BeTrue      # ...so Test-Path stays true FOREVER
+    }
+
+    It 'keeps branch + registry when the worktree is still registered but DETACHED (#291)' {
+        # The Codex finding, on a real repo. Detached => the branch signal cannot see it; locked
+        # => `remove --force` genuinely leaves it registered. Only the resolved path can catch it,
+        # and before the fix "I cannot find it" meant "it is gone" -> delete + prune, out from
+        # under a live worktree.
+        git -C $script:Work2 checkout --detach 2>&1 | Out-Null
+        git worktree lock $script:Work2 2>&1 | Out-Null
+        try {
+            $s = [pscustomobject]@{ issue = 21; branch = 'issue-21-h'; workPath = $script:Work2
+                                    sessionPid = 0; via = 'wt' }
+            $acts = @(Invoke-SessionCleanup -Session $s -PrMerged)
+            ((git worktree list --porcelain) -join "`n") | Should -Match 'detached'   # still registered
+            ($acts -join ' ') | Should -Match 'FAIL'
+            ($acts -join ' ') | Should -Not -Match 'branch -'
+            ($acts -join ' ') | Should -Not -Match 'prune #21'
+            Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
+        } finally { git worktree unlock $script:Work2 2>&1 | Out-Null }
+    }
+
+    It 'CONVERGES on an already-de-registered worktree instead of leaking it forever (#291)' {
+        # Codex caught the first cut of this fix re-creating the #289 disease. Proving "some
+        # worktree LEFT the list" instead of "MY worktree is not IN it" makes a stale registry
+        # entry - one whose worktree git already forgot, e.g. removed by hand - unprovable: the
+        # before/after listings are identical, so every retry refused and the entry leaked.
+        # workPath here comes from sessions.json, so nothing else would ever clear it.
+        $script:Handle.Close(); $script:Handle = $null
+        git worktree remove --force $script:Work2 2>&1 | Out-Null     # git already forgot it
+        ((git worktree list --porcelain) -join "`n") | Should -Not -Match 'issue-21-h'
+        $acts = @(Invoke-SessionCleanup -Session (New-HSession) -PrMerged)
+        ($acts -join ' ') | Should -Not -Match 'FAIL'
+        ($acts -join ' ') | Should -Match 'prune #21'                  # the entry is finally cleared
+        Should -Invoke Remove-SessionRegistryEntry -Times 1 -Exactly
     }
 
     It 'still keeps branch + registry when git REALLY still registers the worktree' {

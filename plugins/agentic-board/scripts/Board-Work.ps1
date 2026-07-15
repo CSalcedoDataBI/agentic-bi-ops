@@ -1873,6 +1873,32 @@ function Test-WorktreeStillRegistered {
     return $false
 }
 
+# Put a path into the form git prints, so it can be compared with `git worktree list` output at all
+# (#291, found by a Codex review of #287/#289).
+#
+# Test-WorktreeStillRegistered proves "still there" by NAME: branch first, path second. Both can
+# miss the SAME registered worktree - the branch signal is blind to a DETACHED worktree, and the
+# path signal is blind whenever the two strings disagree for one directory. They disagree for a
+# real reason: git prints the LONG form `C:/Users/Cristobal/...`, while a path that travelled
+# through %TEMP% (or any 8.3-shortened parent) carries `C:/Users/CRISTO~1/...`. "I could not find
+# it" then read as "it is gone" and licensed the delete.
+#
+# Only the FILESYSTEM can expand a short name, so this is deliberately impure - Get-Item does the
+# expansion, and `(Resolve-Path).Path` is NOT a substitute (it preserves the short form; measured).
+# When the directory is gone we cannot expand, and we do not need to: git cannot still hold a LIVE
+# worktree at a path that does not exist, so falling back to the raw string cannot hide one.
+#
+# NOTE this is why the fix is a resolver and not a before/after diff of the registry. Proving "some
+# worktree left the list" instead of "MY worktree is not in it" sounds safer and is worse: it makes
+# an already-de-registered worktree - a stale sessions.json entry, one the user removed by hand -
+# unprovable forever, so every retry refuses and the entry leaks. That is exactly the #289 disease,
+# and Codex caught this file re-introducing it.
+function Resolve-GitPathForm {
+    param([string]$Path)
+    if (-not $Path) { return '' }
+    try { return (Get-Item -LiteralPath $Path -ErrorAction Stop).FullName } catch { return $Path }
+}
+
 # Tear down a finished session: kill the tab shell FIRST (the `pwsh -NoExit` left cwd'd
 # inside the worktree keeps a handle -> `git worktree remove` fails with Permission denied),
 # then remove the worktree, delete the local branch, and prune the registry entry. Returns
@@ -1934,6 +1960,9 @@ function Invoke-SessionCleanup {
     if ($Session.workPath) {
         $actions += "git worktree remove --force $($Session.workPath)"
         if (-not $DryRun) {
+            # Resolve BEFORE the removal, while the directory still exists to be resolved: after a
+            # successful remove there may be nothing left to expand the short name from (#291).
+            $wtPathForGit = Resolve-GitPathForm $Session.workPath
             git worktree remove --force $Session.workPath 2>&1 | Out-Null
             $after = (git worktree list --porcelain 2>$null) -join "`n"
             if ($LASTEXITCODE -ne 0) {
@@ -1941,7 +1970,7 @@ function Invoke-SessionCleanup {
                 $actions += "FAIL no pude releer 'git worktree list' tras el remove - conservo la rama y el registro de #$($Session.issue) para reintentar"
                 return $actions
             }
-            $worktreeGone = -not (Test-WorktreeStillRegistered -Porcelain $after -Path $Session.workPath -Branch $Session.branch)
+            $worktreeGone = -not (Test-WorktreeStillRegistered -Porcelain $after -Path $wtPathForGit -Branch $Session.branch)
             # Litter, not a blocker: git let it go, so the teardown continues. Name the path -
             # nothing else will ever clean it up, since git no longer knows about it.
             if ($worktreeGone -and (Test-Path $Session.workPath)) {

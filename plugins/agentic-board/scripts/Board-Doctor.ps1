@@ -498,19 +498,22 @@ function Remove-BranchAndWorktree {
         }
         $did += "git worktree remove --force $($Row.WorktreePath)"
         if (-not $DryRun) {
+            # Ask GIT whether the removal took, not the filesystem (#287). An empty folder left
+            # behind by an open handle is not a failed removal, and treating it as one kept a
+            # proven-merged branch and forced a second -Fix pass over the 58-branch cleanup.
+            # Resolve the path into git's own form first, while the directory still exists to
+            # resolve from - otherwise a DETACHED worktree whose path spells differently is
+            # invisible to both signals and reads as "gone" (#291). See Resolve-GitPathForm.
+            $wtPathForGit = Resolve-GitPathForm $Row.WorktreePath
             git worktree remove --force $Row.WorktreePath 2>&1 | Out-Null
-            # Ask GIT whether the removal took, not the filesystem (#287). See
-            # Test-WorktreeStillRegistered: an empty folder left behind by an open handle is not
-            # a failed removal, and treating it as one kept a proven-merged branch and forced a
-            # second -Fix pass over the 58-branch cleanup.
             $after = (git worktree list --porcelain 2>$null) -join "`n"
             if ($LASTEXITCODE -ne 0) {
                 # FAIL CLOSED: "I could not ask git" is not "it is gone" (the #277 rule).
                 Write-Host "     FAIL no pude releer 'git worktree list' tras el remove - conservo la rama $($Row.Branch) por si acaso." -ForegroundColor Red
                 return $did
             }
-            if (Test-WorktreeStillRegistered -Porcelain $after -Path $Row.WorktreePath -Branch $Row.Branch) {
-                Write-Host "     FAIL git sigue registrando un worktree con la rama $($Row.Branch) (handle abierto? locked?) - conservo la rama." -ForegroundColor Red
+            if (Test-WorktreeStillRegistered -Porcelain $after -Path $wtPathForGit -Branch $Row.Branch) {
+                Write-Host "     FAIL git sigue registrando el worktree de $($Row.Branch) (handle abierto? locked?) - conservo la rama." -ForegroundColor Red
                 return $did
             }
             if (Test-Path $Row.WorktreePath) {
