@@ -1771,8 +1771,16 @@ function Invoke-SessionCleanup {
     # work landed, so what remains is scratch. -ForceRemoveWorktree is the deliberate discard.
     # The check is read-only, so it also runs under -DryRun and makes the plan predictive.
     if ($Session.workPath -and -not $PrMerged -and -not $ForceRemoveWorktree -and (Test-Path $Session.workPath)) {
-        $dirty = @(git -C $Session.workPath status --porcelain 2>$null) -join "`n"
-        if ($dirty.Trim()) {
+        $out = @(git -C $Session.workPath status --porcelain 2>&1)
+        # FAIL CLOSED: an unreadable worktree (corrupt metadata, index lock, no git) yields no
+        # output, which must NOT be read as "clean" - that would hand the --force exactly the
+        # case we cannot vouch for (Codex review, PR #277).
+        if ($LASTEXITCODE -ne 0) {
+            $actions += "WARN conservo el worktree $($Session.workPath) (#$($Session.issue)): no pude comprobar si tiene cambios sin commitear [git status fallo]. Revisalo a mano, o descartalo con -ForceRemoveWorktree"
+            return $actions
+        }
+        $dirty = ($out -join "`n").Trim()
+        if ($dirty) {
             $n = @($dirty -split "`n" | Where-Object { $_.Trim() }).Count
             $actions += "WARN conservo el worktree $($Session.workPath) (#$($Session.issue)): $n archivo(s) sin commitear se perderian. Revisalos y commitealos, o descartalos con -ForceRemoveWorktree"
             return $actions

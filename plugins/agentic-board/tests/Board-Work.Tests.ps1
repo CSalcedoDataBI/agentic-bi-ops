@@ -1239,16 +1239,19 @@ Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
         ($acts -join ' ') | Should -Match 'prune #5'
     }
 
-    It 'keeps the branch + registry when the worktree removal fails (Codex #269 fix)' {
-        # A real dir that is NOT a git worktree: `git worktree remove` fails and the path
-        # survives -> the cleanup must NOT delete the branch or prune the registry.
+    It 'keeps the branch + registry when the worktree cannot be torn down (Codex #269 fix)' {
+        # A real dir that is NOT a git worktree. Since #276 this trips one step earlier - the
+        # dirty-check FAILS CLOSED on an unreadable worktree instead of reaching the removal -
+        # but the #269 invariant is the same and is what this guards: on ANY failed teardown,
+        # never delete the branch and never drop the registry entry.
         $stuck = Join-Path $TestDrive 'stuck-worktree'
         New-Item -ItemType Directory -Path $stuck | Out-Null
         Mock Remove-SessionRegistryEntry { throw 'must not prune on a failed teardown' }
         $s = [pscustomobject]@{ issue = 3; branch = 'issue-3-z'; workPath = $stuck; sessionPid = 0 }
         $acts = @(Invoke-SessionCleanup -Session $s)   # NOT -DryRun
-        ($acts -join ' ') | Should -Match 'FAIL'
+        ($acts -join ' ') | Should -Match 'WARN|FAIL'
         ($acts -join ' ') | Should -Not -Match 'branch -'
+        ($acts -join ' ') | Should -Not -Match 'prune #3'
         Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
     }
 }
@@ -1320,6 +1323,20 @@ Describe 'Invoke-SessionCleanup does not discard a dirty worktree (#276)' {
         $acts = @(Invoke-SessionCleanup -Session (New-Session) -ForceRemoveWorktree)
         ($acts -join ' ') | Should -Not -Match 'WARN'
         Test-Path $script:Work | Should -BeFalse
+    }
+
+    It 'FAILS CLOSED when the worktree cannot be inspected (no output != clean)' {
+        # Break the link so `git status` errors: empty output must not read as "clean" and
+        # hand the --force the one case we cannot vouch for (Codex #277).
+        Remove-Item (Join-Path $script:Work '.git') -Force
+        $acts = @(Invoke-SessionCleanup -Session (New-Session))
+        # Assert the EXIT-CODE branch specifically. Matching a bare 'WARN' would pass even
+        # without the guard, because 2>&1 puts git's error text in the output and that alone
+        # reads as "dirty" - an accident, not the guard. Pin the message so it stays honest.
+        ($acts -join ' ') | Should -Match 'no pude comprobar'
+        ($acts -join ' ') | Should -Not -Match 'prune #20'
+        Test-Path $script:Work | Should -BeTrue
+        Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
     }
 }
 
@@ -1518,6 +1535,15 @@ Describe 'Invoke-SessionWatch (DI poll loop, #135)' {
             -GetStatus    { param($s) [pscustomobject]@{ done = $true; reason = 'PR merged'; merged = $true } } `
             -Now { Get-Date } -Sleep { param($sec) } | Out-Null
         $script:seen | Should -BeTrue
+    }
+    It 'forwards -ForceRemoveWorktree to the teardown (#276)' {
+        $script:seenForce = $null
+        Mock Invoke-SessionCleanup { $script:seenForce = $ForceRemoveWorktree; @('mock teardown') }
+        Invoke-SessionWatch -AutoClean -ForceRemoveWorktree `
+            -ReadSessions { @([pscustomobject]@{ issue = 7 }) } `
+            -GetStatus    { param($s) [pscustomobject]@{ done = $true; reason = 'x'; merged = $false } } `
+            -Now { Get-Date } -Sleep { param($sec) } | Out-Null
+        $script:seenForce | Should -BeTrue
     }
     It 'does NOT license the force-delete for a session that finished unmerged (#273)' {
         $script:seen = $null
