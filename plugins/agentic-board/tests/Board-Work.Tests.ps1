@@ -1563,3 +1563,90 @@ Describe 'Invoke-SessionWatch (DI poll loop, #135)' {
         Should -Invoke Invoke-SessionCleanup -Times 0 -Exactly
     }
 }
+
+Describe 'Test-Pending (vocabulary-aware pending detection, issue #278)' {
+    It 'counts a canonical Backlog item as pending' {
+        Test-Pending ([pscustomobject]@{ status = 'Backlog' }) | Should -BeTrue
+    }
+    It 'counts an item with no Status as pending' {
+        Test-Pending ([pscustomobject]@{ status = $null }) | Should -BeTrue
+        Test-Pending ([pscustomobject]@{ status = ''    }) | Should -BeTrue
+    }
+    It "counts a default-template 'Todo' item as pending (the #278 false negative)" {
+        Test-Pending ([pscustomobject]@{ status = 'Todo' })  | Should -BeTrue
+        Test-Pending ([pscustomobject]@{ status = 'To Do' }) | Should -BeTrue
+    }
+    It 'does NOT count work already moving or finished' {
+        Test-Pending ([pscustomobject]@{ status = 'In Progress' }) | Should -BeFalse
+        Test-Pending ([pscustomobject]@{ status = 'In Review' })   | Should -BeFalse
+        Test-Pending ([pscustomobject]@{ status = 'Done' })        | Should -BeFalse
+    }
+    It 'does not guess: an unknown Status is not pending' {
+        Test-Pending ([pscustomobject]@{ status = 'Pendiente' }) | Should -BeFalse
+    }
+}
+
+Describe 'Get-LegacyStatusOptions (schema warning, issue #278)' {
+    It "flags a default-template board's legacy Todo option" {
+        Get-LegacyStatusOptions @('Todo', 'In Progress', 'Done') | Should -Be @('Todo')
+    }
+    It 'flags nothing on a canonical board' {
+        @(Get-LegacyStatusOptions @('Backlog', 'In Progress', 'In Review', 'Blocked', 'Done')).Count | Should -Be 0
+    }
+    It "does not flag a vocabulary it cannot read - that is the user's own, not a legacy name" {
+        @(Get-LegacyStatusOptions @('Pendiente', 'Icebox')).Count | Should -Be 0
+    }
+    It 'handles a board with no Status options at all' {
+        @(Get-LegacyStatusOptions @()).Count | Should -Be 0
+    }
+}
+
+Describe 'Get-UnknownStatusValues (never claim a clean board blindly, issue #278)' {
+    It 'reports the distinct statuses that map to no canonical option' {
+        $items = @(
+            [pscustomobject]@{ status = 'Pendiente' }
+            [pscustomobject]@{ status = 'Pendiente' }
+            [pscustomobject]@{ status = 'Icebox' }
+            [pscustomobject]@{ status = 'Done' }
+        )
+        Get-UnknownStatusValues $items | Should -Be @('Pendiente', 'Icebox')
+    }
+    It 'reports nothing when every status is understood (canonical or legacy)' {
+        $items = @(
+            [pscustomobject]@{ status = 'Todo' }
+            [pscustomobject]@{ status = 'In Progress' }
+            [pscustomobject]@{ status = $null }
+        )
+        @(Get-UnknownStatusValues $items).Count | Should -Be 0
+    }
+    It 'reports nothing for an empty board' {
+        @(Get-UnknownStatusValues @()).Count | Should -Be 0
+    }
+}
+
+Describe 'Resolve-StatusOptionId (every Status WRITE is vocabulary-aware, PR #279)' {
+    BeforeAll {
+        $script:CanonNode = [pscustomobject]@{ options = @(
+            [pscustomobject]@{ id = 'c1'; name = 'Backlog' }
+            [pscustomobject]@{ id = 'c2'; name = 'In Review' }
+        ) }
+        $script:LegacyNode = [pscustomobject]@{ options = @(
+            [pscustomobject]@{ id = 'l1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'l2'; name = 'Review' }
+        ) }
+    }
+    It 'resolves the canonical option on a canonical board' {
+        Resolve-StatusOptionId $script:CanonNode 'Backlog'   | Should -Be 'c1'
+        Resolve-StatusOptionId $script:CanonNode 'In Review' | Should -Be 'c2'
+    }
+    It "resolves -Unlock's Backlog target to a legacy board's 'Todo' (was silently null)" {
+        Resolve-StatusOptionId $script:LegacyNode 'Backlog' | Should -Be 'l1'
+    }
+    It "resolves -ToReview to a board that calls the column 'Review'" {
+        Resolve-StatusOptionId $script:LegacyNode 'In Review' | Should -Be 'l2'
+    }
+    It 'returns $null when no name matches, so the caller can refuse loudly' {
+        Resolve-StatusOptionId $script:LegacyNode 'Blocked' | Should -BeNullOrEmpty
+        Resolve-StatusOptionId $null 'Backlog'              | Should -BeNullOrEmpty
+    }
+}

@@ -64,6 +64,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# The canonical/legacy option vocabulary (issue #278) — every option lookup below goes
+# through it, so one board can satisfy every fill regardless of which vocabulary it uses.
+. (Join-Path $PSScriptRoot 'Get-BoardVocabulary.ps1')
+
 # ── Functions (pure + gh helpers; defined before the dot-source guard) ─────────
 
 function Get-OwnerRoot {
@@ -128,6 +132,21 @@ query($owner:String!, $num:Int!) {
 
 function Get-Field($name) { $allFields | Where-Object { $_.name -eq $name } }
 function Get-Opt($field, $optName) { ($field.options | Where-Object { $_.name -eq $optName }).id }
+
+# Resolve a CANONICAL option to whatever the board actually calls it: the canonical
+# name first, then its legacy aliases (issue #278). Before this, each lookup hard-coded
+# one literal name and the two vocabularies were mixed in one script - Status wanted
+# 'Backlog' (canonical) while Priority wanted 'P2 Medium' (GitHub's template), so NO
+# board could satisfy both and a board built by this tool could not complete the tool's
+# own Priority fill. Returns the matched option (.id/.name) or $null.
+function Resolve-Opt($field, [string]$fieldKind, [string]$canonical) {
+    if (-not $field) { return $null }
+    foreach ($n in (Get-OptionAliases $fieldKind $canonical)) {
+        $o = $field.options | Where-Object { $_.name -eq $n } | Select-Object -First 1
+        if ($o) { return $o }
+    }
+    return $null
+}
 
 # Accumulate all nodes across GraphQL project-item pages (issue #246: without this the
 # scan stopped at items(first:100) and silently skipped issues on boards >100 items).
@@ -227,20 +246,25 @@ if (-not $projNode -or -not $projNode.id) {
 $projectId = $projNode.id
 $allFields = $projNode.fields.nodes | Where-Object { $_.name }
 
+# Every option is resolved by its CANONICAL name with a legacy fallback (Resolve-Opt),
+# so a canonical board AND a default-template one ('Todo', 'P2 Medium') both fill.
 $statusNode = Get-Field "Status"
 $statusId   = $statusNode.id
-$doneId     = Get-Opt $statusNode "Done"
-$inProgId   = Get-Opt $statusNode "In Progress"
-$backlogId  = Get-Opt $statusNode "Backlog"
-$reviewId   = Get-Opt $statusNode "In Review"   # optional (from the field preset); falls back to In Progress
+$doneId     = (Resolve-Opt $statusNode "Status" "Done").id
+$inProgId   = (Resolve-Opt $statusNode "Status" "In Progress").id
+$backlogOpt = Resolve-Opt $statusNode "Status" "Backlog"        # 'Backlog', or a template board's 'Todo'
+$backlogId  = $backlogOpt.id
+$reviewId   = (Resolve-Opt $statusNode "Status" "In Review").id # optional (from the field preset); falls back to In Progress
 
 $prioNode   = Get-Field "Priority"
 $prioId     = $prioNode.id
-$prioMedId  = Get-Opt $prioNode "P2 Medium"
+$prioMedOpt = Resolve-Opt $prioNode "Priority" "P2"             # 'P2', or a template board's 'P2 Medium'
+$prioMedId  = $prioMedOpt.id
 
 $sizeNode   = Get-Field "Size"
 $sizeId     = $sizeNode.id
-$sizeMId    = Get-Opt $sizeNode "M"
+$sizeMOpt   = Resolve-Opt $sizeNode "Size" "M"
+$sizeMId    = $sizeMOpt.id
 
 $typeNode   = Get-Field "Type"
 $typeId     = $typeNode.id
@@ -341,17 +365,17 @@ foreach ($item in $items) {
         $prTargetN = if ($reviewId) { "In Review (PR abierto)" } else { "In Progress (PR abierto)" }
         if ($currentStatus -ne $prTarget -and $currentStatus -ne $doneId) { $targetStatus=$prTarget; $targetStatusN=$prTargetN }
     }
-    elseif (-not $currentStatus)                                       { $targetStatus=$backlogId; $targetStatusN="Backlog (sin PR)" }
+    elseif (-not $currentStatus -and $backlogId)                       { $targetStatus=$backlogId; $targetStatusN="$($backlogOpt.name) (sin PR)" }
     if ($targetStatus) {
         $changes += [PSCustomObject]@{ Type="single"; FieldId=$statusId; TargetId=$targetStatus; Display="Status [$currentStatusN] -> $targetStatusN" }
     }
 
     if (-not $currentPrio -and $prioMedId) {
-        $changes += [PSCustomObject]@{ Type="single"; FieldId=$prioId; TargetId=$prioMedId; Display="Priority vacio -> P2 Medium" }
+        $changes += [PSCustomObject]@{ Type="single"; FieldId=$prioId; TargetId=$prioMedId; Display="Priority vacio -> $($prioMedOpt.name)" }
     }
 
     if (-not $currentSize -and $sizeMId) {
-        $changes += [PSCustomObject]@{ Type="single"; FieldId=$sizeId; TargetId=$sizeMId; Display="Size vacio -> M" }
+        $changes += [PSCustomObject]@{ Type="single"; FieldId=$sizeId; TargetId=$sizeMId; Display="Size vacio -> $($sizeMOpt.name)" }
     }
 
     if (-not $currentType -and $typeId) {

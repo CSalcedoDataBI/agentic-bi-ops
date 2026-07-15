@@ -12,8 +12,36 @@ Presets live at `presets/fields.<lang>.json` (`en` default, `es` available). All
 & "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Lang es
 ```
 
-Standard set (EN): **Status, Priority, Type, Area, Estimate, Target**.
-Standard set (ES): **Estado, Prioridad, Tipo, Área, Estimado, Objetivo**.
+Standard set (EN): **Status, Priority, Size, Type, Area, Estimate, Target**.
+Standard set (ES): **Estado, Prioridad, Tamaño, Tipo, Área, Estimado, Objetivo**.
+
+## Standardize an EXISTING board onto the preset (`--migrate`)
+
+A plain apply only **creates missing fields** and **matches options by name**. On a board born from
+GitHub's default template (`Status: Todo / In Progress / Done`) that is not enough: it adds `Backlog`
+*next to* `Todo`, every item stays on `Todo`, and the board ends up with two options meaning the same
+thing. `-Migrate` **renames the legacy option in place** instead:
+
+```powershell
+# always preview first — a rename touches every item assigned to the option at once
+& "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Migrate -DryRun
+& "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Migrate      # asks s/n
+& "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Migrate -Yes # CI / pre-approved
+```
+
+The rename is sent with the option's **existing id** and the canonical name, so **every item keeps its
+assignment** — no bulk item rewrite, no orphans. The legacy→canonical map lives in
+`scripts/Get-BoardVocabulary.ps1` (`Todo`→`Backlog`, `P2 Medium`→`P2`, …); an option name that is not
+in it is left alone rather than guessed. Idempotent: on an already-canonical board it plans nothing.
+
+Verified on a scratch board created from GitHub's default template: `Todo`→`Backlog` renamed, the item
+sitting on `Todo` read `Backlog` afterwards, and Status ended with exactly the 5 canonical options.
+
+**Conflict:** if the board has BOTH `Todo` and `Backlog`, the rename is **skipped and reported** —
+GitHub rejects two options with the same name. Move the items and delete the spare option in the UI.
+
+Everything below `Status`/`Priority`/`Size` is out of the vocabulary's scope — the ES preset's `Estado`
+is a different FIELD, so `-Migrate` does not touch ES boards.
 
 ## Create a single custom field by hand
 ```bash
@@ -36,7 +64,8 @@ language per board for consistency.
 |------|--------------|------|
 | Create fields + option values | ✅ | `field-create` (this file) |
 | Apply a whole preset idempotently | ✅ | `Apply-FieldPreset.ps1` |
-| **Rename the built-in `Status` field / its options** | ❌ | UI/GraphQL only — the ES preset adds `Estado` as a NEW field instead of renaming `Status` |
+| Rename a single-select field's **options** (e.g. `Todo`→`Backlog`) | ✅ | `Apply-FieldPreset.ps1 -Migrate` — `updateProjectV2Field` with the option's existing id; item assignments survive |
+| **Rename the built-in `Status` FIELD itself** | ❌ | UI only — the ES preset adds `Estado` as a NEW field instead of renaming `Status` |
 | **Which fields are VISIBLE in a view** (show/hide, order) | ❌ | view config is UI/GraphQL-only; do it once in the UI |
 | **Group-by / layout (Board vs Table)** | ❌ | UI only |
 

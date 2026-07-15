@@ -161,6 +161,9 @@ $ErrorActionPreference = "Stop"
 
 # The single resolver for the internal state dir (new name + migration + fallback).
 . (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
+# The canonical/legacy option vocabulary (issue #278): lets this script understand a
+# board born from GitHub's default template ('Todo') as well as a canonical one.
+. (Join-Path $PSScriptRoot 'Get-BoardVocabulary.ps1')
 
 # NOTE: the GH_TOKEN check lives in the main-entry guard below (after every function
 # is defined) so the pure helpers can be dot-sourced for unit tests without a token
@@ -168,9 +171,66 @@ $ErrorActionPreference = "Stop"
 
 function Get-BoardUrl([int]$num) { "https://github.com/users/$Owner/projects/$num" }
 
-# An item is PENDING when its Status is Backlog or it has no Status yet.
+# An item is PENDING when it has no Status yet, or its Status MEANS Backlog - in the
+# canonical vocabulary or in a legacy one (GitHub's default template calls it 'Todo').
+# Before #278 this compared to the literal "Backlog", so every item of a default-template
+# board was invisible here and the script reported a board with dozens of open issues as
+# having no pending work.
 function Test-Pending($item) {
-    (-not $item.status) -or ($item.status -eq "Backlog")
+    if (-not $item.status) { return $true }
+    (Get-CanonicalOptionName 'Status' $item.status) -eq 'Backlog'
+}
+
+# The board's Status options that are LEGACY names this tool would migrate
+# (e.g. 'Todo' -> 'Backlog'). Names it does not recognize at all are NOT listed:
+# they are the caller's own vocabulary, not something to rename. Pure.
+function Get-LegacyStatusOptions([string[]]$OptionNames) {
+    @($OptionNames | Where-Object { $_ -and -not (Test-CanonicalOptionName 'Status' $_) -and (Get-CanonicalOptionName 'Status' $_) })
+}
+
+# The distinct Status VALUES on the board that map to no canonical option - i.e. the
+# board speaks a vocabulary this tool cannot read. While any exist, a pending count of
+# 0 proves nothing, so the caller must not claim the board is clean. Pure.
+function Get-UnknownStatusValues($items) {
+    @($items | ForEach-Object { $_.status } |
+        Where-Object { $_ -and -not (Get-CanonicalOptionName 'Status' $_) } |
+        Select-Object -Unique)
+}
+
+# Resolve a CANONICAL Status option to the id the board actually uses for it: the
+# canonical name first, then its legacy aliases. Every WRITE of a Status value must go
+# through this - resolving a literal name is what made the tool blind to legacy boards
+# in the first place (#278), and a write that resolves to $null silently leaves the item
+# where it was. $statusNode is the GraphQL field node (.options with .id/.name).
+function Resolve-StatusOptionId($statusNode, [string]$canonical) {
+    if (-not $statusNode) { return $null }
+    foreach ($n in (Get-OptionAliases 'Status' $canonical)) {
+        $o = $statusNode.options | Where-Object { $_.name -eq $n } | Select-Object -First 1
+        if ($o) { return $o.id }
+    }
+    return $null
+}
+
+# The Status field's option names as configured on the board. Returns @() when the
+# board has no Status field or the call fails - the caller degrades to "cannot tell"
+# rather than asserting a schema it never read.
+function Get-StatusOptionNames([int]$num) {
+    try {
+        $fields = (gh project field-list $num --owner $Owner --format json --limit 50 | ConvertFrom-Json).fields
+        @(($fields | Where-Object { $_.name -eq 'Status' } | Select-Object -First 1).options | ForEach-Object { $_.name })
+    } catch { @() }
+}
+
+# Warn (never block) when the board's Status schema is not the canonical one, and point
+# at the migration. Called before any pending claim so the user can weigh the count.
+function Show-StatusSchemaWarning([string[]]$OptionNames, [int]$num) {
+    $legacy = Get-LegacyStatusOptions $OptionNames
+    if ($legacy.Count -eq 0) { return }
+    $map = @($legacy | ForEach-Object { "$_ -> $(Get-CanonicalOptionName 'Status' $_)" }) -join ', '
+    Write-Host "AVISO: el board no usa el estandar canonico de Status ($map)." -ForegroundColor Yellow
+    Write-Host "       Los cuento como pendientes igual, pero para estandarizarlo (renombra en sitio, conserva las asignaciones):" -ForegroundColor DarkGray
+    Write-Host "       /board field apply en --migrate      (previsualiza con --dry-run)" -ForegroundColor DarkGray
+    Write-Host ""
 }
 
 # -- Local session registry (multi-session awareness) ---------------------------
@@ -2003,8 +2063,14 @@ if ($Lock -gt 0 -or $Unlock -gt 0) {
     if (-not $item) { throw "Issue #$n no esta en el board #$ProjectNum." }
     $repo       = $item.content.repository.nameWithOwner
     $note       = if ($locking) { 'LOCK' } else { 'UNLOCK' }
+    # Resolve through the vocabulary: on a legacy board the release target is 'Todo', and
+    # the old literal 'Backlog' lookup returned $null - the unlock then posted its comment
+    # and unassigned but left the item stranded in In Progress (Codex review, PR #279).
     $targetName = if ($locking) { 'In Progress' } else { 'Backlog' }
-    $targetOpt  = if ($locking) { $ctx.inProgId } else { ($ctx.statusNode.options | Where-Object { $_.name -eq 'Backlog' }).id }
+    $targetOpt  = if ($locking) { $ctx.inProgId } else { Resolve-StatusOptionId $ctx.statusNode 'Backlog' }
+    if (-not $targetOpt) {
+        throw "El board #$ProjectNum no tiene una opcion de Status para '$targetName' (ni un nombre legacy equivalente). Aplica el preset con /board field apply en."
+    }
     $fingerprint = Format-ClaimFingerprint -Note $note -Computer $env:COMPUTERNAME -ProcessId $PID -Date (Get-Date -Format 'yyyy-MM-dd HH:mm')
 
     $assignVerb = if ($locking) { "asignar a $Owner" } else { "desasignar a $Owner" }
@@ -2154,11 +2220,24 @@ if ($Start -le 0 -and $ToReview -le 0 -and $Parallel.Count -eq 0) {
     # Guard: if a foreign checkout moved this session off its work branch, say so up front.
     Show-BranchDrift
 
+    $statusOpts = Get-StatusOptionNames $ProjectNum
+    Show-StatusSchemaWarning $statusOpts $ProjectNum
+
     $items   = (gh project item-list $ProjectNum --owner $Owner --format json --limit 200 | ConvertFrom-Json).items
     $pending = @($items | Where-Object { Test-Pending $_ })
 
     if ($pending.Count -eq 0) {
-        Write-Host "Sin pendientes. Todo el board esta en progreso o terminado." -ForegroundColor Green
+        # "No pending" is only honest when every Status on the board is one this tool
+        # understands. If ANY item sits in a vocabulary we cannot read, 0 matches means
+        # "I cannot tell", not "the board is clean" - say that instead of the green
+        # all-clear the script used to print over dozens of open issues (#278).
+        $unknown = Get-UnknownStatusValues $items
+        if ($unknown.Count -gt 0) {
+            Write-Host "No puedo saber que hay pendiente: 0 items en Backlog, pero el board usa estados que no reconozco ($($unknown -join ', '))." -ForegroundColor Yellow
+            Write-Host "No afirmo que no haya pendientes - revisa el board, o estandarizalo con /board field apply en --migrate." -ForegroundColor DarkGray
+        } else {
+            Write-Host "Sin pendientes. Todo el board esta en progreso o terminado." -ForegroundColor Green
+        }
         Write-Host ""
         Write-Host "Board: $boardUrl" -ForegroundColor Cyan
         exit 0
@@ -2186,12 +2265,18 @@ if ($Start -le 0 -and $ToReview -le 0 -and $Parallel.Count -eq 0) {
     Write-Host ""
     Write-Host ("Total: {0} pendiente(s)." -f $pending.Count) -ForegroundColor Yellow
 
-    # Multi-session: show what other LIVE local sessions are working right now
-    $sessions = @(Read-SessionRegistry)
-    if ($sessions.Count -gt 0) {
+    # Multi-session: show what other LIVE local sessions are working right now.
+    # NOT named $sessions: at SCRIPT scope that is the [switch]$Sessions parameter
+    # (PowerShell variable names are case-insensitive), so assigning an array to it
+    # threw "cannot convert Object[] to SwitchParameter" and killed the listing right
+    # after printing it - the board link and next step never rendered. The two other
+    # Read-SessionRegistry call sites are inside functions, where the local scope
+    # shadows the parameter, which is why only this one broke.
+    $liveSessions = @(Read-SessionRegistry)
+    if ($liveSessions.Count -gt 0) {
         Write-Host ""
         Write-Host "Sesiones activas en esta maquina:" -ForegroundColor Cyan
-        foreach ($s in $sessions) {
+        foreach ($s in $liveSessions) {
             Write-Host ("  #{0}  rama {1}  (PID {2} vivo, desde {3}) en {4}" -f $s.issue, $s.branch, $s.sessionPid, $s.started, $s.workPath) -ForegroundColor DarkCyan
         }
     }
@@ -2221,9 +2306,11 @@ query($owner:String!, $num:Int!) {
     $projectId  = $projData.data.user.projectV2.id
     if (-not $projectId) { throw "Board #$ProjectNum no encontrado para $Owner." }
     $statusNode = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name -eq "Status" }
-    $reviewId   = ($statusNode.options | Where-Object { $_.name -eq "In Review" }).id
+    # Vocabulary-aware, like every other Status write: a board whose column is called
+    # 'Review' is understood instead of being refused (Codex review, PR #279).
+    $reviewId   = Resolve-StatusOptionId $statusNode "In Review"
     if (-not $reviewId) {
-        throw "El board #$ProjectNum no tiene la opcion 'In Review' en Status. Agregala (/board field) antes de usar -ToReview."
+        throw "El board #$ProjectNum no tiene la opcion 'In Review' en Status. Agregala (/board field apply en) antes de usar -ToReview."
     }
 
     # Find the item by reusing Get-BoardItem, which paginates the whole board (#246)
