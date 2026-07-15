@@ -1236,64 +1236,36 @@ Describe 'Worktree registry helpers live here now (#289)' {
     }
 }
 
-Describe 'Test-WorktreeRemovalTook (did the removal REALLY take, #291)' {
-    # Found by a Codex review of #287/#289 and reproduced. Test-WorktreeStillRegistered proves
-    # "still there" by NAME - branch first, path second. Both names can miss the SAME registered
-    # worktree at once: the branch signal misses when the worktree drifted to another branch (or
-    # detached), and the path signal misses on the 8.3 short name it was written to survive. Not
-    # finding it then read as "gone" and licensed the delete - a fail-open in a destructive path.
+Describe 'Resolve-GitPathForm (make our path comparable to git''s, #291)' {
+    # Found by a Codex review of #287/#289. Test-WorktreeStillRegistered proves "still there" by
+    # NAME: branch first, path second. Both can miss the SAME registered worktree - the branch
+    # signal is blind to a DETACHED one, and the path signal is blind when the two strings spell
+    # one directory differently. "Could not find it" then read as "gone" and licensed the delete.
     #
-    # The cure is to stop asking "can I still find MY worktree?" (my name for it may be wrong) and
-    # ask "did ANY worktree leave the registry?". That compares git's porcelain against git's own
-    # porcelain - one producer, one format - so no cross-producer string mismatch can fool it.
-    BeforeAll {
-        $script:Main = "worktree C:/repo`nHEAD 111`nbranch refs/heads/main`n"
-        # The session's worktree, still on its branch. Long path, as git prints it.
-        $script:Mine = "worktree C:/Users/Cristobal/AppData/Local/Temp/s/wt`nHEAD 222`nbranch refs/heads/issue-21-h`n"
-        # The SAME worktree, drifted off its branch. DETACHED is the realistic shape: git refuses
-        # `checkout <branch>` for a branch already checked out in another worktree ("fatal: 'main'
-        # is already used by worktree at ..."), so a drifted worktree is detached or on some third
-        # branch - never a duplicate of main. Verified against a real repo.
-        $script:Drift = "worktree C:/Users/Cristobal/AppData/Local/Temp/s/wt`nHEAD 222`ndetached`n"
-        $script:Short = 'C:/Users/CRISTO~1/AppData/Local/Temp/s/wt'   # what the registry stored
-        $script:Br    = 'issue-21-h'
+    # The strings differ for a real reason, so the cure is to stop them differing at the source.
+    It 'expands an 8.3 short name into the long form git prints' {
+        # THE #291 ROOT CAUSE. %TEMP% is short-named on this machine, which is how the bug was
+        # first seen. Guard the assumption itself: if this ever stops being true the fix is moot.
+        $short = $env:TEMP
+        $short | Should -Match 'CRISTO~1|~1'          # precondition: the input really is shortened
+        (Resolve-GitPathForm $short) | Should -Not -Match '~1'
+        (Resolve-GitPathForm $short) | Should -Be (Get-Item -LiteralPath $short).FullName
     }
-
-    It 'THE #291 FAIL-OPEN: a drifted worktree whose path does not string-match is NOT "gone"' {
-        # Both name signals miss, yet git plainly still lists the worktree: the registry is
-        # unchanged. Before the fix this returned "gone" and the teardown deleted the branch and
-        # pruned the registry entry out from under a live worktree (breaking the #269 invariant).
-        $before = $script:Main + "`n" + $script:Drift
-        Test-WorktreeStillRegistered -Porcelain $before -Path $script:Short -Branch $script:Br | Should -BeFalse  # both names miss
-        Test-WorktreeRemovalTook -Before $before -After $before -Path $script:Short -Branch $script:Br | Should -BeFalse
+    It 'makes the short and long spellings of one directory match in the registry check' {
+        # The end-to-end point of the resolver, at the level the caller cares about.
+        $long = (Get-Item -LiteralPath $env:TEMP).FullName
+        $p = "worktree $($long.Replace([char]92, '/'))`nHEAD 222`ndetached`n"   # detached: branch signal is blind
+        Test-WorktreeStillRegistered -Porcelain $p -Path $env:TEMP                        | Should -BeFalse  # raw: misses
+        Test-WorktreeStillRegistered -Porcelain $p -Path (Resolve-GitPathForm $env:TEMP)  | Should -BeTrue   # resolved: catches
     }
-    It 'says the removal took when a record actually left the registry' {
-        # The #287 case: the handle keeps the FOLDER, but git de-registered the worktree. The
-        # teardown must continue - this is what the whole fix exists to allow.
-        $before = $script:Main + "`n" + $script:Mine
-        Test-WorktreeRemovalTook -Before $before -After $script:Main -Path $script:Short -Branch $script:Br | Should -BeTrue
+    It 'returns a non-existent path unchanged instead of throwing' {
+        # We cannot expand what is not there - and need not: git cannot hold a LIVE worktree at a
+        # path that does not exist, so the raw fallback cannot hide one.
+        $gone = Join-Path $env:TEMP 'definitely-not-here-291'
+        (Resolve-GitPathForm $gone) | Should -Be $gone
     }
-    It 'refuses when nothing left the registry, even with no name to match on' {
-        Test-WorktreeRemovalTook -Before $script:Main -After $script:Main | Should -BeFalse
-    }
-    It 'a still-registered worktree wins outright, whatever else changed' {
-        # Positive proof by name is never overridden by the set having shrunk for other reasons.
-        $before = $script:Main + "`n" + $script:Mine + "`nworktree C:/other`nHEAD 333`nbranch refs/heads/z`n"
-        $after  = $script:Main + "`n" + $script:Mine      # C:/other left; OURS did not
-        Test-WorktreeRemovalTook -Before $before -After $after -Path $script:Short -Branch $script:Br | Should -BeFalse
-    }
-    It 'a concurrently ADDED worktree does not mask our removal' {
-        # Counting records would break here (2 before, 2 after); the set difference does not.
-        $before = $script:Main + "`n" + $script:Mine
-        $after  = $script:Main + "`nworktree C:/brand-new`nHEAD 444`nbranch refs/heads/new`n"
-        Test-WorktreeRemovalTook -Before $before -After $after -Path $script:Short -Branch $script:Br | Should -BeTrue
-    }
-    It 'fails closed when the BEFORE listing is empty (nothing can be proven gone)' {
-        Test-WorktreeRemovalTook -Before '' -After $script:Main -Path $script:Short -Branch $script:Br | Should -BeFalse
-    }
-    It 'still catches the plain still-registered case by branch' {
-        $before = $script:Main + "`n" + $script:Mine
-        Test-WorktreeRemovalTook -Before $before -After $before -Path '' -Branch $script:Br | Should -BeFalse
+    It 'returns empty for an empty path rather than throwing' {
+        (Resolve-GitPathForm '') | Should -Be ''
     }
 }
 
@@ -1396,9 +1368,9 @@ Describe 'Invoke-SessionCleanup asks git, not the disk (#289)' {
 
     It 'keeps branch + registry when the worktree is still registered but DETACHED (#291)' {
         # The Codex finding, on a real repo. Detached => the branch signal cannot see it; locked
-        # => `remove --force` genuinely leaves it registered. With a workPath that does not
-        # string-match git's porcelain (the 8.3 case), BOTH name signals miss the same live
-        # worktree, and "I cannot find it" used to mean "it is gone" -> delete + prune.
+        # => `remove --force` genuinely leaves it registered. Only the resolved path can catch it,
+        # and before the fix "I cannot find it" meant "it is gone" -> delete + prune, out from
+        # under a live worktree.
         git -C $script:Work2 checkout --detach 2>&1 | Out-Null
         git worktree lock $script:Work2 2>&1 | Out-Null
         try {
@@ -1411,6 +1383,21 @@ Describe 'Invoke-SessionCleanup asks git, not the disk (#289)' {
             ($acts -join ' ') | Should -Not -Match 'prune #21'
             Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
         } finally { git worktree unlock $script:Work2 2>&1 | Out-Null }
+    }
+
+    It 'CONVERGES on an already-de-registered worktree instead of leaking it forever (#291)' {
+        # Codex caught the first cut of this fix re-creating the #289 disease. Proving "some
+        # worktree LEFT the list" instead of "MY worktree is not IN it" makes a stale registry
+        # entry - one whose worktree git already forgot, e.g. removed by hand - unprovable: the
+        # before/after listings are identical, so every retry refused and the entry leaked.
+        # workPath here comes from sessions.json, so nothing else would ever clear it.
+        $script:Handle.Close(); $script:Handle = $null
+        git worktree remove --force $script:Work2 2>&1 | Out-Null     # git already forgot it
+        ((git worktree list --porcelain) -join "`n") | Should -Not -Match 'issue-21-h'
+        $acts = @(Invoke-SessionCleanup -Session (New-HSession) -PrMerged)
+        ($acts -join ' ') | Should -Not -Match 'FAIL'
+        ($acts -join ' ') | Should -Match 'prune #21'                  # the entry is finally cleared
+        Should -Invoke Remove-SessionRegistryEntry -Times 1 -Exactly
     }
 
     It 'still keeps branch + registry when git REALLY still registers the worktree' {

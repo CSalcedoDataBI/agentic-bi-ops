@@ -501,13 +501,10 @@ function Remove-BranchAndWorktree {
             # Ask GIT whether the removal took, not the filesystem (#287). An empty folder left
             # behind by an open handle is not a failed removal, and treating it as one kept a
             # proven-merged branch and forced a second -Fix pass over the 58-branch cleanup.
-            # Snapshot BEFORE too: see Test-WorktreeRemovalTook - failing to RECOGNISE our
-            # worktree in the listing is not proof that it left it (#291).
-            $before = (git worktree list --porcelain 2>$null) -join "`n"
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "     FAIL no pude leer 'git worktree list' antes del remove - conservo la rama $($Row.Branch) por si acaso." -ForegroundColor Red
-                return $did
-            }
+            # Resolve the path into git's own form first, while the directory still exists to
+            # resolve from - otherwise a DETACHED worktree whose path spells differently is
+            # invisible to both signals and reads as "gone" (#291). See Resolve-GitPathForm.
+            $wtPathForGit = Resolve-GitPathForm $Row.WorktreePath
             git worktree remove --force $Row.WorktreePath 2>&1 | Out-Null
             $after = (git worktree list --porcelain 2>$null) -join "`n"
             if ($LASTEXITCODE -ne 0) {
@@ -515,7 +512,7 @@ function Remove-BranchAndWorktree {
                 Write-Host "     FAIL no pude releer 'git worktree list' tras el remove - conservo la rama $($Row.Branch) por si acaso." -ForegroundColor Red
                 return $did
             }
-            if (-not (Test-WorktreeRemovalTook -Before $before -After $after -Path $Row.WorktreePath -Branch $Row.Branch)) {
+            if (Test-WorktreeStillRegistered -Porcelain $after -Path $wtPathForGit -Branch $Row.Branch) {
                 Write-Host "     FAIL git sigue registrando el worktree de $($Row.Branch) (handle abierto? locked?) - conservo la rama." -ForegroundColor Red
                 return $did
             }

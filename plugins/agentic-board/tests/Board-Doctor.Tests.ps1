@@ -198,20 +198,21 @@ Describe 'Remove-BranchAndWorktree asks git, not the disk (#287)' {
     }
 
     It 'gates the branch delete on the porcelain registry' {
-        ($script:RemoveFn -match 'Test-WorktreeRemovalTook') | Should -BeTrue
+        ($script:RemoveFn -match 'Test-WorktreeStillRegistered') | Should -BeTrue
     }
     It 'passes the BRANCH to the gate, not only the path' {
         # Path-only is the fail-open case (see the 8.3 short-name test above): the branch is the
         # signal that actually decides whether `git branch -D` can succeed.
         ($script:RemoveFn -match '-Branch \$Row\.Branch') | Should -BeTrue
     }
-    It 'snapshots the registry BEFORE the remove, so it can tell "left" from "unrecognised" (#291)' {
-        # Both name signals can miss the same still-registered worktree; only the before/after
-        # difference survives that. If the BEFORE read is dropped, #291 is back.
-        $snap = $script:RemoveFn.IndexOf('$before = (git worktree list')
-        $rm   = $script:RemoveFn.IndexOf('git worktree remove --force $Row.WorktreePath 2>&1')
-        $snap | Should -BeGreaterThan 0
-        $snap | Should -BeLessThan $rm
+    It 'resolves the path BEFORE the remove, while there is still a directory to resolve (#291)' {
+        # A detached worktree is invisible to the branch signal, so the path is the only signal
+        # left - and it only works once both sides spell the directory the same way. Resolving
+        # after the removal would be too late: the directory may be gone.
+        $res = $script:RemoveFn.IndexOf('Resolve-GitPathForm')
+        $rm  = $script:RemoveFn.IndexOf('git worktree remove --force $Row.WorktreePath 2>&1')
+        $res | Should -BeGreaterThan 0
+        $res | Should -BeLessThan $rm
     }
     It 'never lets Test-Path of the worktree path veto the delete again' {
         # Test-Path may still REPORT a leftover folder - that note is useful. What must never come
@@ -221,7 +222,7 @@ Describe 'Remove-BranchAndWorktree asks git, not the disk (#287)' {
     }
     It 'checks the registry BEFORE deleting the branch, not after' {
         # A gate that runs after `git branch -D` is decorative.
-        $gate = $script:RemoveFn.IndexOf('Test-WorktreeRemovalTook')
+        $gate = $script:RemoveFn.IndexOf('Test-WorktreeStillRegistered')
         $del  = $script:RemoveFn.IndexOf('git branch $BranchFlag')
         $gate | Should -BeGreaterThan 0
         $gate | Should -BeLessThan $del
