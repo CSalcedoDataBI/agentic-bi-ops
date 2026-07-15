@@ -1153,8 +1153,9 @@ Describe 'Get-AllPages (board pagination - issue #246)' {
 }
 
 Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
-    It 'is done when the PR is MERGED' {
-        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true
+    It 'is done when the PR is MERGED (head == our branch tip)' {
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true `
+            -PrHeadOid 'abc123' -BranchTip 'abc123'
         $r.done | Should -BeTrue; $r.reason | Should -Match 'merged'
     }
     It 'is done when the issue is CLOSED' {
@@ -1169,7 +1170,48 @@ Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
         (Get-SessionCompletion -PrState 'OPEN' -IssueState 'OPEN' -PidAlive $true).done | Should -BeFalse
     }
     It 'prefers the MERGED reason over pid-dead' {
-        (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false).reason | Should -Match 'merged'
+        (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false `
+            -PrHeadOid 'abc123' -BranchTip 'abc123').reason | Should -Match 'merged'
+    }
+    It 'a STALE merged PR does NOT complete a LIVE session (it would force-remove its worktree)' {
+        # Cleanup kills the shell and runs `git worktree remove --force`, so completing a live
+        # session on someone else's merged PR would destroy its working state (Codex #275).
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true `
+            -PrHeadOid 'old111' -BranchTip 'new999'
+        $r.done | Should -BeFalse
+    }
+    It 'a dead session with a STALE merged PR still completes, via the PID signal' {
+        # Falling through must not strand the session: the PID/issue signals still finish it,
+        # and merged=$false keeps the delete safe.
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false `
+            -PrHeadOid 'old111' -BranchTip 'new999'
+        $r.done   | Should -BeTrue
+        $r.reason | Should -Match 'termin'
+        $r.merged | Should -BeFalse
+    }
+    # `merged` licenses the branch force-delete downstream (#273) - only a landed PR whose
+    # head IS the tip we would delete earns it.
+    It 'flags merged for a MERGED PR whose head is the branch tip' {
+        (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true `
+            -PrHeadOid 'abc123' -BranchTip 'abc123').merged | Should -BeTrue
+    }
+    It 'does NOT flag merged when the issue closed without a merged PR' {
+        (Get-SessionCompletion -PrState 'CLOSED' -IssueState 'CLOSED' -PidAlive $true).merged | Should -BeFalse
+    }
+    It 'does NOT flag merged when the session just died (the silent-data-loss case)' {
+        (Get-SessionCompletion -PrState '' -IssueState 'OPEN' -PidAlive $false).merged | Should -BeFalse
+    }
+    It 'does NOT trust a STALE merged PR on a REUSED branch name (Codex #275)' {
+        # -TakeOver re-runs reuse the deterministic issue-<n>-<slug> branch name. An OLD
+        # merged PR must not vouch for the NEW tip, or a crashed session loses its commits.
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'CLOSED' -PidAlive $false `
+            -PrHeadOid 'old111' -BranchTip 'new999'
+        $r.done   | Should -BeTrue    # still finished (via the issue/PID signals)...
+        $r.merged | Should -BeFalse   # ...but NOT licensed to force-delete
+    }
+    It 'does NOT flag merged when the PR head or the branch tip is unknown (fail safe)' {
+        (Get-SessionCompletion -PrState 'MERGED' -PrHeadOid '' -BranchTip 'abc').merged | Should -BeFalse
+        (Get-SessionCompletion -PrState 'MERGED' -PrHeadOid 'abc' -BranchTip '').merged | Should -BeFalse
     }
 }
 
@@ -1180,7 +1222,7 @@ Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
         $acts.Count | Should -Be 4
         $acts[0] | Should -Match 'kill PID 4321'
         $acts[1] | Should -Match 'worktree remove --force'
-        $acts[2] | Should -Match 'branch -D issue-9-x'
+        $acts[2] | Should -CMatch 'branch -d issue-9-x'   # safe delete, never -D (#273)
         $acts[3] | Should -Match 'prune #9'
     }
     It 'does NOT kill a wt session PID (it is the host/launcher, not the tab) - Codex #269' {
@@ -1206,8 +1248,95 @@ Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
         $s = [pscustomobject]@{ issue = 3; branch = 'issue-3-z'; workPath = $stuck; sessionPid = 0 }
         $acts = @(Invoke-SessionCleanup -Session $s)   # NOT -DryRun
         ($acts -join ' ') | Should -Match 'FAIL'
-        ($acts -join ' ') | Should -Not -Match 'branch -D'
+        ($acts -join ' ') | Should -Not -Match 'branch -'
         Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
+    }
+}
+
+Describe 'Invoke-SessionCleanup branch deletion is merge-safe (#273)' {
+    # A real throwaway repo: `git branch -d` only refuses for real against real history.
+    # No workPath on the session -> the worktree step is skipped and the branch step runs.
+    BeforeEach {
+        $script:Repo = Join-Path $TestDrive ('r' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $script:Repo | Out-Null
+        Push-Location $script:Repo
+        git init -q -b main
+        git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+        Mock Remove-SessionRegistryEntry { }
+        # A branch carrying a commit main does not have -> `git branch -d` refuses it.
+        # Defined here, not in the Describe body: that body runs at DISCOVERY, so a
+        # function declared there is gone by the time the It blocks run (Pester v5).
+        function script:New-UnmergedBranch {
+            param([string]$Name)
+            git checkout -q -b $Name
+            git -c user.email=t@t -c user.name=t commit -q --allow-empty -m unmerged
+            git checkout -q main
+        }
+    }
+    AfterEach { Pop-Location }
+
+    It 'keeps an UNMERGED branch and WARNs naming the branch + issue' {
+        New-UnmergedBranch -Name 'issue-7-unmerged'
+        $s = [pscustomobject]@{ issue = 7; branch = 'issue-7-unmerged'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s)   # NOT -DryRun
+        ($acts -join ' ') | Should -Match 'WARN'
+        ($acts -join ' ') | Should -Match 'issue-7-unmerged'
+        ($acts -join ' ') | Should -Match '#7'
+        # The commits survive: the branch is still there for the audit path.
+        (git branch --list 'issue-7-unmerged') | Should -Not -BeNullOrEmpty
+    }
+
+    It 'deletes a MERGED branch quietly (no WARN)' {
+        git branch issue-8-merged           # points at main -> merged by definition
+        $s = [pscustomobject]@{ issue = 8; branch = 'issue-8-merged'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s)
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        (git branch --list 'issue-8-merged') | Should -BeNullOrEmpty
+    }
+
+    It 'still prunes the registry entry when the branch is kept (the worktree IS gone)' {
+        New-UnmergedBranch -Name 'issue-9-unmerged'
+        $s = [pscustomobject]@{ issue = 9; branch = 'issue-9-unmerged'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s)
+        (git branch --list 'issue-9-unmerged') | Should -Not -BeNullOrEmpty   # kept...
+        ($acts -join ' ') | Should -Match 'prune #9'                          # ...yet still pruned
+        Should -Invoke Remove-SessionRegistryEntry -Times 1 -Exactly
+    }
+
+    It 'does NOT cry wolf about a branch that is already gone' {
+        $s = [pscustomobject]@{ issue = 12; branch = 'issue-12-never-existed'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s)
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        ($acts -join ' ') | Should -Match 'prune #12'
+    }
+
+    It 'REGRESSION: -PrMerged deletes a SQUASH-merged branch (never an ancestor of main)' {
+        # The flow squash-merges by default, which rewrites the commits: the branch tip is
+        # NOT an ancestor of main, so `-d` refuses even though the PR landed perfectly.
+        # Without the -PrMerged licence every successful session would leak a branch + WARN.
+        git checkout -q -b issue-11-squashed
+        'work' | Set-Content (Join-Path $script:Repo 'f.txt')
+        git add f.txt
+        git -c user.email=t@t -c user.name=t commit -q -m work
+        git checkout -q main
+        git merge --squash issue-11-squashed 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m 'squashed (#11)'
+        # Precondition: the safe delete really would refuse this branch.
+        git branch -d issue-11-squashed 2>&1 | Out-Null
+        $LASTEXITCODE | Should -Not -Be 0
+        $s = [pscustomobject]@{ issue = 11; branch = 'issue-11-squashed'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s -PrMerged)
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        (git branch --list 'issue-11-squashed') | Should -BeNullOrEmpty
+    }
+
+    It '-ForceDeleteBranch discards an unmerged branch on purpose (opt-in escape hatch)' {
+        New-UnmergedBranch -Name 'issue-10-unmerged'
+        $s = [pscustomobject]@{ issue = 10; branch = 'issue-10-unmerged'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s -ForceDeleteBranch)
+        ($acts -join ' ') | Should -CMatch 'branch -D issue-10-unmerged'
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        (git branch --list 'issue-10-unmerged') | Should -BeNullOrEmpty
     }
 }
 
@@ -1310,6 +1439,24 @@ Describe 'Invoke-SessionWatch (DI poll loop, #135)' {
             -Now { Get-Date } -Sleep { param($sec) }
         Should -Invoke Invoke-SessionCleanup -Times 1 -Exactly
         $r.cleaned | Should -Contain 7
+    }
+    It 'carries the merged verdict into the teardown (licenses the force-delete, #273)' {
+        $script:seen = $null
+        Mock Invoke-SessionCleanup { $script:seen = $PrMerged; @('mock teardown') }
+        Invoke-SessionWatch -AutoClean `
+            -ReadSessions { @([pscustomobject]@{ issue = 7 }) } `
+            -GetStatus    { param($s) [pscustomobject]@{ done = $true; reason = 'PR merged'; merged = $true } } `
+            -Now { Get-Date } -Sleep { param($sec) } | Out-Null
+        $script:seen | Should -BeTrue
+    }
+    It 'does NOT license the force-delete for a session that finished unmerged (#273)' {
+        $script:seen = $null
+        Mock Invoke-SessionCleanup { $script:seen = $PrMerged; @('mock teardown') }
+        Invoke-SessionWatch -AutoClean `
+            -ReadSessions { @([pscustomobject]@{ issue = 7 }) } `
+            -GetStatus    { param($s) [pscustomobject]@{ done = $true; reason = 'proceso terminado'; merged = $false } } `
+            -Now { Get-Date } -Sleep { param($sec) } | Out-Null
+        $script:seen | Should -BeFalse
     }
     It 'does NOT clean when -AutoClean is off' {
         Mock Invoke-SessionCleanup { @('should not run') }

@@ -145,6 +145,10 @@ matching recipe from the projects-admin references:
     Monitor the fleet with `scripts/Board-Work.ps1 -Sessions`, or `-Sessions -Watch -AutoClean`
     to block until every session finishes (PR merged / issue closed / PID dead) and auto-remove
     each worktree + branch + registry entry as it completes (`-DryRun` previews the teardown).
+    The branch delete is merge-safe: a session whose PR MERGED has its branch deleted as
+    before (the work is on the default branch), but one that finished WITHOUT a merged PR
+    (gate blocked, PR closed, agent crashed) keeps its branch and auto-clean WARNs naming it,
+    so the commits are never silently lost — `-ForceDeleteBranch` discards them on purpose.
     Only parallelize issues
     that DON'T depend on each other; clean each worktree with `git worktree remove` after its PR
     merges. Requires Windows Terminal for tabs (Windows-only launcher).
