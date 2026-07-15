@@ -3,6 +3,18 @@
 **Run coding agents off your real GitHub Projects board — a quota-aware, review-gated
 coordinator, not another local Kanban.**
 
+<p align="center">
+  <img src=".github/assets/board-install.gif" width="820"
+       alt="Install agentic-board: /plugin marketplace add, /plugin install, the AGENTIC BOARD banner, and the /board menu">
+</p>
+
+<p align="center"><em>Install it, then just talk to your board:</em></p>
+
+<p align="center">
+  <img src=".github/assets/board-loop.gif" width="820"
+       alt="agentic-board in use: ask what's pending, start an issue, open a review-gated PR, merge to Done">
+</p>
+
 agentic-board is a Claude Code plugin for developers who track work on GitHub Projects and want
 an agent to actually *do* the board work: pick the next issue, start it on its own branch and
 worktree, take it through a PR and a review gate, and merge it — across multiple GitHub accounts,
