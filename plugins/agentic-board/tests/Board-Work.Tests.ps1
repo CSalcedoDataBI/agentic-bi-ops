@@ -1253,6 +1253,76 @@ Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
     }
 }
 
+Describe 'Invoke-SessionCleanup does not discard a dirty worktree (#276)' {
+    # Real repo + real linked worktree: `git worktree remove --force` only destroys real
+    # uncommitted work, so nothing short of the real thing tests this.
+    BeforeEach {
+        $script:Repo = Join-Path $TestDrive ('w' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:Work = "$($script:Repo)-wt"
+        New-Item -ItemType Directory -Path $script:Repo | Out-Null
+        Push-Location $script:Repo
+        git init -q -b main
+        git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+        git worktree add -q -b issue-20-wt $script:Work 2>&1 | Out-Null
+        Mock Remove-SessionRegistryEntry { }
+        function script:New-Session {
+            [pscustomobject]@{ issue = 20; branch = 'issue-20-wt'; workPath = $script:Work; sessionPid = 0 }
+        }
+    }
+    AfterEach { Pop-Location }
+
+    It 'REFUSES to remove a DIRTY worktree on an unmerged session, and says so' {
+        'work in progress' | Set-Content (Join-Path $script:Work 'scratch.txt')   # untracked
+        $acts = @(Invoke-SessionCleanup -Session (New-Session))
+        ($acts -join ' ') | Should -Match 'WARN'
+        ($acts -join ' ') | Should -Match 'scratch|sin commitear|worktree'
+        ($acts -join ' ') | Should -Match '#20'
+        Test-Path (Join-Path $script:Work 'scratch.txt') | Should -BeTrue   # the work survives
+    }
+
+    It 'keeps the branch AND the registry entry when it refuses (leftover stays tracked)' {
+        'work in progress' | Set-Content (Join-Path $script:Work 'scratch.txt')
+        $acts = @(Invoke-SessionCleanup -Session (New-Session))
+        ($acts -join ' ') | Should -Not -Match 'branch -'
+        ($acts -join ' ') | Should -Not -Match 'prune #20'
+        Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
+        (git branch --list 'issue-20-wt') | Should -Not -BeNullOrEmpty
+    }
+
+    It 'a modified TRACKED file counts as dirty too (not just untracked)' {
+        git -C $script:Work checkout -q main 2>&1 | Out-Null
+        'tracked' | Set-Content (Join-Path $script:Work 'f.txt')
+        git -C $script:Work add f.txt
+        git -C $script:Work -c user.email=t@t -c user.name=t commit -q -m add
+        'modified after the commit' | Set-Content (Join-Path $script:Work 'f.txt')
+        $acts = @(Invoke-SessionCleanup -Session (New-Session))
+        ($acts -join ' ') | Should -Match 'WARN'
+        Test-Path $script:Work | Should -BeTrue
+    }
+
+    It 'REGRESSION: still removes a CLEAN worktree exactly as before (happy path intact)' {
+        $acts = @(Invoke-SessionCleanup -Session (New-Session))
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        ($acts -join ' ') | Should -Match 'worktree remove --force'
+        ($acts -join ' ') | Should -Match 'prune #20'
+        Test-Path $script:Work | Should -BeFalse
+    }
+
+    It 'removes a DIRTY worktree when the PR merged (the work landed - nothing to save)' {
+        'leftover' | Set-Content (Join-Path $script:Work 'scratch.txt')
+        $acts = @(Invoke-SessionCleanup -Session (New-Session) -PrMerged)
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        Test-Path $script:Work | Should -BeFalse
+    }
+
+    It '-ForceRemoveWorktree discards a dirty worktree on purpose (opt-in escape hatch)' {
+        'leftover' | Set-Content (Join-Path $script:Work 'scratch.txt')
+        $acts = @(Invoke-SessionCleanup -Session (New-Session) -ForceRemoveWorktree)
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        Test-Path $script:Work | Should -BeFalse
+    }
+}
+
 Describe 'Invoke-SessionCleanup branch deletion is merge-safe (#273)' {
     # A real throwaway repo: `git branch -d` only refuses for real against real history.
     # No workPath on the session -> the worktree step is skipped and the branch step runs.
