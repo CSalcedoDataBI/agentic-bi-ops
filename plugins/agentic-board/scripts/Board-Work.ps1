@@ -1666,9 +1666,12 @@ function Invoke-FleetReap {
 #
 # The proof must be about THESE commits, not just this branch NAME: branch names are
 # deterministic per issue (issue-<n>-<slug>) and a -TakeOver re-run reuses them, so an OLD
-# merged PR would otherwise vouch for a NEW session's unmerged work (Codex review, PR #275).
-# Hence `merged` also requires the merged PR's head to be the branch tip we are about to
-# delete. `done` deliberately does NOT: a merged PR still finishes the session either way.
+# merged PR would otherwise vouch for a NEW session's work (Codex review, PR #275). A merged
+# PR whose head is not our branch tip tells us NOTHING about this session, so it neither
+# licenses the force-delete NOR completes it - we fall through to the issue/PID signals,
+# which still finish a genuinely dead session (with merged=$false -> safe delete). Letting it
+# complete would be worse than a leaked branch: cleanup kills the shell and runs
+# `git worktree remove --force`, so a stale PR could tear down a LIVE session.
 function Get-SessionCompletion {
     param(
         [string]$PrState = '',
@@ -1677,9 +1680,8 @@ function Get-SessionCompletion {
         [string]$PrHeadOid = '',
         [string]$BranchTip = ''
     )
-    if ($PrState -eq 'MERGED') {
-        $isThisWork = [bool]($PrHeadOid -and $BranchTip -and $PrHeadOid -eq $BranchTip)
-        return [pscustomobject]@{ done = $true; reason = 'PR merged'; merged = $isThisWork }
+    if ($PrState -eq 'MERGED' -and $PrHeadOid -and $BranchTip -and $PrHeadOid -eq $BranchTip) {
+        return [pscustomobject]@{ done = $true; reason = 'PR merged'; merged = $true }
     }
     if ($IssueState -eq 'CLOSED') { return [pscustomobject]@{ done = $true;  reason = 'issue cerrado';    merged = $false } }
     if (-not $PidAlive)           { return [pscustomobject]@{ done = $true;  reason = 'proceso terminado'; merged = $false } }
@@ -1693,12 +1695,17 @@ function Get-SessionLiveStatus {
     param([object]$Session)
     $prState = ''; $issueState = ''; $prHeadOid = ''; $branchTip = ''
     if ($Session.repo -and $Session.branch) {
-        try {
-            $prs = gh pr list --repo $Session.repo --head $Session.branch --state all --json state,headRefOid --limit 1 2>$null | ConvertFrom-Json
-            if ($prs -and $prs.Count -gt 0) { $prState = $prs[0].state; $prHeadOid = $prs[0].headRefOid }
-        } catch { }
         # The tip we would delete. Refs are shared across worktrees, so this resolves from here.
         try { $branchTip = (git rev-parse --verify "$($Session.branch)^{commit}" 2>$null) } catch { }
+        try {
+            # Several PRs can share a reused branch name, so do not trust "the newest one":
+            # prefer the PR whose head IS our tip, and only fall back to the newest for the
+            # non-matching case (where a MERGED state proves nothing anyway).
+            $prs = @(gh pr list --repo $Session.repo --head $Session.branch --state all --json state,headRefOid --limit 20 2>$null | ConvertFrom-Json)
+            $mine = $prs | Where-Object { $branchTip -and $_.headRefOid -eq $branchTip } | Select-Object -First 1
+            $pick = if ($mine) { $mine } elseif ($prs.Count -gt 0) { $prs[0] } else { $null }
+            if ($pick) { $prState = $pick.state; $prHeadOid = $pick.headRefOid }
+        } catch { }
     }
     if ($Session.repo -and $Session.issue) {
         try {
@@ -1778,7 +1785,14 @@ function Invoke-SessionCleanup {
     # Without that proof (issue closed unmerged, gate blocked, agent crashed) the safe `-d`
     # is the point: git refuses on unmerged commits, we keep the branch and WARN instead of
     # destroying the work silently. -ForceDeleteBranch is the deliberate-discard override.
-    if ($Session.branch) {
+    # A branch that is already gone is not a failure to report - skip it, or the teardown
+    # would WARN about "not deleting" something that does not exist and cry wolf.
+    $branchExists = $true
+    if ($Session.branch -and -not $DryRun) {
+        git show-ref --verify --quiet "refs/heads/$($Session.branch)" 2>&1 | Out-Null
+        $branchExists = ($LASTEXITCODE -eq 0)
+    }
+    if ($Session.branch -and $branchExists) {
         $flag = if ($ForceDeleteBranch -or $PrMerged) { '-D' } else { '-d' }
         $actions += "git branch $flag $($Session.branch)"
         if (-not $DryRun) {

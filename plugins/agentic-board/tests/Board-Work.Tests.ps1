@@ -1153,8 +1153,9 @@ Describe 'Get-AllPages (board pagination - issue #246)' {
 }
 
 Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
-    It 'is done when the PR is MERGED' {
-        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true
+    It 'is done when the PR is MERGED (head == our branch tip)' {
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true `
+            -PrHeadOid 'abc123' -BranchTip 'abc123'
         $r.done | Should -BeTrue; $r.reason | Should -Match 'merged'
     }
     It 'is done when the issue is CLOSED' {
@@ -1169,7 +1170,24 @@ Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
         (Get-SessionCompletion -PrState 'OPEN' -IssueState 'OPEN' -PidAlive $true).done | Should -BeFalse
     }
     It 'prefers the MERGED reason over pid-dead' {
-        (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false).reason | Should -Match 'merged'
+        (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false `
+            -PrHeadOid 'abc123' -BranchTip 'abc123').reason | Should -Match 'merged'
+    }
+    It 'a STALE merged PR does NOT complete a LIVE session (it would force-remove its worktree)' {
+        # Cleanup kills the shell and runs `git worktree remove --force`, so completing a live
+        # session on someone else's merged PR would destroy its working state (Codex #275).
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true `
+            -PrHeadOid 'old111' -BranchTip 'new999'
+        $r.done | Should -BeFalse
+    }
+    It 'a dead session with a STALE merged PR still completes, via the PID signal' {
+        # Falling through must not strand the session: the PID/issue signals still finish it,
+        # and merged=$false keeps the delete safe.
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false `
+            -PrHeadOid 'old111' -BranchTip 'new999'
+        $r.done   | Should -BeTrue
+        $r.reason | Should -Match 'termin'
+        $r.merged | Should -BeFalse
     }
     # `merged` licenses the branch force-delete downstream (#273) - only a landed PR whose
     # head IS the tip we would delete earns it.
@@ -1186,9 +1204,9 @@ Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
     It 'does NOT trust a STALE merged PR on a REUSED branch name (Codex #275)' {
         # -TakeOver re-runs reuse the deterministic issue-<n>-<slug> branch name. An OLD
         # merged PR must not vouch for the NEW tip, or a crashed session loses its commits.
-        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false `
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'CLOSED' -PidAlive $false `
             -PrHeadOid 'old111' -BranchTip 'new999'
-        $r.done   | Should -BeTrue    # still finished...
+        $r.done   | Should -BeTrue    # still finished (via the issue/PID signals)...
         $r.merged | Should -BeFalse   # ...but NOT licensed to force-delete
     }
     It 'does NOT flag merged when the PR head or the branch tip is unknown (fail safe)' {
@@ -1283,6 +1301,13 @@ Describe 'Invoke-SessionCleanup branch deletion is merge-safe (#273)' {
         (git branch --list 'issue-9-unmerged') | Should -Not -BeNullOrEmpty   # kept...
         ($acts -join ' ') | Should -Match 'prune #9'                          # ...yet still pruned
         Should -Invoke Remove-SessionRegistryEntry -Times 1 -Exactly
+    }
+
+    It 'does NOT cry wolf about a branch that is already gone' {
+        $s = [pscustomobject]@{ issue = 12; branch = 'issue-12-never-existed'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s)
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        ($acts -join ' ') | Should -Match 'prune #12'
     }
 
     It 'REGRESSION: -PrMerged deletes a SQUASH-merged branch (never an ancestor of main)' {
