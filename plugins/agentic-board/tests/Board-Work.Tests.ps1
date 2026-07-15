@@ -1171,6 +1171,16 @@ Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
     It 'prefers the MERGED reason over pid-dead' {
         (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false).reason | Should -Match 'merged'
     }
+    # `merged` licenses the branch force-delete downstream (#273) - only a landed PR earns it.
+    It 'flags merged ONLY for a MERGED PR' {
+        (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true).merged | Should -BeTrue
+    }
+    It 'does NOT flag merged when the issue closed without a merged PR' {
+        (Get-SessionCompletion -PrState 'CLOSED' -IssueState 'CLOSED' -PidAlive $true).merged | Should -BeFalse
+    }
+    It 'does NOT flag merged when the session just died (the silent-data-loss case)' {
+        (Get-SessionCompletion -PrState '' -IssueState 'OPEN' -PidAlive $false).merged | Should -BeFalse
+    }
 }
 
 Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
@@ -1259,6 +1269,26 @@ Describe 'Invoke-SessionCleanup branch deletion is merge-safe (#273)' {
         (git branch --list 'issue-9-unmerged') | Should -Not -BeNullOrEmpty   # kept...
         ($acts -join ' ') | Should -Match 'prune #9'                          # ...yet still pruned
         Should -Invoke Remove-SessionRegistryEntry -Times 1 -Exactly
+    }
+
+    It 'REGRESSION: -PrMerged deletes a SQUASH-merged branch (never an ancestor of main)' {
+        # The flow squash-merges by default, which rewrites the commits: the branch tip is
+        # NOT an ancestor of main, so `-d` refuses even though the PR landed perfectly.
+        # Without the -PrMerged licence every successful session would leak a branch + WARN.
+        git checkout -q -b issue-11-squashed
+        'work' | Set-Content (Join-Path $script:Repo 'f.txt')
+        git add f.txt
+        git -c user.email=t@t -c user.name=t commit -q -m work
+        git checkout -q main
+        git merge --squash issue-11-squashed 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m 'squashed (#11)'
+        # Precondition: the safe delete really would refuse this branch.
+        git branch -d issue-11-squashed 2>&1 | Out-Null
+        $LASTEXITCODE | Should -Not -Be 0
+        $s = [pscustomobject]@{ issue = 11; branch = 'issue-11-squashed'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s -PrMerged)
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        (git branch --list 'issue-11-squashed') | Should -BeNullOrEmpty
     }
 
     It '-ForceDeleteBranch discards an unmerged branch on purpose (opt-in escape hatch)' {
@@ -1370,6 +1400,24 @@ Describe 'Invoke-SessionWatch (DI poll loop, #135)' {
             -Now { Get-Date } -Sleep { param($sec) }
         Should -Invoke Invoke-SessionCleanup -Times 1 -Exactly
         $r.cleaned | Should -Contain 7
+    }
+    It 'carries the merged verdict into the teardown (licenses the force-delete, #273)' {
+        $script:seen = $null
+        Mock Invoke-SessionCleanup { $script:seen = $PrMerged; @('mock teardown') }
+        Invoke-SessionWatch -AutoClean `
+            -ReadSessions { @([pscustomobject]@{ issue = 7 }) } `
+            -GetStatus    { param($s) [pscustomobject]@{ done = $true; reason = 'PR merged'; merged = $true } } `
+            -Now { Get-Date } -Sleep { param($sec) } | Out-Null
+        $script:seen | Should -BeTrue
+    }
+    It 'does NOT license the force-delete for a session that finished unmerged (#273)' {
+        $script:seen = $null
+        Mock Invoke-SessionCleanup { $script:seen = $PrMerged; @('mock teardown') }
+        Invoke-SessionWatch -AutoClean `
+            -ReadSessions { @([pscustomobject]@{ issue = 7 }) } `
+            -GetStatus    { param($s) [pscustomobject]@{ done = $true; reason = 'proceso terminado'; merged = $false } } `
+            -Now { Get-Date } -Sleep { param($sec) } | Out-Null
+        $script:seen | Should -BeFalse
     }
     It 'does NOT clean when -AutoClean is off' {
         Mock Invoke-SessionCleanup { @('should not run') }

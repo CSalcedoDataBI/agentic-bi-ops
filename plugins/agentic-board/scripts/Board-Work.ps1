@@ -1659,12 +1659,16 @@ function Invoke-FleetReap {
 # Is a watched session DONE? PURE -> unit-testable. A session finishes when its PR is
 # MERGED, its issue is CLOSED, or its host process is dead (the tab exited). Precedence
 # (merged > closed > pid-dead) picks the most informative reason. Returns {done, reason}.
+# `merged` is NOT cosmetic: it is what makes the branch deletion safe (#273). Only a MERGED
+# PR proves the work reached the remote default branch, so only then may the local branch be
+# force-deleted. Local ancestry cannot answer this - the repo squash-merges by default, which
+# rewrites the commits, so a perfectly merged branch is never an ancestor of main.
 function Get-SessionCompletion {
     param([string]$PrState = '', [string]$IssueState = '', [bool]$PidAlive = $true)
-    if ($PrState -eq 'MERGED')    { return [pscustomobject]@{ done = $true;  reason = 'PR merged' } }
-    if ($IssueState -eq 'CLOSED') { return [pscustomobject]@{ done = $true;  reason = 'issue cerrado' } }
-    if (-not $PidAlive)           { return [pscustomobject]@{ done = $true;  reason = 'proceso terminado' } }
-    return [pscustomobject]@{ done = $false; reason = 'en progreso' }
+    if ($PrState -eq 'MERGED')    { return [pscustomobject]@{ done = $true;  reason = 'PR merged';        merged = $true } }
+    if ($IssueState -eq 'CLOSED') { return [pscustomobject]@{ done = $true;  reason = 'issue cerrado';    merged = $false } }
+    if (-not $PidAlive)           { return [pscustomobject]@{ done = $true;  reason = 'proceso terminado'; merged = $false } }
+    return [pscustomobject]@{ done = $false; reason = 'en progreso'; merged = $false }
 }
 
 # Live completion of one registered session: PR state of its head branch + issue state +
@@ -1717,7 +1721,7 @@ function Remove-SessionRegistryEntry {
 # planned teardown is unit-testable). The PID kill goes through the fail-safe Stop-ProcessTree
 # (self + ancestors never killed).
 function Invoke-SessionCleanup {
-    param([object]$Session, [switch]$DryRun, [switch]$ForceDeleteBranch)
+    param([object]$Session, [switch]$DryRun, [switch]$ForceDeleteBranch, [switch]$PrMerged)
     $actions = @()
     # Kill ONLY a session whose tracked PID is genuinely its own spawned shell: a standalone
     # `pwsh` window (via='pwsh') records $spawn.process.Id, so killing that releases the
@@ -1748,20 +1752,23 @@ function Invoke-SessionCleanup {
         $actions += "FAIL el worktree sigue presente (handle abierto?) - conservo la rama y el registro de #$($Session.issue) para reintentar"
         return $actions
     }
-    # Safe delete (-d): git refuses a branch whose commits are not merged anywhere. That
-    # refusal is the whole point (#273) - a session can finish unmerged (gate blocked, PR
-    # closed, agent crashed) and -D would silently destroy the work. On a refusal we keep
-    # the branch and WARN, so the commits stay recoverable. -ForceDeleteBranch is the
-    # opt-in discard for when the user genuinely wants the work gone.
+    # Deleting the branch is only safe once the work is somewhere else (#273). -PrMerged is
+    # that proof: the PR landed, so the content is on the default branch and GitHub keeps the
+    # head commits on the PR regardless - force-delete is correct. We CANNOT ask git instead:
+    # the flow squash-merges, which rewrites the commits, so a merged branch is never an
+    # ancestor of main and `-d` would refuse every single successful session.
+    # Without that proof (issue closed unmerged, gate blocked, agent crashed) the safe `-d`
+    # is the point: git refuses on unmerged commits, we keep the branch and WARN instead of
+    # destroying the work silently. -ForceDeleteBranch is the deliberate-discard override.
     if ($Session.branch) {
-        $flag = if ($ForceDeleteBranch) { '-D' } else { '-d' }
+        $flag = if ($ForceDeleteBranch -or $PrMerged) { '-D' } else { '-d' }
         $actions += "git branch $flag $($Session.branch)"
         if (-not $DryRun) {
-            # Report git's OWN reason: -d refuses mostly for unmerged commits, but also for a
+            # Quote git's OWN reason: -d refuses mostly for unmerged commits, but also for a
             # branch checked out elsewhere - do not assert a cause we did not verify.
             $why = ((git branch $flag $Session.branch 2>&1) -join ' ').Trim()
             if ($LASTEXITCODE -ne 0) {
-                $actions += "WARN conservo la rama $($Session.branch) (#$($Session.issue)): git no la borro [$why]. Revisala antes de descartarla (-ForceDeleteBranch la borra igual)"
+                $actions += "WARN conservo la rama $($Session.branch) (#$($Session.issue)): git no la borro [$why]. Revisala antes de descartarla (-ForceDeleteBranch reintenta con -D)"
             }
         }
     }
@@ -1801,7 +1808,9 @@ function Invoke-SessionWatch {
                 Write-Host ("  #{0,-4} LISTO: {1}" -f $s.issue, $st.reason) -ForegroundColor Green
                 if ($AutoClean -and -not $cleaned.ContainsKey([int]$s.issue)) {
                     $cleaned[[int]$s.issue] = $true
-                    foreach ($a in (Invoke-SessionCleanup -Session $s -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch)) {
+                    # Carry the completion REASON into the teardown: only a merged PR licenses
+                    # the force-delete of the branch (#273).
+                    foreach ($a in (Invoke-SessionCleanup -Session $s -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch -PrMerged:([bool]$st.merged))) {
                         # A kept-branch WARN / failed teardown must not hide in DarkGray noise.
                         $color = if ($a -cmatch '^(WARN|FAIL)') { 'Yellow' } else { 'DarkGray' }
                         Write-Host ("         - {0}" -f $a) -ForegroundColor $color
