@@ -129,6 +129,9 @@ param(
     [switch]$Sessions,
     [switch]$Watch,
     [switch]$AutoClean,
+    # Opt-in discard: let auto-clean delete a session branch even with unmerged commits
+    # (default is the safe `git branch -d`, which keeps them and warns instead) - #273.
+    [switch]$ForceDeleteBranch,
     [int]   $WatchPollSec    = 30,
     [int]   $WatchTimeoutSec = 1800,
     [int]   $ToReview   = 0,
@@ -1714,7 +1717,7 @@ function Remove-SessionRegistryEntry {
 # planned teardown is unit-testable). The PID kill goes through the fail-safe Stop-ProcessTree
 # (self + ancestors never killed).
 function Invoke-SessionCleanup {
-    param([object]$Session, [switch]$DryRun)
+    param([object]$Session, [switch]$DryRun, [switch]$ForceDeleteBranch)
     $actions = @()
     # Kill ONLY a session whose tracked PID is genuinely its own spawned shell: a standalone
     # `pwsh` window (via='pwsh') records $spawn.process.Id, so killing that releases the
@@ -1745,9 +1748,22 @@ function Invoke-SessionCleanup {
         $actions += "FAIL el worktree sigue presente (handle abierto?) - conservo la rama y el registro de #$($Session.issue) para reintentar"
         return $actions
     }
+    # Safe delete (-d): git refuses a branch whose commits are not merged anywhere. That
+    # refusal is the whole point (#273) - a session can finish unmerged (gate blocked, PR
+    # closed, agent crashed) and -D would silently destroy the work. On a refusal we keep
+    # the branch and WARN, so the commits stay recoverable. -ForceDeleteBranch is the
+    # opt-in discard for when the user genuinely wants the work gone.
     if ($Session.branch) {
-        $actions += "git branch -D $($Session.branch)"
-        if (-not $DryRun) { git branch -D $Session.branch 2>&1 | Out-Null }
+        $flag = if ($ForceDeleteBranch) { '-D' } else { '-d' }
+        $actions += "git branch $flag $($Session.branch)"
+        if (-not $DryRun) {
+            # Report git's OWN reason: -d refuses mostly for unmerged commits, but also for a
+            # branch checked out elsewhere - do not assert a cause we did not verify.
+            $why = ((git branch $flag $Session.branch 2>&1) -join ' ').Trim()
+            if ($LASTEXITCODE -ne 0) {
+                $actions += "WARN conservo la rama $($Session.branch) (#$($Session.issue)): git no la borro [$why]. Revisala antes de descartarla (-ForceDeleteBranch la borra igual)"
+            }
+        }
     }
     $actions += "prune #$($Session.issue) de sessions.json"
     if (-not $DryRun) { Remove-SessionRegistryEntry -IssueNum ([int]$Session.issue) }
@@ -1764,6 +1780,7 @@ function Invoke-SessionWatch {
         [int]$TimeoutSec = 1800,
         [switch]$AutoClean,
         [switch]$DryRun,
+        [switch]$ForceDeleteBranch,
         [scriptblock]$GetStatus = { param($s) Get-SessionLiveStatus $s },
         [scriptblock]$ReadSessions = { Read-SessionRegistryRaw },
         [scriptblock]$Now = { Get-Date },
@@ -1784,8 +1801,10 @@ function Invoke-SessionWatch {
                 Write-Host ("  #{0,-4} LISTO: {1}" -f $s.issue, $st.reason) -ForegroundColor Green
                 if ($AutoClean -and -not $cleaned.ContainsKey([int]$s.issue)) {
                     $cleaned[[int]$s.issue] = $true
-                    foreach ($a in (Invoke-SessionCleanup -Session $s -DryRun:$DryRun)) {
-                        Write-Host ("         - {0}" -f $a) -ForegroundColor DarkGray
+                    foreach ($a in (Invoke-SessionCleanup -Session $s -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch)) {
+                        # A kept-branch WARN / failed teardown must not hide in DarkGray noise.
+                        $color = if ($a -cmatch '^(WARN|FAIL)') { 'Yellow' } else { 'DarkGray' }
+                        Write-Host ("         - {0}" -f $a) -ForegroundColor $color
                     }
                 }
             } else {
@@ -1968,7 +1987,7 @@ if ($Sessions) {
     if ($Watch) {
         Write-Host ""
         Write-Host ("=== Watch (poll {0}s, timeout {1}s{2}) ===" -f $WatchPollSec, $WatchTimeoutSec, $(if ($AutoClean) { ', auto-clean' } else { '' })) -ForegroundColor Cyan
-        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun | Out-Null
+        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch | Out-Null
     }
     exit 0
 }
@@ -1976,7 +1995,7 @@ if ($Sessions) {
 # -Watch without -Sessions and without a -Parallel run: still a valid standalone watch.
 if ($Watch -and $Parallel.Count -eq 0) {
     Write-Host ("=== Watch (poll {0}s, timeout {1}s{2}) ===" -f $WatchPollSec, $WatchTimeoutSec, $(if ($AutoClean) { ', auto-clean' } else { '' })) -ForegroundColor Cyan
-    Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun | Out-Null
+    Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch | Out-Null
     exit 0
 }
 
@@ -2376,7 +2395,7 @@ if ($Parallel.Count -gt 0) {
     if ($Watch -and -not $DryRun -and ($Launch -or $Fleet)) {
         Write-Host ""
         Write-Host ("=== Watch (poll {0}s, timeout {1}s{2}) ===" -f $WatchPollSec, $WatchTimeoutSec, $(if ($AutoClean) { ', auto-clean' } else { '' })) -ForegroundColor Cyan
-        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean | Out-Null
+        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -ForceDeleteBranch:$ForceDeleteBranch | Out-Null
     }
 
     Write-Host ""

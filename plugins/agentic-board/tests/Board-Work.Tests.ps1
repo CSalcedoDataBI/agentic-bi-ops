@@ -1180,7 +1180,7 @@ Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
         $acts.Count | Should -Be 4
         $acts[0] | Should -Match 'kill PID 4321'
         $acts[1] | Should -Match 'worktree remove --force'
-        $acts[2] | Should -Match 'branch -D issue-9-x'
+        $acts[2] | Should -CMatch 'branch -d issue-9-x'   # safe delete, never -D (#273)
         $acts[3] | Should -Match 'prune #9'
     }
     It 'does NOT kill a wt session PID (it is the host/launcher, not the tab) - Codex #269' {
@@ -1206,8 +1206,68 @@ Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
         $s = [pscustomobject]@{ issue = 3; branch = 'issue-3-z'; workPath = $stuck; sessionPid = 0 }
         $acts = @(Invoke-SessionCleanup -Session $s)   # NOT -DryRun
         ($acts -join ' ') | Should -Match 'FAIL'
-        ($acts -join ' ') | Should -Not -Match 'branch -D'
+        ($acts -join ' ') | Should -Not -Match 'branch -'
         Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
+    }
+}
+
+Describe 'Invoke-SessionCleanup branch deletion is merge-safe (#273)' {
+    # A real throwaway repo: `git branch -d` only refuses for real against real history.
+    # No workPath on the session -> the worktree step is skipped and the branch step runs.
+    BeforeEach {
+        $script:Repo = Join-Path $TestDrive ('r' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $script:Repo | Out-Null
+        Push-Location $script:Repo
+        git init -q -b main
+        git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+        Mock Remove-SessionRegistryEntry { }
+        # A branch carrying a commit main does not have -> `git branch -d` refuses it.
+        # Defined here, not in the Describe body: that body runs at DISCOVERY, so a
+        # function declared there is gone by the time the It blocks run (Pester v5).
+        function script:New-UnmergedBranch {
+            param([string]$Name)
+            git checkout -q -b $Name
+            git -c user.email=t@t -c user.name=t commit -q --allow-empty -m unmerged
+            git checkout -q main
+        }
+    }
+    AfterEach { Pop-Location }
+
+    It 'keeps an UNMERGED branch and WARNs naming the branch + issue' {
+        New-UnmergedBranch -Name 'issue-7-unmerged'
+        $s = [pscustomobject]@{ issue = 7; branch = 'issue-7-unmerged'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s)   # NOT -DryRun
+        ($acts -join ' ') | Should -Match 'WARN'
+        ($acts -join ' ') | Should -Match 'issue-7-unmerged'
+        ($acts -join ' ') | Should -Match '#7'
+        # The commits survive: the branch is still there for the audit path.
+        (git branch --list 'issue-7-unmerged') | Should -Not -BeNullOrEmpty
+    }
+
+    It 'deletes a MERGED branch quietly (no WARN)' {
+        git branch issue-8-merged           # points at main -> merged by definition
+        $s = [pscustomobject]@{ issue = 8; branch = 'issue-8-merged'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s)
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        (git branch --list 'issue-8-merged') | Should -BeNullOrEmpty
+    }
+
+    It 'still prunes the registry entry when the branch is kept (the worktree IS gone)' {
+        New-UnmergedBranch -Name 'issue-9-unmerged'
+        $s = [pscustomobject]@{ issue = 9; branch = 'issue-9-unmerged'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s)
+        (git branch --list 'issue-9-unmerged') | Should -Not -BeNullOrEmpty   # kept...
+        ($acts -join ' ') | Should -Match 'prune #9'                          # ...yet still pruned
+        Should -Invoke Remove-SessionRegistryEntry -Times 1 -Exactly
+    }
+
+    It '-ForceDeleteBranch discards an unmerged branch on purpose (opt-in escape hatch)' {
+        New-UnmergedBranch -Name 'issue-10-unmerged'
+        $s = [pscustomobject]@{ issue = 10; branch = 'issue-10-unmerged'; workPath = $null; sessionPid = 0 }
+        $acts = @(Invoke-SessionCleanup -Session $s -ForceDeleteBranch)
+        ($acts -join ' ') | Should -CMatch 'branch -D issue-10-unmerged'
+        ($acts -join ' ') | Should -Not -Match 'WARN'
+        (git branch --list 'issue-10-unmerged') | Should -BeNullOrEmpty
     }
 }
 
