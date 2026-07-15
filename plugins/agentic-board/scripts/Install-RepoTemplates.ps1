@@ -51,6 +51,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# The single resolver for owner/name from this clone's origin (#281). Do NOT inline the regex
+# again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
+
 $Path = (Resolve-Path $Path).Path
 if (-not (Test-Path (Join-Path $Path ".git"))) { throw "$Path no es la raiz de un repo git." }
 
@@ -61,7 +65,7 @@ $src = (Resolve-Path $src).Path
 # Derive owner/name from origin when not given
 if (-not $Repo) {
     $originUrl = git -C $Path remote get-url origin 2>$null
-    if ($originUrl -match 'github\.com[/:]([^/]+)/([^/.]+)') { $Repo = "$($Matches[1])/$($Matches[2])" }
+    $Repo = Get-RepoFromOriginUrl $originUrl
 }
 
 Write-Host "=== Install-RepoTemplates  ->  $Path" -ForegroundColor Cyan

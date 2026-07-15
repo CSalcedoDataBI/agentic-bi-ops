@@ -46,6 +46,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# The single resolver for owner/name from this clone's origin (#281). Do NOT inline the regex
+# again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
+
 if (-not $env:GH_TOKEN) {
     $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
 }
@@ -53,7 +57,7 @@ if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (
 
 if (-not $Repo) {
     $originUrl = git remote get-url origin 2>$null
-    if ($originUrl -match 'github\.com[/:]([^/]+)/([^/.]+)') { $Repo = "$($Matches[1])/$($Matches[2])" }
+    $Repo = Get-RepoFromOriginUrl $originUrl
 }
 if (-not $Repo) { throw "No pude derivar el repo del origin - pasa -Repo owner/name." }
 
@@ -73,13 +77,26 @@ $created = @(); $fail = 0
 foreach ($t in $Tasks) {
     try {
         $body = "Part of #${Parent}: $parentTitle"
-        $url  = gh issue create --repo $Repo --title $t --body $body --label $Label
-        $num  = [int]($url -split '/')[-1]
+        # A FAILING NATIVE COMMAND DOES NOT THROW - not even under $ErrorActionPreference='Stop'.
+        # So the catch below never fired: gh 404'd, $url came back empty, `[int]''` quietly
+        # produced 0, and every task printed "OK #0" with "fallos: 0" while NOTHING was created
+        # (#281). Check $LASTEXITCODE after each gh call, and treat a non-positive issue number
+        # as the failure it is - #0 was always the tell.
+        $url = gh issue create --repo $Repo --title $t --body $body --label $Label
+        if ($LASTEXITCODE -ne 0) { throw "gh issue create fallo (exit $LASTEXITCODE)" }
+        $num = Get-IssueNumberFromUrl $url
+        if ($num -le 0) { throw "no pude leer el numero del issue creado (gh devolvio '$url')" }
+
         $childId = gh issue view $num --repo $Repo --json id -q .id
+        if ($LASTEXITCODE -ne 0 -or -not $childId) { throw "gh issue view #$num fallo (exit $LASTEXITCODE)" }
+
         gh api graphql -f query='
 mutation($p:ID!, $c:ID!) {
   addSubIssue(input:{issueId:$p, subIssueId:$c}) { issue { number } }
 }' -f "p=$parentId" -f "c=$childId" | Out-Null
+        # The issue exists but is not linked - say so instead of silently listing it as a child.
+        if ($LASTEXITCODE -ne 0) { throw "#$num se creo pero addSubIssue fallo (exit $LASTEXITCODE) - queda suelto, enlazalo a mano" }
+
         Write-Host "  OK  #$num  $t" -ForegroundColor Green
         $created += $num
     } catch {

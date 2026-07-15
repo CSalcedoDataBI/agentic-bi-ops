@@ -60,6 +60,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# The single resolver for owner/name from this clone's origin (#281). Do NOT inline the regex
+# again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
+
 if (-not $env:GH_TOKEN) {
     $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
 }
@@ -67,7 +71,7 @@ if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (
 
 if (-not $Repo) {
     $originUrl = git remote get-url origin 2>$null
-    if ($originUrl -match 'github\.com[/:]([^/]+)/([^/.]+)') { $Repo = "$($Matches[1])/$($Matches[2])" }
+    $Repo = Get-RepoFromOriginUrl $originUrl
 }
 if (-not $Repo) { throw "No pude derivar el repo del origin - pasa -Repo owner/name." }
 if (-not $Owner) { $Owner = ($Repo -split "/")[0] }
@@ -85,8 +89,13 @@ $body = ""
 if ($Description) { $body += "$Description`n`n" }
 $body += "## Tasks (native sub-issues)`n$taskOverview`n`nCreated by /board plan - work them with /board work."
 
+# Same trap as the children (#281): a failing `gh` does not throw, so without these checks the
+# epic printed "OK Epic #0" and the run carried on creating sub-issues under a parent that does
+# not exist. Nothing below is meaningful if the epic is not real, so fail here and stop.
 $epicUrl = $body | gh issue create --repo $Repo --title $Title --label plan --body-file -
-$epicNum = [int]($epicUrl -split '/')[-1]
+if ($LASTEXITCODE -ne 0) { throw "gh issue create fallo para el epic (exit $LASTEXITCODE) - no se creo nada. Revisa que '$Repo' exista y que el token tenga acceso." }
+$epicNum = Get-IssueNumberFromUrl $epicUrl
+if ($epicNum -le 0) { throw "gh no devolvio la URL del epic (devolvio '$epicUrl') - no se creo nada." }
 Write-Host "  OK  Epic #$epicNum  $Title" -ForegroundColor Green
 Write-Host "      $epicUrl" -ForegroundColor DarkCyan
 
@@ -100,19 +109,33 @@ if ($ProjectNum -le 0) {
 }
 if ($ProjectNum -gt 0) {
     $boardUrl = "https://github.com/users/$Owner/projects/$ProjectNum"
+    # Count what actually landed. The old code piped every item-add to Out-Null and then
+    # announced "registrados en el board" unconditionally - the same false OK as #0 (#281).
+    $added = 0; $addFail = 0
     gh project item-add $ProjectNum --owner $Owner --url $epicUrl 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { $added++ } else { $addFail++ }
+
     # Children too (best-effort - auto-add CI may already cover them)
-    $subs = gh api graphql -f query='
+    $subs = $null
+    $subsJson = gh api graphql -f query='
 query($o:String!, $r:String!, $n:Int!) {
   repository(owner:$o, name:$r) {
     issue(number:$n) { subIssues(first:50) { nodes { number url } } }
   }
-}' -f "o=$(($Repo -split '/')[0])" -f "r=$(($Repo -split '/')[1])" -F "n=$epicNum" | ConvertFrom-Json
+}' -f "o=$(($Repo -split '/')[0])" -f "r=$(($Repo -split '/')[1])" -F "n=$epicNum"
+    if ($LASTEXITCODE -eq 0 -and $subsJson) { try { $subs = $subsJson | ConvertFrom-Json } catch { } }
     foreach ($s in @($subs.data.repository.issue.subIssues.nodes)) {
         gh project item-add $ProjectNum --owner $Owner --url $s.url 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $added++ } else { $addFail++ }
     }
     Write-Host ""
-    Write-Host "  OK  Epic + sub-issues registrados en el board #$ProjectNum" -ForegroundColor Green
+    if ($addFail -eq 0) {
+        Write-Host "  OK  $added item(s) registrados en el board #$ProjectNum" -ForegroundColor Green
+    } else {
+        # Say what is true: the issues exist, the board is incomplete.
+        Write-Host "  WARN $added item(s) registrados, $addFail fallaron en el board #$ProjectNum" -ForegroundColor DarkYellow
+        Write-Host "       Los issues SI se crearon - completa el board con /board fill" -ForegroundColor DarkGray
+    }
     Write-Host ""
     Write-Host "Siguiente: /board fill (Priority/Size/Type) y /board work para empezar la primera tarea." -ForegroundColor Cyan
     Write-Host ""
