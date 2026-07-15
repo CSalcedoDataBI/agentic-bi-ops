@@ -127,6 +127,103 @@ Describe 'Get-WorktreeRecords (porcelain parsing)' {
     }
 }
 
+Describe 'Test-WorktreeStillRegistered (did the remove take, per git)' {
+    # Regression (#287): the post-remove check used to ask the FILESYSTEM. On the 58-branch
+    # cleanup `git worktree remove --force` de-registered the worktree correctly, but the
+    # directory survived - empty, held by an open handle from the session that made it. Test-Path
+    # said "still there", so the doctor printed "el worktree sigue presente" and kept a merged
+    # branch that a second -Fix pass then deleted. The authority is git's registry, not the disk.
+    # ONE BeforeAll: Pester keeps only the last one per block, so a second would silently blank
+    # these out and leave the path assertions passing against $null.
+    BeforeAll {
+        $script:Br = 'issue-282-parse-all-scripts'
+        $script:Wt = "C:/Users/x/Repos/r--worktrees/$script:Br"
+    }
+
+    It 'says YES while git still lists a worktree holding the branch' {
+        $p = "worktree C:/repo`nHEAD 111`nbranch refs/heads/main`n`nworktree $($script:Wt)`nHEAD 222`nbranch refs/heads/$($script:Br)`n"
+        Test-WorktreeStillRegistered -Porcelain $p -Path $script:Wt -Branch $script:Br | Should -BeTrue
+    }
+    It 'says NO once git has dropped it, even though the folder may linger on disk' {
+        # THE BUG (#287): this is the case that used to read as "FAIL, still present".
+        $p = "worktree C:/repo`nHEAD 111`nbranch refs/heads/main`n"
+        Test-WorktreeStillRegistered -Porcelain $p -Path $script:Wt -Branch $script:Br | Should -BeFalse
+    }
+    It 'blocks on the branch even when the two path strings do not compare equal' {
+        # THE FAIL-OPEN this helper exists to avoid, and it is not hypothetical: caught on a real
+        # locked worktree while testing this fix. git prints the LONG path; a path routed through
+        # %TEMP% carries the 8.3 short name, so the strings differ for the same directory. Path
+        # equality alone answers "not registered" and licenses deleting a branch git still holds.
+        $p = "worktree C:/Users/Cristobal/AppData/Local/Temp/wt/wt-locked`nHEAD 222`nbranch refs/heads/$($script:Br)`n"
+        $short = 'C:/Users/CRISTO~1/AppData/Local/Temp/wt/wt-locked'
+        Test-WorktreeStillRegistered -Porcelain $p -Path $short                        | Should -BeFalse  # path alone: fools it
+        Test-WorktreeStillRegistered -Porcelain $p -Path $short -Branch $script:Br     | Should -BeTrue   # branch: catches it
+    }
+    It 'still blocks on the path alone, for a detached worktree with no branch to match' {
+        $p = "worktree $($script:Wt)`nHEAD 222`ndetached`n"
+        Test-WorktreeStillRegistered -Porcelain $p -Path $script:Wt -Branch $script:Br | Should -BeTrue
+    }
+    It 'matches a path regardless of separator style and trailing slash' {
+        # git's porcelain emits forward slashes; our path may have been round-tripped through
+        # Resolve-Path, which emits backslashes. Verified against real `git worktree list` output.
+        $p = "worktree $($script:Wt)`nHEAD 222`ndetached`n"
+        Test-WorktreeStillRegistered -Porcelain $p -Path ($script:Wt -replace '/', '\')  | Should -BeTrue
+        Test-WorktreeStillRegistered -Porcelain $p -Path ($script:Wt + '/')              | Should -BeTrue
+        Test-WorktreeStillRegistered -Porcelain $p -Path $script:Wt.ToUpper()            | Should -BeTrue
+    }
+    It 'does not confuse a sibling worktree whose path merely starts the same' {
+        # `...-parse-all-scripts` must not be answered by `...-parse-all-scripts-2`.
+        $p = "worktree $($script:Wt)-2`nHEAD 222`ndetached`n"
+        Test-WorktreeStillRegistered -Porcelain $p -Path $script:Wt | Should -BeFalse
+    }
+    It 'does not confuse a branch whose name merely starts the same' {
+        $p = "worktree C:/other`nHEAD 222`nbranch refs/heads/$($script:Br)-2`n"
+        Test-WorktreeStillRegistered -Porcelain $p -Branch $script:Br | Should -BeFalse
+    }
+    It 'reads an empty registry as "not registered" rather than throwing' {
+        Test-WorktreeStillRegistered -Porcelain '' -Path $script:Wt -Branch $script:Br | Should -BeFalse
+    }
+}
+
+Describe 'Remove-BranchAndWorktree asks git, not the disk (#287)' {
+    # The helper itself runs git, so it is not unit-testable without a repo. Pin the CONTRACT at
+    # the source level instead: the decision must go through git's registry, and the Test-Path
+    # that caused the two-pass cleanup must not creep back in as the gate.
+    # Asserted with -BeTrue over a match rather than `$Src | Should -Match`, whose failure
+    # message pastes the entire 600-line script into the output.
+    BeforeAll {
+        $script:Src = Get-Content $script:Script -Raw
+        $fn = $script:Src.Substring($script:Src.IndexOf('function Remove-BranchAndWorktree'))
+        $script:RemoveFn = $fn.Substring(0, $fn.IndexOf("`n}"))
+    }
+
+    It 'gates the branch delete on the porcelain registry' {
+        ($script:RemoveFn -match 'Test-WorktreeStillRegistered') | Should -BeTrue
+    }
+    It 'passes the BRANCH to the gate, not only the path' {
+        # Path-only is the fail-open case (see the 8.3 short-name test above): the branch is the
+        # signal that actually decides whether `git branch -D` can succeed.
+        ($script:RemoveFn -match '-Branch \$Row\.Branch') | Should -BeTrue
+    }
+    It 'never lets Test-Path of the worktree path veto the delete again' {
+        # Test-Path may still REPORT a leftover folder - that note is useful. What must never come
+        # back is the folder VETOING the branch delete, i.e. a Test-Path whose body bails out.
+        # If it does, the 58-branch cleanup needs two passes again.
+        ($script:RemoveFn -match '(?s)Test-Path \$Row\.WorktreePath.{0,400}?return') | Should -BeFalse
+    }
+    It 'checks the registry BEFORE deleting the branch, not after' {
+        # A gate that runs after `git branch -D` is decorative.
+        $gate = $script:RemoveFn.IndexOf('Test-WorktreeStillRegistered')
+        $del  = $script:RemoveFn.IndexOf('git branch $BranchFlag')
+        $gate | Should -BeGreaterThan 0
+        $gate | Should -BeLessThan $del
+    }
+    It 'fails closed when the post-remove listing itself fails' {
+        # "I could not ask git" is not "the worktree is gone" - keep the branch (the #277 rule).
+        ($script:RemoveFn -match '\$LASTEXITCODE -ne 0') | Should -BeTrue
+    }
+}
+
 Describe 'Select-BranchPr (which PR speaks for this tip)' {
     It 'prefers the PR whose head IS our tip over the newest one' {
         # The -TakeOver trap: a newer PR on a reused branch name must not outrank the real one.

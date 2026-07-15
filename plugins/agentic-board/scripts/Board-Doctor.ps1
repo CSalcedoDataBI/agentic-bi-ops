@@ -156,6 +156,39 @@ function Get-WorktreeRecords {
     return @($records)
 }
 
+# Does git STILL register a worktree that HOLDS THIS BRANCH? The question after
+# `git worktree remove --force`, and the authority is git's registry - never the disk (#287).
+# A removal routinely de-registers the worktree while the directory survives, empty, held by an
+# open handle from the session that created it; asking Test-Path there answers "still present"
+# about something git already let go, which kept a merged branch alive and forced a second -Fix
+# pass. An entry git still lists is a real failure; a leftover folder is litter.
+#
+# ASK BY BRANCH, NOT BY PATH, and note that this is the whole point rather than a shortcut. The
+# branch is what we are about to `git branch -D`, and a registered worktree holding it is exactly
+# what makes that fail - so it is the fact worth checking. Matching paths instead means comparing
+# two strings from different producers, which FAILS OPEN when they disagree: git emits the long
+# `C:/Users/Cristobal/...` while a path routed through %TEMP% can carry the 8.3 short name
+# `C:/Users/CRISTO~1/...`. That mismatch reads as "not registered" and licenses the delete. Caught
+# exactly that way while testing this fix, on a locked worktree git was still listing.
+# -Path is kept as a SECONDARY signal for the detached/branchless case; either hit is a block.
+# PURE over the text -> unit-testable.
+function Test-WorktreeStillRegistered {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Porcelain,
+        [string]$Path   = '',
+        [string]$Branch = ''
+    )
+    $norm = { param($p) ($p -replace '\\', '/').TrimEnd('/') }
+    $want = if ($Path) { & $norm $Path } else { $null }
+    foreach ($w in (Get-WorktreeRecords -Porcelain $Porcelain)) {
+        # -eq on strings is case-insensitive, which is right for both a Windows path and the
+        # branch name as git echoes it back.
+        if ($Branch -and $w.Branch -eq $Branch)      { return $true }
+        if ($want   -and (& $norm $w.Path) -eq $want) { return $true }
+    }
+    return $false
+}
+
 # Which PR speaks for THIS branch tip? Several PRs can share a reused branch name
 # (-TakeOver reuses `issue-<n>-<slug>`), so "the newest one" is not trustworthy: an old
 # MERGED PR would vouch for new work. Prefer the PR whose head IS our tip; fall back to the
@@ -528,9 +561,23 @@ function Remove-BranchAndWorktree {
         $did += "git worktree remove --force $($Row.WorktreePath)"
         if (-not $DryRun) {
             git worktree remove --force $Row.WorktreePath 2>&1 | Out-Null
-            if (Test-Path $Row.WorktreePath) {
-                Write-Host "     FAIL el worktree sigue presente (handle abierto?) - conservo la rama." -ForegroundColor Red
+            # Ask GIT whether the removal took, not the filesystem (#287). See
+            # Test-WorktreeStillRegistered: an empty folder left behind by an open handle is not
+            # a failed removal, and treating it as one kept a proven-merged branch and forced a
+            # second -Fix pass over the 58-branch cleanup.
+            $after = (git worktree list --porcelain 2>$null) -join "`n"
+            if ($LASTEXITCODE -ne 0) {
+                # FAIL CLOSED: "I could not ask git" is not "it is gone" (the #277 rule).
+                Write-Host "     FAIL no pude releer 'git worktree list' tras el remove - conservo la rama $($Row.Branch) por si acaso." -ForegroundColor Red
                 return $did
+            }
+            if (Test-WorktreeStillRegistered -Porcelain $after -Path $Row.WorktreePath -Branch $Row.Branch) {
+                Write-Host "     FAIL git sigue registrando un worktree con la rama $($Row.Branch) (handle abierto? locked?) - conservo la rama." -ForegroundColor Red
+                return $did
+            }
+            if (Test-Path $Row.WorktreePath) {
+                # Litter, not a blocker: git let it go, so the branch is safe to delete.
+                Write-Host "     NOTA git solto el worktree pero la carpeta sigue en disco (handle abierto?) - borro la rama igual; borra la carpeta a mano: $($Row.WorktreePath)" -ForegroundColor DarkYellow
             }
         }
     }
