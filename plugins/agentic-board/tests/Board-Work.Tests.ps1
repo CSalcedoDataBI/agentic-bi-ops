@@ -1215,6 +1215,27 @@ Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
     }
 }
 
+Describe 'Worktree registry helpers live here now (#289)' {
+    # Moved from Board-Doctor.ps1: the doctor dot-sources THIS file, so both callers share one
+    # verdict. The doctor's own suite still exercises them through that dot-source; these pin the
+    # contract at the new home. Full parsing/matching coverage stays in Board-Doctor.Tests.ps1.
+    It 'defines both helpers so the teardown below can reach them without a dot-source cycle' {
+        Get-Command Get-WorktreeRecords          -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        Get-Command Test-WorktreeStillRegistered -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+    }
+    It 'blocks on the branch even when the path strings do not compare equal' {
+        # The fail-open guarded since #287: git prints the long path, %TEMP% carries the 8.3 short
+        # name, so the same directory yields two different strings.
+        $p = "worktree C:/Users/Cristobal/AppData/Local/Temp/wt/w`nHEAD 1`nbranch refs/heads/issue-9-x`n"
+        Test-WorktreeStillRegistered -Porcelain $p -Path 'C:/Users/CRISTO~1/AppData/Local/Temp/wt/w' | Should -BeFalse
+        Test-WorktreeStillRegistered -Porcelain $p -Path 'C:/Users/CRISTO~1/AppData/Local/Temp/wt/w' -Branch 'issue-9-x' | Should -BeTrue
+    }
+    It 'reports a de-registered worktree as gone, whatever is left on disk' {
+        Test-WorktreeStillRegistered -Porcelain "worktree C:/repo`nHEAD 1`nbranch refs/heads/main`n" `
+            -Path 'C:/wt/issue-9' -Branch 'issue-9-x' | Should -BeFalse
+    }
+}
+
 Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
     It 'plans kill -> worktree remove -> branch delete -> registry prune for a pwsh session, under -DryRun' {
         $s = [pscustomobject]@{ issue = 9; branch = 'issue-9-x'; workPath = 'C:\wt\issue-9'; sessionPid = 4321; via = 'pwsh' }
@@ -1253,6 +1274,78 @@ Describe 'Invoke-SessionCleanup (teardown plan, #135)' {
         ($acts -join ' ') | Should -Not -Match 'branch -'
         ($acts -join ' ') | Should -Not -Match 'prune #3'
         Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
+    }
+}
+
+Describe 'Invoke-SessionCleanup asks git, not the disk (#289)' {
+    # Real repo + real worktree + a REAL held handle: the whole bug is what the OS and git do to
+    # each other here, so a mock would only re-assert my own assumption. The handle stands in for
+    # the untracked `wt` tab shell that Invoke-SessionCleanup deliberately never kills (PR #269),
+    # which makes this the DESIGNED case for -Launch sessions, not a rare one.
+    BeforeEach {
+        $script:Repo2 = Join-Path $TestDrive ('h' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:Work2 = "$($script:Repo2)-wt"
+        New-Item -ItemType Directory -Path $script:Repo2 | Out-Null
+        Push-Location $script:Repo2
+        git init -q -b main
+        'x' | Set-Content (Join-Path $script:Repo2 'a.txt')
+        git add -A 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m base
+        git worktree add -q -b issue-21-h $script:Work2 2>&1 | Out-Null
+        Mock Remove-SessionRegistryEntry { }
+        # Deny-share handle on a file INSIDE the worktree - what a shell cwd'd in there does.
+        $script:Handle = [System.IO.File]::Open((Join-Path $script:Work2 'a.txt'), 'Open', 'Read', 'None')
+        function script:New-HSession {
+            [pscustomobject]@{ issue = 21; branch = 'issue-21-h'; workPath = $script:Work2; sessionPid = 0; via = 'wt' }
+        }
+    }
+    AfterEach {
+        if ($script:Handle) { $script:Handle.Close(); $script:Handle = $null }
+        Pop-Location
+    }
+
+    It 'finishes the teardown in ONE pass when git released the worktree but the folder lingers' {
+        # THE BUG: `remove --force` de-registers the worktree AND fails to delete the directory.
+        # Test-Path saw the folder and reported "still present" about something git had let go,
+        # so the branch and the registry entry were kept.
+        $acts = @(Invoke-SessionCleanup -Session (New-HSession) -PrMerged)
+        Test-Path $script:Work2 | Should -BeTrue                      # folder survives: the handle
+        ((git worktree list --porcelain) -join "`n") | Should -Not -Match 'issue-21-h'  # git let go
+        ($acts -join ' ') | Should -Not -Match 'FAIL'
+        ($acts -join ' ') | Should -Match 'NOTA'                      # litter is reported...
+        # Parenthesised: Pester binds -Match to the literal '[regex]::Escape' otherwise.
+        ($acts -join ' ') | Should -Match ([regex]::Escape($script:Work2))  # ...with its path
+        ($acts -join ' ') | Should -Match 'branch -D issue-21-h'
+        ($acts -join ' ') | Should -Match 'prune #21'
+        (git branch --list 'issue-21-h') | Should -BeNullOrEmpty
+        Should -Invoke Remove-SessionRegistryEntry -Times 1 -Exactly
+    }
+
+    It 'the OLD Test-Path retry could never converge - the second pass is not a working tree' {
+        # Why this mattered more here than in the doctor: workPath comes from the REGISTRY, so a
+        # retry re-runs the removal on a path git already forgot. Pin git's real behaviour, which
+        # is the whole reason "retry next run" was never going to clean this up.
+        git worktree remove --force $script:Work2 2>&1 | Out-Null     # pass 1: de-registers, folder stays
+        Test-Path $script:Work2 | Should -BeTrue
+        $out = (git worktree remove --force $script:Work2 2>&1) -join ' '   # pass 2, as a later run would
+        $LASTEXITCODE | Should -Not -Be 0
+        $out | Should -Match 'not a working tree'
+        Test-Path $script:Work2 | Should -BeTrue      # ...so Test-Path stays true FOREVER
+    }
+
+    It 'still keeps branch + registry when git REALLY still registers the worktree' {
+        # The guard that must not be lost: a locked worktree survives `remove --force` and stays
+        # registered, so the teardown must refuse - branch and tracking both stay.
+        git worktree lock $script:Work2 2>&1 | Out-Null
+        try {
+            $acts = @(Invoke-SessionCleanup -Session (New-HSession) -PrMerged)
+            ((git worktree list --porcelain) -join "`n") | Should -Match 'issue-21-h'
+            ($acts -join ' ') | Should -Match 'FAIL'
+            ($acts -join ' ') | Should -Not -Match 'branch -'
+            ($acts -join ' ') | Should -Not -Match 'prune #21'
+            (git branch --list 'issue-21-h') | Should -Not -BeNullOrEmpty
+            Should -Invoke Remove-SessionRegistryEntry -Times 0 -Exactly
+        } finally { git worktree unlock $script:Work2 2>&1 | Out-Null }
     }
 }
 

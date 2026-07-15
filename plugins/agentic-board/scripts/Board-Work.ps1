@@ -1802,6 +1802,77 @@ function Remove-SessionRegistryEntry {
     $kept | ConvertTo-Json -Depth 4 -AsArray | Set-Content $p
 }
 
+# Parse `git worktree list --porcelain` into objects. The porcelain format is a blank-line
+# separated record per worktree: `worktree <path>`, then optional `HEAD <oid>`,
+# `branch refs/heads/<name>` | `detached`, `bare`, `locked [<reason>]`, `prunable <reason>`.
+# We take `prunable` straight from git rather than guessing: git already knows a registered
+# worktree whose directory is gone. PURE over the text -> unit-testable.
+#
+# Lives here rather than in Board-Doctor.ps1 (its original home, moved in #289) because BOTH the
+# doctor and the teardown below need it, and the dot-source only runs doctor -> work.
+function Get-WorktreeRecords {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Porcelain)
+    $records = @()
+    $cur = $null
+    foreach ($rawLine in ($Porcelain -split "`r?`n")) {
+        $line = $rawLine.TrimEnd()
+        if (-not $line) { if ($cur) { $records += $cur; $cur = $null }; continue }
+        if ($line -match '^worktree (.+)$') {
+            if ($cur) { $records += $cur }
+            $cur = [pscustomobject]@{
+                Path = $Matches[1]; Head = ''; Branch = ''; Detached = $false
+                Bare = $false; Locked = $false; Prunable = ''
+            }
+            continue
+        }
+        if (-not $cur) { continue }
+        switch -Regex ($line) {
+            '^HEAD (.+)$'             { $cur.Head     = $Matches[1] }
+            '^branch refs/heads/(.+)$'{ $cur.Branch   = $Matches[1] }
+            '^detached$'              { $cur.Detached = $true }
+            '^bare$'                  { $cur.Bare     = $true }
+            '^locked'                 { $cur.Locked   = $true }
+            '^prunable (.+)$'         { $cur.Prunable = $Matches[1] }
+            '^prunable$'              { $cur.Prunable = 'prunable' }
+        }
+    }
+    if ($cur) { $records += $cur }
+    return @($records)
+}
+
+# Does git STILL register a worktree that HOLDS THIS BRANCH? The question after
+# `git worktree remove --force`, and the authority is git's registry - never the disk (#287/#289).
+# A removal routinely de-registers the worktree while the directory survives, empty, held by an
+# open handle from the shell that was cwd'd inside it; asking Test-Path there answers "still
+# present" about something git already let go. An entry git still lists is a real failure; a
+# leftover folder is litter.
+#
+# ASK BY BRANCH, NOT BY PATH, and note that this is the whole point rather than a shortcut. The
+# branch is what the caller is about to `git branch -D`, and a registered worktree holding it is
+# exactly what makes that fail - so it is the fact worth checking. Matching paths instead means
+# comparing two strings from different producers, which FAILS OPEN when they disagree: git emits
+# the long `C:/Users/Cristobal/...` while a path routed through %TEMP% can carry the 8.3 short name
+# `C:/Users/CRISTO~1/...`. That mismatch reads as "not registered" and licenses the delete. Caught
+# exactly that way while testing #287, on a locked worktree git was still listing.
+# -Path is kept as a SECONDARY signal for the detached/branchless case; either hit is a block.
+# PURE over the text -> unit-testable.
+function Test-WorktreeStillRegistered {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Porcelain,
+        [string]$Path   = '',
+        [string]$Branch = ''
+    )
+    $norm = { param($p) ($p -replace '\\', '/').TrimEnd('/') }
+    $want = if ($Path) { & $norm $Path } else { $null }
+    foreach ($w in (Get-WorktreeRecords -Porcelain $Porcelain)) {
+        # -eq on strings is case-insensitive, which is right for both a Windows path and the
+        # branch name as git echoes it back.
+        if ($Branch -and $w.Branch -eq $Branch)       { return $true }
+        if ($want   -and (& $norm $w.Path) -eq $want) { return $true }
+    }
+    return $false
+}
+
 # Tear down a finished session: kill the tab shell FIRST (the `pwsh -NoExit` left cwd'd
 # inside the worktree keeps a handle -> `git worktree remove` fails with Permission denied),
 # then remove the worktree, delete the local branch, and prune the registry entry. Returns
@@ -1847,19 +1918,39 @@ function Invoke-SessionCleanup {
         }
     }
     # Removing the worktree is the step that can genuinely fail (a held handle - see the
-    # tab-shell gotcha). Success = the path is gone afterwards. Only when it is do we delete
-    # the branch and prune the registry; otherwise keep BOTH so the leftover is still tracked
-    # and a later run can retry (Codex review, PR #269 - never drop tracking on a failed teardown).
+    # tab-shell gotcha). Success = GIT no longer registers it. Only then do we delete the branch
+    # and prune the registry; otherwise keep BOTH so the leftover is still tracked and a later
+    # run can retry (Codex review, PR #269 - never drop tracking on a failed teardown).
+    #
+    # ASK GIT, NOT THE DISK (#289), and here that is not a nicety - Test-Path made the retry
+    # UNABLE TO CONVERGE. With a handle open, `remove --force` de-registers the worktree and still
+    # fails to delete the directory, so pass 1 left the folder behind; Test-Path then said "still
+    # present" and kept the branch + the registry entry. Every later pass re-ran the removal on a
+    # path git had already forgotten ("fatal: not a working tree"), the folder never went away, and
+    # the entry leaked FOREVER. The doctor recovered on a second pass only because its inventory
+    # comes from `git worktree list`; workPath here comes from the registry, so nothing self-heals.
+    # This is the designed case for a `wt` session, whose shell is deliberately never killed above.
     $worktreeGone = $true
     if ($Session.workPath) {
         $actions += "git worktree remove --force $($Session.workPath)"
         if (-not $DryRun) {
             git worktree remove --force $Session.workPath 2>&1 | Out-Null
-            $worktreeGone = -not (Test-Path $Session.workPath)
+            $after = (git worktree list --porcelain 2>$null) -join "`n"
+            if ($LASTEXITCODE -ne 0) {
+                # FAIL CLOSED: "I could not ask git" is not "it is gone" (the #277 rule).
+                $actions += "FAIL no pude releer 'git worktree list' tras el remove - conservo la rama y el registro de #$($Session.issue) para reintentar"
+                return $actions
+            }
+            $worktreeGone = -not (Test-WorktreeStillRegistered -Porcelain $after -Path $Session.workPath -Branch $Session.branch)
+            # Litter, not a blocker: git let it go, so the teardown continues. Name the path -
+            # nothing else will ever clean it up, since git no longer knows about it.
+            if ($worktreeGone -and (Test-Path $Session.workPath)) {
+                $actions += "NOTA git solto el worktree pero la carpeta sigue en disco (handle abierto?): $($Session.workPath) - borrala a mano; sigo con la rama y el registro"
+            }
         }
     }
     if (-not $worktreeGone) {
-        $actions += "FAIL el worktree sigue presente (handle abierto?) - conservo la rama y el registro de #$($Session.issue) para reintentar"
+        $actions += "FAIL git sigue registrando el worktree de #$($Session.issue) (handle abierto?) - conservo la rama y el registro para reintentar"
         return $actions
     }
     # Deleting the branch is only safe once the work is somewhere else (#273). -PrMerged is
