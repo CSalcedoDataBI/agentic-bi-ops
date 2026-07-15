@@ -132,6 +132,9 @@ param(
     # Opt-in discard: let auto-clean delete a session branch even with unmerged commits
     # (default is the safe `git branch -d`, which keeps them and warns instead) - #273.
     [switch]$ForceDeleteBranch,
+    # Opt-in discard: let auto-clean remove a session worktree that still holds uncommitted
+    # or untracked files (default keeps it and warns instead) - #276.
+    [switch]$ForceRemoveWorktree,
     [int]   $WatchPollSec    = 30,
     [int]   $WatchTimeoutSec = 1800,
     [int]   $ToReview   = 0,
@@ -1746,7 +1749,7 @@ function Remove-SessionRegistryEntry {
 # planned teardown is unit-testable). The PID kill goes through the fail-safe Stop-ProcessTree
 # (self + ancestors never killed).
 function Invoke-SessionCleanup {
-    param([object]$Session, [switch]$DryRun, [switch]$ForceDeleteBranch, [switch]$PrMerged)
+    param([object]$Session, [switch]$DryRun, [switch]$ForceDeleteBranch, [switch]$ForceRemoveWorktree, [switch]$PrMerged)
     $actions = @()
     # Kill ONLY a session whose tracked PID is genuinely its own spawned shell: a standalone
     # `pwsh` window (via='pwsh') records $spawn.process.Id, so killing that releases the
@@ -1760,6 +1763,28 @@ function Invoke-SessionCleanup {
         if (-not $DryRun) { Stop-ProcessTree -TargetPid ([int]$Session.sessionPid) | Out-Null }
     } elseif ($Session.via -eq 'wt') {
         $actions += "NO mato PID (sesion wt: el shell real de la pestana no se rastrea; cierra la pestana si el worktree queda bloqueado)"
+    }
+    # The removal below is --force, which also wipes a DIRTY worktree, destroying whatever the
+    # session left uncommitted or untracked (#276). A session that finished WITHOUT merging
+    # (gate blocked, agent crashed mid-edit) is exactly the one likely to have dirty files, so
+    # refuse and keep everything for a later retry. A merged session is torn down as usual: its
+    # work landed, so what remains is scratch. -ForceRemoveWorktree is the deliberate discard.
+    # The check is read-only, so it also runs under -DryRun and makes the plan predictive.
+    if ($Session.workPath -and -not $PrMerged -and -not $ForceRemoveWorktree -and (Test-Path $Session.workPath)) {
+        $out = @(git -C $Session.workPath status --porcelain 2>&1)
+        # FAIL CLOSED: an unreadable worktree (corrupt metadata, index lock, no git) yields no
+        # output, which must NOT be read as "clean" - that would hand the --force exactly the
+        # case we cannot vouch for (Codex review, PR #277).
+        if ($LASTEXITCODE -ne 0) {
+            $actions += "WARN conservo el worktree $($Session.workPath) (#$($Session.issue)): no pude comprobar si tiene cambios sin commitear [git status fallo]. Revisalo a mano, o descartalo con -ForceRemoveWorktree"
+            return $actions
+        }
+        $dirty = ($out -join "`n").Trim()
+        if ($dirty) {
+            $n = @($dirty -split "`n" | Where-Object { $_.Trim() }).Count
+            $actions += "WARN conservo el worktree $($Session.workPath) (#$($Session.issue)): $n archivo(s) sin commitear se perderian. Revisalos y commitealos, o descartalos con -ForceRemoveWorktree"
+            return $actions
+        }
     }
     # Removing the worktree is the step that can genuinely fail (a held handle - see the
     # tab-shell gotcha). Success = the path is gone afterwards. Only when it is do we delete
@@ -1820,6 +1845,7 @@ function Invoke-SessionWatch {
         [switch]$AutoClean,
         [switch]$DryRun,
         [switch]$ForceDeleteBranch,
+        [switch]$ForceRemoveWorktree,
         [scriptblock]$GetStatus = { param($s) Get-SessionLiveStatus $s },
         [scriptblock]$ReadSessions = { Read-SessionRegistryRaw },
         [scriptblock]$Now = { Get-Date },
@@ -1841,8 +1867,8 @@ function Invoke-SessionWatch {
                 if ($AutoClean -and -not $cleaned.ContainsKey([int]$s.issue)) {
                     $cleaned[[int]$s.issue] = $true
                     # Carry the completion REASON into the teardown: only a merged PR licenses
-                    # the force-delete of the branch (#273).
-                    foreach ($a in (Invoke-SessionCleanup -Session $s -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch -PrMerged:([bool]$st.merged))) {
+                    # discarding the branch (#273) or a dirty worktree (#276).
+                    foreach ($a in (Invoke-SessionCleanup -Session $s -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch -ForceRemoveWorktree:$ForceRemoveWorktree -PrMerged:([bool]$st.merged))) {
                         # A kept-branch WARN / failed teardown must not hide in DarkGray noise.
                         $color = if ($a -cmatch '^(WARN|FAIL)') { 'Yellow' } else { 'DarkGray' }
                         Write-Host ("         - {0}" -f $a) -ForegroundColor $color
@@ -2028,7 +2054,7 @@ if ($Sessions) {
     if ($Watch) {
         Write-Host ""
         Write-Host ("=== Watch (poll {0}s, timeout {1}s{2}) ===" -f $WatchPollSec, $WatchTimeoutSec, $(if ($AutoClean) { ', auto-clean' } else { '' })) -ForegroundColor Cyan
-        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch | Out-Null
+        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch -ForceRemoveWorktree:$ForceRemoveWorktree | Out-Null
     }
     exit 0
 }
@@ -2036,7 +2062,7 @@ if ($Sessions) {
 # -Watch without -Sessions and without a -Parallel run: still a valid standalone watch.
 if ($Watch -and $Parallel.Count -eq 0) {
     Write-Host ("=== Watch (poll {0}s, timeout {1}s{2}) ===" -f $WatchPollSec, $WatchTimeoutSec, $(if ($AutoClean) { ', auto-clean' } else { '' })) -ForegroundColor Cyan
-    Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch | Out-Null
+    Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -DryRun:$DryRun -ForceDeleteBranch:$ForceDeleteBranch -ForceRemoveWorktree:$ForceRemoveWorktree | Out-Null
     exit 0
 }
 
@@ -2436,7 +2462,7 @@ if ($Parallel.Count -gt 0) {
     if ($Watch -and -not $DryRun -and ($Launch -or $Fleet)) {
         Write-Host ""
         Write-Host ("=== Watch (poll {0}s, timeout {1}s{2}) ===" -f $WatchPollSec, $WatchTimeoutSec, $(if ($AutoClean) { ', auto-clean' } else { '' })) -ForegroundColor Cyan
-        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -ForceDeleteBranch:$ForceDeleteBranch | Out-Null
+        Invoke-SessionWatch -PollSec $WatchPollSec -TimeoutSec $WatchTimeoutSec -AutoClean:$AutoClean -ForceDeleteBranch:$ForceDeleteBranch -ForceRemoveWorktree:$ForceRemoveWorktree | Out-Null
     }
 
     Write-Host ""
