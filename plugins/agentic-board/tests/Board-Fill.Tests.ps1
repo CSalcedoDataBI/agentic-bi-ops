@@ -57,3 +57,48 @@ Describe 'Get-OwnerUrlSegment (projects URL segment)' {
         Get-OwnerUrlSegment -OwnerType ''    | Should -Be 'users'
     }
 }
+
+Describe 'Resolve-Opt (canonical option with legacy fallback, issue #278)' {
+    BeforeAll {
+        # Shaped like the GraphQL single-select field node Board-Fill resolves options from.
+        $script:CanonStatus = [pscustomobject]@{ id = 'F1'; options = @(
+            [pscustomobject]@{ id = 'c1'; name = 'Backlog' }
+            [pscustomobject]@{ id = 'c2'; name = 'In Progress' }
+        ) }
+        $script:LegacyStatus = [pscustomobject]@{ id = 'F2'; options = @(
+            [pscustomobject]@{ id = 'l1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'l2'; name = 'In Progress' }
+        ) }
+        $script:CanonPrio = [pscustomobject]@{ id = 'F3'; options = @(
+            [pscustomobject]@{ id = 'p2'; name = 'P2' }
+        ) }
+        $script:LegacyPrio = [pscustomobject]@{ id = 'F4'; options = @(
+            [pscustomobject]@{ id = 'q2'; name = 'P2 Medium' }
+        ) }
+    }
+    It 'resolves the canonical name on a canonical board' {
+        (Resolve-Opt $script:CanonStatus 'Status' 'Backlog').id | Should -Be 'c1'
+    }
+    It "resolves Backlog to a default-template board's 'Todo'" {
+        $o = Resolve-Opt $script:LegacyStatus 'Status' 'Backlog'
+        $o.id   | Should -Be 'l1'
+        $o.name | Should -Be 'Todo'
+    }
+    It "fills Priority on the tool's OWN board - the P2/'P2 Medium' mismatch of #278" {
+        (Resolve-Opt $script:CanonPrio  'Priority' 'P2').id | Should -Be 'p2'
+        (Resolve-Opt $script:LegacyPrio 'Priority' 'P2').id | Should -Be 'q2'
+    }
+    It 'prefers the canonical name when a board carries both vocabularies' {
+        $both = [pscustomobject]@{ options = @(
+            [pscustomobject]@{ id = 'l1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'c1'; name = 'Backlog' }
+        ) }
+        (Resolve-Opt $both 'Status' 'Backlog').id | Should -Be 'c1'
+    }
+    It 'returns $null when the option is absent, so the caller skips that fill' {
+        Resolve-Opt $script:CanonStatus 'Status' 'In Review' | Should -BeNullOrEmpty
+    }
+    It 'returns $null for a field the board does not have at all' {
+        Resolve-Opt $null 'Size' 'M' | Should -BeNullOrEmpty
+    }
+}

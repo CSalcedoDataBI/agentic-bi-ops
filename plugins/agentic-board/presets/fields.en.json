@@ -15,6 +15,13 @@
       { "name": "P2", "color": "YELLOW" },
       { "name": "P3", "color": "GRAY" }
     ] },
+    { "name": "Size",     "type": "SINGLE_SELECT", "options": [
+      { "name": "XS", "color": "GREEN" },
+      { "name": "S",  "color": "BLUE" },
+      { "name": "M",  "color": "YELLOW" },
+      { "name": "L",  "color": "ORANGE" },
+      { "name": "XL", "color": "RED" }
+    ] },
     { "name": "Type",     "type": "SINGLE_SELECT", "options": ["Bug", "Feature", "Improvement", "Chore", "Docs", "Spike"] },
     { "name": "Area",     "type": "TEXT" },
     { "name": "Estimate", "type": "NUMBER" },

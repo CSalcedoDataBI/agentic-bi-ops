@@ -178,6 +178,14 @@ matching recipe from the projects-admin references:
   **bulk-fill any custom field across EVERY item by rule** (`scripts/Set-BoardField.ps1` — single-select
   by title-prefix map, or text by `{title}` template — idempotent, retries 502s)
   (references/field-presets.md + board-ops.md). Visibility-per-view and group-by are UI-only — say so.
+  - **`apply <lang> --migrate` — standardize an EXISTING board onto the canonical preset.** A plain
+    apply only creates MISSING fields and matches options BY NAME, so a board born from GitHub's
+    default template (`Todo / In Progress / Done`) just gains a `Backlog` next to its `Todo`, every
+    item stays on `Todo`, and nothing really migrates. `--migrate` RENAMES the legacy option in place
+    (`Apply-FieldPreset.ps1 -Migrate`, by option id → item assignments survive; `Todo`→`Backlog`,
+    `P2 Medium`→`P2`, …). A rename hits every item at once, so ALWAYS preview with `--dry-run` first
+    and let it confirm (`-Yes` only when already approved). Offer this whenever a board shows legacy
+    Status options — `/board work` now flags them instead of reporting a false "no pending".
 - **bulk** — batch move/close/label across many items (references/issue-ops.md)
 - **fill** — detect and fill ALL gaps across the board by running `scripts/Board-Fill.ps1`
   (pass -Owner, -Repo, -ProjectNum for the current repo's board):

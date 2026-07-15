@@ -242,6 +242,7 @@ them instead of one-by-one (each still finishes through the same step 5):
 | Link board to a repo | `references/board-ops.md` | `gh project link` |
 | Create / list fields (Status, Priority, Target) | `references/board-ops.md` | `gh project field-create`, `gh project field-list` |
 | Apply a whole field preset (EN/ES, custom values) | `references/field-presets.md` | `Apply-FieldPreset.ps1 -Lang en\|es` |
+| **Standardize an EXISTING board onto the preset** (renames `Todo`→`Backlog` in place, keeps assignments) | `references/field-presets.md` | `Apply-FieldPreset.ps1 -Migrate` (preview with `-DryRun`) |
 | Set a field value on an item | `references/board-ops.md` | `gh project item-edit` |
 | Bulk-fill a custom field across ALL items (by rule) | `references/board-ops.md` | `scripts/Set-BoardField.ps1` |
 | **Detect and fill board gaps** | **this file — `/board fill` section** | **`/board fill` / `--dry-run` / `--auto`** |
