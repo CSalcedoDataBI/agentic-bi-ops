@@ -1243,20 +1243,43 @@ Describe 'Resolve-GitPathForm (make our path comparable to git''s, #291)' {
     # one directory differently. "Could not find it" then read as "gone" and licensed the delete.
     #
     # The strings differ for a real reason, so the cure is to stop them differing at the source.
+    # Build a REAL short name rather than assuming %TEMP% carries one: it does on this machine and
+    # on the windows-latest runner (RUNNER~1), but that is the runner's business, not a contract.
+    # 8.3 generation can also be off per-volume (fsutil 8dot3name), so skip rather than fail there.
+    BeforeAll {
+        $script:LongDir = Join-Path $TestDrive 'un-nombre-muy-largo-para-forzar-8dot3'
+        $script:ShortDir = ''
+        if ($IsWindows) {
+            New-Item -ItemType Directory -Path $script:LongDir -Force | Out-Null
+            try {
+                $fso = New-Object -ComObject Scripting.FileSystemObject
+                $script:ShortDir = $fso.GetFolder($script:LongDir).ShortPath
+            } catch { $script:ShortDir = '' }
+        }
+    }
+
     It 'expands an 8.3 short name into the long form git prints' {
-        # THE #291 ROOT CAUSE. %TEMP% is short-named on this machine, which is how the bug was
-        # first seen. Guard the assumption itself: if this ever stops being true the fix is moot.
-        $short = $env:TEMP
-        $short | Should -Match 'CRISTO~1|~1'          # precondition: the input really is shortened
-        (Resolve-GitPathForm $short) | Should -Not -Match '~1'
-        (Resolve-GitPathForm $short) | Should -Be (Get-Item -LiteralPath $short).FullName
+        # THE #291 ROOT CAUSE, pinned on a path we shortened ourselves.
+        if (-not $script:ShortDir -or $script:ShortDir -notlike '*~*') {
+            Set-ItResult -Skipped -Because 'this volume does not generate 8.3 short names'
+            return
+        }
+        $resolved = Resolve-GitPathForm $script:ShortDir
+        $resolved | Should -Not -Match '~'
+        $resolved | Should -BeLike '*un-nombre-muy-largo-para-forzar-8dot3'
     }
     It 'makes the short and long spellings of one directory match in the registry check' {
-        # The end-to-end point of the resolver, at the level the caller cares about.
-        $long = (Get-Item -LiteralPath $env:TEMP).FullName
-        $p = "worktree $($long.Replace([char]92, '/'))`nHEAD 222`ndetached`n"   # detached: branch signal is blind
-        Test-WorktreeStillRegistered -Porcelain $p -Path $env:TEMP                        | Should -BeFalse  # raw: misses
-        Test-WorktreeStillRegistered -Porcelain $p -Path (Resolve-GitPathForm $env:TEMP)  | Should -BeTrue   # resolved: catches
+        # The end-to-end point of the resolver, at the level the caller cares about. Measured:
+        # (Resolve-Path).Path and the FileSystemObject both PRESERVE the short form - only
+        # Get-Item/DirectoryInfo expand it - which is why the resolver is written the way it is.
+        if (-not $script:ShortDir -or $script:ShortDir -notlike '*~*') {
+            Set-ItResult -Skipped -Because 'this volume does not generate 8.3 short names'
+            return
+        }
+        $gitForm = (Get-Item -LiteralPath $script:LongDir).FullName.Replace([char]92, '/')
+        $p = "worktree $gitForm`nHEAD 222`ndetached`n"      # detached => the branch signal is blind
+        Test-WorktreeStillRegistered -Porcelain $p -Path $script:ShortDir | Should -BeFalse                        # raw: misses it
+        Test-WorktreeStillRegistered -Porcelain $p -Path (Resolve-GitPathForm $script:ShortDir) | Should -BeTrue   # resolved: catches it
     }
     It 'returns a non-existent path unchanged instead of throwing' {
         # We cannot expand what is not there - and need not: git cannot hold a LIVE worktree at a
