@@ -1,5 +1,5 @@
 ---
-description: Administer/automate a GitHub Projects board (work/init/add/move/field/bulk/fill/automate/handoff). Defaults to the CSalcedoDataBI account.
+description: Administer/automate a GitHub Projects board (work/init/add/move/field/bulk/fill/automate/handoff/doctor). Defaults to the CSalcedoDataBI account.
 ---
 You are running the agentic-board /board command.
 
@@ -25,6 +25,7 @@ for the user to pick (they can answer with just the number):
 14. update          → publicar un status update del board (progreso de alto nivel)
 15. changelog       → generar un bloque de CHANGELOG (Added/Changed/Fixed) desde los issues Done
 16. handoff         → guardar/retomar contexto entre sesiones (save/resume) para continuar días después
+17. doctor          → auditar ramas y worktrees locales (mergeadas, estancadas, fantasma) y limpiarlos
 
 ── otros módulos (comandos aparte) ─────────────────────────────
 /scan       → escanear ESTE proyecto por trabajo sin trackear (TODOs, checklists, planes) → issues + plan
@@ -238,8 +239,20 @@ matching recipe from the projects-admin references:
   - **heavy memory** (opt-in, security-gated): for persistent *semantic* memory across projects,
     `scripts/Suggest-HeavyMemory.ps1` proposes installing Basic Memory (upstream, AGPL) — never
     vendored. See `references/heavy-memory.md`. The default remains the lightweight `HANDOFF.md`.
-
-ALWAYS END WITH THE BOARD LINK (mandatory): every response about a board operation — plan,
+- **doctor** — audit the local branches and worktrees against GIT REALITY by running
+  `scripts/Board-Doctor.ps1` (repo derived from origin, or `-Repo owner/name`). Read-only by
+  default: it prints every local branch classified as `merged` (a PR is MERGED **and** its
+  `headRefOid` is the branch tip), `merged-advanced`, `in-review`, `closed-unmerged`, `active`,
+  `dirty`, `stale` (no PR, tip older than `-StaleDays`, default 30) or `working`, plus any ghost
+  worktree git reports as prunable. `-Json` emits the inventory for scripting.
+  - Use it when branches/worktrees pile up: the `-Sessions -Watch -AutoClean` teardown only ever
+    sees LIVE registered sessions, so anything whose agent died — or that was branched by hand —
+    is invisible to every other cleanup path. This is the audit path those paths warn about.
+  - `-Fix` is the only destructive mode and confirms EVERY branch (`s/n/t/q`). Yes-to-all is
+    offered for the proven-merged pile only; unmerged branches are walked separately, default No,
+    with no bulk option. A dirty (or unreadable) worktree is always kept, whatever the class.
+  - Do NOT reach for `git branch --merged main` here or suggest it as a cross-check: this repo
+    squash-merges, so it reports ~4 of 57 merged branches as unmerged. The PR is the only proof. every response about a board operation — plan,
 result, or error — must end with the board URL so the user can open it in one click:
 `https://github.com/users/<owner>/projects/<num>` (or `/orgs/<org>/projects/<num>` for org boards).
 
