@@ -8,7 +8,10 @@
     local tip, and the registry can only ever protect a branch, never define one.
 
     Everything under test is pure: the classifier takes every fact as an argument, so no git,
-    no gh and no token are needed. #>
+    no gh and no token are needed.
+
+    The syntax check that used to live here (the "limite de $PrLimit:" trap that broke every run)
+    now covers every script in the plugin, in Scripts.Parse.Tests.ps1 (#282). #>
 
 BeforeAll {
     $script:Script = Join-Path $PSScriptRoot '..' 'scripts' 'Board-Doctor.ps1' | Resolve-Path
@@ -35,18 +38,6 @@ BeforeAll {
         }
         foreach ($k in $With.Keys) { $args[$k] = $With[$k] }
         Get-BranchClass @args
-    }
-}
-
-Describe 'Board-Doctor parses' {
-    It 'has no syntax errors anywhere in the file' {
-        # Dot-sourcing only proves the part above the guard parses... which is not true: PS
-        # parses the WHOLE file first. But a string like "limite de $PrLimit:" parses as a
-        # scope qualifier and killed every run - and only the -Fix branch would have shown it
-        # in review. Cheap, total coverage of syntax.
-        $errs = $null
-        [System.Management.Automation.Language.Parser]::ParseFile($script:Script, [ref]$null, [ref]$errs) | Out-Null
-        @($errs) | Should -BeNullOrEmpty
     }
 }
 
