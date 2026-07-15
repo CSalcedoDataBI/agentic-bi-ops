@@ -468,7 +468,17 @@ $script:NeedTty = "-Fix necesita una terminal interactiva: confirma rama por ram
 # ones - those are a separate walk with its own prompts, defaulting to No.
 $script:Quit = $false
 function Confirm-Branch {
-    param([string]$Prompt, [ref]$AllRef, [string]$Default = 'n', [switch]$AutoOk)
+    # PositionalBinding=$false + explicit Positions: -AutoOk is the switch that lets -Auto skip
+    # a confirmation, so it must be IMPOSSIBLE to turn on by accident. Left positional, a future
+    # `Confirm-Branch "..." ([ref]$x) 'n' $true` would silently bind $true to it and hand the
+    # unmerged walk a free pass (Codex review, PR #286). Now it can only ever be named.
+    [CmdletBinding(PositionalBinding=$false)]
+    param(
+        [Parameter(Position=0)][string]$Prompt,
+        [Parameter(Position=1)][ref]$AllRef,
+        [Parameter(Position=2)][string]$Default = 'n',
+        [switch]$AutoOk
+    )
     if ($script:Quit)  { return $false }
     # -DryRun writes nothing, so a prompt would only stand between the user and the plan they
     # asked to see - and would make the preview unusable non-interactively (CI, `pwsh -File`).

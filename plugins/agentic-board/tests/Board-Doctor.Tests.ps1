@@ -265,14 +265,36 @@ Describe 'the -Fix terminal guard and -Auto (#285)' {
         $src | Should -Match '\[System\.Console\]::IsInputRedirected'
         $src | Should -Match 'catch \{[\s\S]{0,400}throw \$script:NeedTty'
     }
-    It 'offers -Auto only for the proven-merged class' {
-        # -AutoOk must be passed at exactly one call site. If it ever appears on the unmerged
-        # walk, -Auto could delete work that exists nowhere else.
-        $src = Get-Content $script:Script -Raw
-        $callSites = @([regex]::Matches($src, '-AutoOk'))
-        # one on the param() declaration, one on the merged walk - and nowhere else
-        $callSites.Count | Should -Be 2
-        $src | Should -Match 'if \(\$Auto -and \$AutoOk\) \{ return \$true \}'
+    It 'passes -AutoOk from exactly one call site, the proven-merged walk' {
+        # Counted string matches at first, which broke the moment a COMMENT mentioned -AutoOk -
+        # and would equally have missed a real call written differently. Ask the AST which
+        # invocations actually pass it: that is the property worth protecting, since a second
+        # call site on the unmerged walk would let -Auto delete work that exists nowhere else.
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:Script, [ref]$null, [ref]$null)
+        $calls = @($ast.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Confirm-Branch' -and
+            ($n.CommandElements | Where-Object {
+                $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq 'AutoOk' })
+        }, $true))
+        $calls.Count | Should -Be 1
+        # ...and it is the merged walk, identifiable by its prompt.
+        $calls[0].Extent.Text | Should -Match 'mergeado'
+    }
+    It 'only lets -Auto skip a prompt when that call site opted in' {
+        (Get-Content $script:Script -Raw) | Should -Match 'if \(\$Auto -and \$AutoOk\) \{ return \$true \}'
+    }
+    It 'cannot have -AutoOk switched on by a stray positional argument' {
+        # Counting the literal above would not catch `Confirm-Branch "p" ([ref]$x) 'n' $true`.
+        # Prove it at the signature instead: the switch is named-only (Codex review, PR #286).
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:Script, [ref]$null, [ref]$null)
+        $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Confirm-Branch' }, $true)
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Body.ParamBlock.Attributes.Extent.Text -join ' ' | Should -Match 'PositionalBinding\s*=\s*\$false'
+        $autoOk = $fn.Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'AutoOk' }
+        $autoOk | Should -Not -BeNullOrEmpty
+        # no Position attribute -> unreachable positionally once PositionalBinding is off
+        ($autoOk.Attributes.Extent.Text -join ' ') | Should -Not -Match 'Position\s*='
     }
     It 'skips the unmerged walk entirely under -Auto rather than prompting into the void' {
         $src = Get-Content $script:Script -Raw
