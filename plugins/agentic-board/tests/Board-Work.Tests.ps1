@@ -1171,15 +1171,29 @@ Describe 'Get-SessionCompletion (watch completion predicate, #135)' {
     It 'prefers the MERGED reason over pid-dead' {
         (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false).reason | Should -Match 'merged'
     }
-    # `merged` licenses the branch force-delete downstream (#273) - only a landed PR earns it.
-    It 'flags merged ONLY for a MERGED PR' {
-        (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true).merged | Should -BeTrue
+    # `merged` licenses the branch force-delete downstream (#273) - only a landed PR whose
+    # head IS the tip we would delete earns it.
+    It 'flags merged for a MERGED PR whose head is the branch tip' {
+        (Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $true `
+            -PrHeadOid 'abc123' -BranchTip 'abc123').merged | Should -BeTrue
     }
     It 'does NOT flag merged when the issue closed without a merged PR' {
         (Get-SessionCompletion -PrState 'CLOSED' -IssueState 'CLOSED' -PidAlive $true).merged | Should -BeFalse
     }
     It 'does NOT flag merged when the session just died (the silent-data-loss case)' {
         (Get-SessionCompletion -PrState '' -IssueState 'OPEN' -PidAlive $false).merged | Should -BeFalse
+    }
+    It 'does NOT trust a STALE merged PR on a REUSED branch name (Codex #275)' {
+        # -TakeOver re-runs reuse the deterministic issue-<n>-<slug> branch name. An OLD
+        # merged PR must not vouch for the NEW tip, or a crashed session loses its commits.
+        $r = Get-SessionCompletion -PrState 'MERGED' -IssueState 'OPEN' -PidAlive $false `
+            -PrHeadOid 'old111' -BranchTip 'new999'
+        $r.done   | Should -BeTrue    # still finished...
+        $r.merged | Should -BeFalse   # ...but NOT licensed to force-delete
+    }
+    It 'does NOT flag merged when the PR head or the branch tip is unknown (fail safe)' {
+        (Get-SessionCompletion -PrState 'MERGED' -PrHeadOid '' -BranchTip 'abc').merged | Should -BeFalse
+        (Get-SessionCompletion -PrState 'MERGED' -PrHeadOid 'abc' -BranchTip '').merged | Should -BeFalse
     }
 }
 

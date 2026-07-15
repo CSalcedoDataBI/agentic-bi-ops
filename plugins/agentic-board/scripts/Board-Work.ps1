@@ -1663,9 +1663,24 @@ function Invoke-FleetReap {
 # PR proves the work reached the remote default branch, so only then may the local branch be
 # force-deleted. Local ancestry cannot answer this - the repo squash-merges by default, which
 # rewrites the commits, so a perfectly merged branch is never an ancestor of main.
+#
+# The proof must be about THESE commits, not just this branch NAME: branch names are
+# deterministic per issue (issue-<n>-<slug>) and a -TakeOver re-run reuses them, so an OLD
+# merged PR would otherwise vouch for a NEW session's unmerged work (Codex review, PR #275).
+# Hence `merged` also requires the merged PR's head to be the branch tip we are about to
+# delete. `done` deliberately does NOT: a merged PR still finishes the session either way.
 function Get-SessionCompletion {
-    param([string]$PrState = '', [string]$IssueState = '', [bool]$PidAlive = $true)
-    if ($PrState -eq 'MERGED')    { return [pscustomobject]@{ done = $true;  reason = 'PR merged';        merged = $true } }
+    param(
+        [string]$PrState = '',
+        [string]$IssueState = '',
+        [bool]$PidAlive = $true,
+        [string]$PrHeadOid = '',
+        [string]$BranchTip = ''
+    )
+    if ($PrState -eq 'MERGED') {
+        $isThisWork = [bool]($PrHeadOid -and $BranchTip -and $PrHeadOid -eq $BranchTip)
+        return [pscustomobject]@{ done = $true; reason = 'PR merged'; merged = $isThisWork }
+    }
     if ($IssueState -eq 'CLOSED') { return [pscustomobject]@{ done = $true;  reason = 'issue cerrado';    merged = $false } }
     if (-not $PidAlive)           { return [pscustomobject]@{ done = $true;  reason = 'proceso terminado'; merged = $false } }
     return [pscustomobject]@{ done = $false; reason = 'en progreso'; merged = $false }
@@ -1676,12 +1691,14 @@ function Get-SessionCompletion {
 # reads as "still in progress". Wrapped so the watch loop is testable via an injected probe.
 function Get-SessionLiveStatus {
     param([object]$Session)
-    $prState = ''; $issueState = ''
+    $prState = ''; $issueState = ''; $prHeadOid = ''; $branchTip = ''
     if ($Session.repo -and $Session.branch) {
         try {
-            $prs = gh pr list --repo $Session.repo --head $Session.branch --state all --json state --limit 1 2>$null | ConvertFrom-Json
-            if ($prs -and $prs.Count -gt 0) { $prState = $prs[0].state }
+            $prs = gh pr list --repo $Session.repo --head $Session.branch --state all --json state,headRefOid --limit 1 2>$null | ConvertFrom-Json
+            if ($prs -and $prs.Count -gt 0) { $prState = $prs[0].state; $prHeadOid = $prs[0].headRefOid }
         } catch { }
+        # The tip we would delete. Refs are shared across worktrees, so this resolves from here.
+        try { $branchTip = (git rev-parse --verify "$($Session.branch)^{commit}" 2>$null) } catch { }
     }
     if ($Session.repo -and $Session.issue) {
         try {
@@ -1690,7 +1707,8 @@ function Get-SessionLiveStatus {
         } catch { }
     }
     $pidAlive = [bool]($Session.sessionPid -and (Get-Process -Id $Session.sessionPid -ErrorAction SilentlyContinue))
-    return Get-SessionCompletion -PrState $prState -IssueState $issueState -PidAlive $pidAlive
+    return Get-SessionCompletion -PrState $prState -IssueState $issueState -PidAlive $pidAlive `
+        -PrHeadOid ([string]$prHeadOid) -BranchTip ([string]$branchTip)
 }
 
 # Raw registry read WITHOUT the dead-PID pruning that Read-SessionRegistry does. The watch
