@@ -305,6 +305,10 @@ if ($env:ABIOS_HANDOFF_DOTSOURCE) { return }
 
 $ErrorActionPreference = "Stop"
 
+# The single resolver for owner/name from this clone's origin (#281). Do NOT inline the regex
+# again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
+
 # The single resolver for the internal state dir (new name + migration + fallback).
 . (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
 
@@ -317,7 +321,7 @@ if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (
 # -- Resolve repo / branch -----------------------------------------------------
 if (-not $Repo) {
     $originUrl = git remote get-url origin 2>$null
-    if ($originUrl -match 'github\.com[/:]([^/]+)/([^/.]+)') { $Repo = "$($Matches[1])/$($Matches[2])" }
+    $Repo = Get-RepoFromOriginUrl $originUrl
 }
 if (-not $Repo) { throw "Could not derive the repo from origin - pass -Repo owner/name." }
 if (-not $Owner) { $Owner = ($Repo -split "/")[0] }

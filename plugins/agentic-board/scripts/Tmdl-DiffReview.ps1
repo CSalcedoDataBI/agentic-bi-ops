@@ -70,6 +70,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# The single resolver for owner/name from this clone's origin (#281). Do NOT inline the regex
+# again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
+
 # ==============================================================================
 # Helpers
 # ==============================================================================
@@ -346,7 +350,7 @@ if ($mode -eq "pr") {
     if (-not $env:GH_TOKEN) { Write-Error "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)."; exit 2 }
     if (-not $Repo) {
         $originUrl = git remote get-url origin 2>$null
-        if ($originUrl -match 'github\.com[/:]([^/]+)/([^/.]+)') { $Repo = "$($Matches[1])/$($Matches[2])" }
+        $Repo = Get-RepoFromOriginUrl $originUrl
     }
     if (-not $Repo) { Write-Error "No pude derivar el repo del origin - pasa -Repo owner/name."; exit 2 }
 }
