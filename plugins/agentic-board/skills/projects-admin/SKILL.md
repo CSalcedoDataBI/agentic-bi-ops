@@ -291,8 +291,14 @@ branch already proven merged by its PR (#273/PR #275). The proof is the PR, not 
   rather than print "nothing to clean" or hand `-Fix` a list built from missing facts. A broken
   registry blocks `-Fix` only — the read-only audit still works, it just cannot say `active`.
 - `-Fix` needs an interactive terminal (the per-branch confirmation IS the safety contract), so
-  it refuses up front under `pwsh -NonInteractive`/CI. `-Fix -DryRun` asks nothing and is safe
-  to script.
+  it refuses under `pwsh -NonInteractive`/CI with an actionable message. `-Fix -DryRun` asks
+  nothing and is safe to script.
+- `-Fix -Auto` is the "I already read the list, delete them" path (same idea as
+  `Board-Fill.ps1 -Auto`), and the only way to clean up from an agent session or CI. It skips
+  the prompt for the `merged` class ONLY — the one whose safety is *proven* (MERGED PR +
+  headRefOid == tip) rather than judged. Under `-Auto` the unmerged classes are listed and
+  **skipped entirely**, never deleted: "cannot ask" resolves to keep. The dirty-worktree and
+  current-worktree guards still apply.
 
 ---
 

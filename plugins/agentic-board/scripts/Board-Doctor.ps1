@@ -56,6 +56,14 @@
     written. Unmerged branches always require an explicit per-branch confirmation: there is
     no flag that force-deletes them in bulk.
 
+.PARAMETER Auto
+    With -Fix: skip the confirmation for the `merged` class ONLY - the one that is PROVEN safe
+    (a MERGED PR whose headRefOid is the branch tip). For the flow "run read-only, read the
+    list, decide yes" and for automation, mirroring Board-Fill.ps1 -Auto. It does NOT touch
+    `stale` or `closed-unmerged`: unmerged work is never bulk-deleted, with or without this
+    flag, and those walks are skipped entirely under -Auto since they cannot prompt. The dirty
+    worktree and current-worktree guards still apply.
+
 .PARAMETER DryRun
     With -Fix: print exactly what would be deleted/pruned and exit without doing it.
 
@@ -79,6 +87,7 @@ param(
     [string]$Prefix    = "*",
     [string[]]$Protect = @(),
     [switch]$Fix,
+    [switch]$Auto,
     [switch]$DryRun,
     [switch]$Json,
     [int]   $PrLimit   = 1000,
@@ -451,21 +460,33 @@ if (-not $Fix) {
 }
 
 # --- -Fix ---------------------------------------------------------------------
+# One message, two guards (up-front IsInputRedirected + the Read-Host catch) - they must say
+# the same thing wherever the missing terminal is discovered (#285).
+$script:NeedTty = "-Fix necesita una terminal interactiva: confirma rama por rama y aqui no hay donde preguntar. Opciones: -Fix -DryRun para ver el plan, -Fix -Auto para borrar solo las mergeadas (probadas seguras) sin preguntar, o corre esto en una terminal normal."
 # Every branch is confirmed individually. `a` (todas) only ever applies within the class
 # being walked, so a yes-to-all on the proven-merged pile can never spill into the unmerged
 # ones - those are a separate walk with its own prompts, defaulting to No.
 $script:Quit = $false
 function Confirm-Branch {
-    param([string]$Prompt, [ref]$AllRef, [string]$Default = 'n')
+    param([string]$Prompt, [ref]$AllRef, [string]$Default = 'n', [switch]$AutoOk)
     if ($script:Quit)  { return $false }
     # -DryRun writes nothing, so a prompt would only stand between the user and the plan they
     # asked to see - and would make the preview unusable non-interactively (CI, `pwsh -File`).
     # Answer yes to everything so the FULL plan prints; the guards below still run, so a keep
     # (dirty worktree, current worktree) is previewed as a keep.
     if ($DryRun)       { return $true }
+    # -Auto only ever reaches here with $AutoOk, which ONLY the proven-merged walk passes.
+    if ($Auto -and $AutoOk) { return $true }
     if ($AllRef.Value) { return $true }
     while ($true) {
-        $ans = (Read-Host "$Prompt [s=si / n=no / t=todas / q=salir] ($Default)").Trim().ToLower()
+        try {
+            $ans = (Read-Host "$Prompt [s=si / n=no / t=todas / q=salir] ($Default)").Trim().ToLower()
+        } catch {
+            # `pwsh -NonInteractive` has no API to detect up front, so this is the real guard:
+            # turn the raw "PowerShell is in NonInteractive mode" into the actionable message
+            # (#285). Nothing has been deleted at this point - the delete follows the confirm.
+            throw $script:NeedTty
+        }
         if (-not $ans) { $ans = $Default }
         switch ($ans) {
             's' { return $true }
@@ -521,12 +542,21 @@ if (-not $registryTrusted) {
 
 # A real -Fix cannot run where Read-Host is unavailable (`pwsh -NonInteractive`, CI, a piped
 # stdin): the per-branch confirmation IS the safety contract, so refuse UP FRONT rather than
-# throw from the first prompt with branches already half-walked. -DryRun is fine - it asks nothing.
-if (-not $DryRun -and -not [Environment]::UserInteractive) {
-    throw "-Fix necesita una terminal interactiva (confirma rama por rama). Usa -Fix -DryRun para ver el plan, o corre esto en una terminal normal."
+# throw from the first prompt with branches already half-walked. -DryRun is fine - it asks
+# nothing; -Auto is fine - it does not prompt for the merged class.
+#
+# Deliberately NOT the .NET UserInteractive flag: it reports TRUE under `pwsh -NonInteractive`,
+# so the original guard never fired and Read-Host blew up mid-walk anyway - the exact thing it
+# claimed to prevent (#285). IsInputRedirected catches piped stdin up front; the -NonInteractive
+# case has no API at all, so Confirm-Branch catches the Read-Host failure and rethrows this
+# message. A test asserts that flag never comes back.
+if (-not $DryRun -and -not $Auto -and [System.Console]::IsInputRedirected) {
+    throw $script:NeedTty
 }
 
-$mode = if ($DryRun) { "DRY-RUN - nada se ejecuta" } else { "-Fix - esto borra ramas y worktrees" }
+$mode = if ($DryRun) { "DRY-RUN - nada se ejecuta" }
+        elseif ($Auto) { "-Fix -Auto - borra las mergeadas SIN preguntar (las sin mergear no se tocan)" }
+        else { "-Fix - esto borra ramas y worktrees" }
 Write-Host "=== $mode ===" -ForegroundColor Yellow
 Write-Host ""
 
@@ -538,7 +568,9 @@ if ($deletable.Count -gt 0) {
     Write-Host "-- $($deletable.Count) rama(s) mergeadas (PR MERGED + tip coincide)" -ForegroundColor Green
     foreach ($r in ($deletable | Sort-Object Branch)) {
         if ($script:Quit) { break }
-        if (Confirm-Branch "   Borrar $($r.Branch) (PR #$($r.Pr) mergeado)?" ([ref]$allMerged) 's') {
+        # -AutoOk is passed HERE and nowhere else: this is the only class whose safety is proven
+        # rather than judged, so it is the only one -Auto may skip the prompt for (#285).
+        if (Confirm-Branch "   Borrar $($r.Branch) (PR #$($r.Pr) mergeado)?" ([ref]$allMerged) 's' -AutoOk) {
             foreach ($a in (Remove-BranchAndWorktree -Row $r -BranchFlag '-D')) { Write-Host "     $a" -ForegroundColor DarkGray }
         }
     }
@@ -547,7 +579,14 @@ if ($deletable.Count -gt 0) {
 
 # 2) Unmerged: NEVER a yes-to-all, NEVER a default-yes. Each one is a separate decision and
 #    the work is unrecoverable, so the prompt defaults to No and `t` is not offered.
-if ($decide.Count -gt 0 -and -not $script:Quit) {
+if ($decide.Count -gt 0 -and -not $script:Quit -and $Auto) {
+    # -Auto must never reach a prompt it cannot answer, and "cannot ask" must resolve to KEEP.
+    # Listing them is the useful half; deleting unmerged work unattended is not on the table.
+    Write-Host "-- $($decide.Count) rama(s) SIN MERGEAR: -Auto NO las toca (su trabajo no esta en ningun lado)" -ForegroundColor Yellow
+    foreach ($r in ($decide | Sort-Object Branch)) { Write-Host "   $($r.Branch) - $($r.Reason)" -ForegroundColor DarkGray }
+    Write-Host "   Revisalas con -Fix en una terminal interactiva." -ForegroundColor DarkGray
+    Write-Host ""
+} elseif ($decide.Count -gt 0 -and -not $script:Quit) {
     Write-Host "-- $($decide.Count) rama(s) SIN MERGEAR - el trabajo se pierde si las borras" -ForegroundColor Yellow
     $never = $false
     foreach ($r in ($decide | Sort-Object Branch)) {

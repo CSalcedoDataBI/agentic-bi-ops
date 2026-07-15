@@ -249,6 +249,37 @@ Describe 'Get-BranchClass (the session registry may only protect)' {
     }
 }
 
+Describe 'the -Fix terminal guard and -Auto (#285)' {
+    # The original guard used [Environment]::UserInteractive, which returns TRUE under
+    # `pwsh -NonInteractive`. So it never fired and Read-Host blew up mid-walk - precisely
+    # what it was written to prevent. Found by actually running -Fix.
+    It 'does not use UserInteractive, which is true even in NonInteractive mode' {
+        $src = Get-Content $script:Script -Raw
+        $src | Should -Not -Match '\[Environment\]::UserInteractive'
+        $src | Should -Not -Match '\[System\.Environment\]::UserInteractive'
+    }
+    It 'guards up front on redirected stdin and again at the prompt itself' {
+        # Two guards because there is no API for -NonInteractive: the catch around Read-Host
+        # is the one that actually covers it.
+        $src = Get-Content $script:Script -Raw
+        $src | Should -Match '\[System\.Console\]::IsInputRedirected'
+        $src | Should -Match 'catch \{[\s\S]{0,400}throw \$script:NeedTty'
+    }
+    It 'offers -Auto only for the proven-merged class' {
+        # -AutoOk must be passed at exactly one call site. If it ever appears on the unmerged
+        # walk, -Auto could delete work that exists nowhere else.
+        $src = Get-Content $script:Script -Raw
+        $callSites = @([regex]::Matches($src, '-AutoOk'))
+        # one on the param() declaration, one on the merged walk - and nowhere else
+        $callSites.Count | Should -Be 2
+        $src | Should -Match 'if \(\$Auto -and \$AutoOk\) \{ return \$true \}'
+    }
+    It 'skips the unmerged walk entirely under -Auto rather than prompting into the void' {
+        $src = Get-Content $script:Script -Raw
+        $src | Should -Match '-Auto NO las toca'
+    }
+}
+
 Describe 'Get-DoctorClassOrder (report contract)' {
     It 'lists merged first - the bulk of the pile and the only safely deletable class' {
         (Get-DoctorClassOrder)[0].Class | Should -Be 'merged'
