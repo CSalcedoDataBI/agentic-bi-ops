@@ -1873,6 +1873,39 @@ function Test-WorktreeStillRegistered {
     return $false
 }
 
+# Did `git worktree remove` REALLY take? The question every destructive caller must answer before
+# deleting a branch or dropping a registry entry, and the one Test-WorktreeStillRegistered above
+# cannot answer alone (#291, found by a Codex review of #287/#289).
+#
+# That helper proves "still there" by NAME - branch first, path second. Both names can miss the
+# SAME registered worktree at once: the branch signal misses when the worktree drifted onto another
+# branch or went detached, and the path signal misses on exactly the 8.3 short name it was written
+# to survive. "I could not find it" then read as "it is gone" and licensed the delete - a fail-open
+# in a destructive path, and the third one today rooted in comparing paths across producers.
+#
+# So stop asking "can I still find MY worktree?" - our name for it may be wrong - and also ask "did
+# ANY worktree leave the registry?". The removal named a path and GIT resolved it, so if git's own
+# listing is unchanged, nothing was removed, whatever we can or cannot recognise. That compares
+# git's porcelain against git's own porcelain: one producer, one format, no mismatch to fool us.
+#
+# Both signals must agree before we call it gone: positive proof by name that it is STILL there
+# wins outright, and an unchanged registry is a refusal on its own. PURE -> unit-testable.
+function Test-WorktreeRemovalTook {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Before,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$After,
+        [string]$Path   = '',
+        [string]$Branch = ''
+    )
+    if (Test-WorktreeStillRegistered -Porcelain $After -Path $Path -Branch $Branch) { return $false }
+    # Set difference, not a count: a worktree added concurrently would keep the count level and
+    # mask a real removal. An empty/unreadable BEFORE proves nothing -> no records left -> refuse.
+    $beforePaths = @(Get-WorktreeRecords -Porcelain $Before | ForEach-Object { $_.Path })
+    $afterPaths  = @(Get-WorktreeRecords -Porcelain $After  | ForEach-Object { $_.Path })
+    $left = @($beforePaths | Where-Object { $afterPaths -notcontains $_ })
+    return ($left.Count -gt 0)
+}
+
 # Tear down a finished session: kill the tab shell FIRST (the `pwsh -NoExit` left cwd'd
 # inside the worktree keeps a handle -> `git worktree remove` fails with Permission denied),
 # then remove the worktree, delete the local branch, and prune the registry entry. Returns
@@ -1934,6 +1967,13 @@ function Invoke-SessionCleanup {
     if ($Session.workPath) {
         $actions += "git worktree remove --force $($Session.workPath)"
         if (-not $DryRun) {
+            # Snapshot the registry BEFORE: "did anything leave?" is the only signal that survives
+            # our name for the worktree being wrong (#291).
+            $before = (git worktree list --porcelain 2>$null) -join "`n"
+            if ($LASTEXITCODE -ne 0) {
+                $actions += "FAIL no pude leer 'git worktree list' antes del remove - conservo la rama y el registro de #$($Session.issue) para reintentar"
+                return $actions
+            }
             git worktree remove --force $Session.workPath 2>&1 | Out-Null
             $after = (git worktree list --porcelain 2>$null) -join "`n"
             if ($LASTEXITCODE -ne 0) {
@@ -1941,7 +1981,7 @@ function Invoke-SessionCleanup {
                 $actions += "FAIL no pude releer 'git worktree list' tras el remove - conservo la rama y el registro de #$($Session.issue) para reintentar"
                 return $actions
             }
-            $worktreeGone = -not (Test-WorktreeStillRegistered -Porcelain $after -Path $Session.workPath -Branch $Session.branch)
+            $worktreeGone = Test-WorktreeRemovalTook -Before $before -After $after -Path $Session.workPath -Branch $Session.branch
             # Litter, not a blocker: git let it go, so the teardown continues. Name the path -
             # nothing else will ever clean it up, since git no longer knows about it.
             if ($worktreeGone -and (Test-Path $Session.workPath)) {
