@@ -28,12 +28,18 @@ function Get-RepoFromOriginUrl {
     param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Url)
     if (-not $Url) { return $null }
     $u = $Url.Trim()
-    # ssh://[user@]github.com[:port]/owner/name[.git][/]  |  https://[user@]github.com/owner/name[.git][/]
-    if ($u -match '(?i)^(?:https?|ssh)://(?:[^@/]+@)?github\.com(?::\d+)?/(.+?)/(.+?)(?:\.git)?/?$') {
+    # Host: github.com, or ssh.github.com — the alias for SSH over 443, which people behind a
+    # firewall really do set as their origin. The OLD regex mangled that one into "443/owner"
+    # (it matched the "github.com" inside "ssh.github.com", then took the port as the owner).
+    # Protocols: https, http, ssh AND git — git:// is deprecated by GitHub but the old regex
+    # accepted it by accident (it was unanchored), so dropping it would be a silent regression
+    # for anyone who still has such a remote (Codex review, PR #284).
+    # <proto>://[user@](ssh.)github.com[:port]/owner/name[.git][/]
+    if ($u -match '(?i)^(?:https?|ssh|git)://(?:[^@/]+@)?(?:ssh\.)?github\.com(?::\d+)?/(.+?)/(.+?)(?:\.git)?/?$') {
         return "$($Matches[1])/$($Matches[2])"
     }
-    # scp-like: [user@]github.com:owner/name[.git]
-    if ($u -match '(?i)^(?:[^@/]+@)?github\.com:(.+?)/(.+?)(?:\.git)?/?$') {
+    # scp-like: [user@](ssh.)github.com:owner/name[.git]
+    if ($u -match '(?i)^(?:[^@/]+@)?(?:ssh\.)?github\.com:(.+?)/(.+?)(?:\.git)?/?$') {
         return "$($Matches[1])/$($Matches[2])"
     }
     return $null

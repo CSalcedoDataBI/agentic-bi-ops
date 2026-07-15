@@ -29,6 +29,19 @@ Describe 'Get-RepoFromOriginUrl (owner/name from an origin URL)' {
     It 'reads an ssh:// URL' {
         Get-RepoFromOriginUrl 'ssh://git@github.com/owner/name.git' | Should -Be 'owner/name'
     }
+    It 'reads a deprecated git:// URL' {
+        # The old unanchored regex accepted this by accident; anchoring must not silently
+        # regress anyone who still has such a remote (Codex review, PR #284).
+        Get-RepoFromOriginUrl 'git://github.com/owner/name.git' | Should -Be 'owner/name'
+    }
+    It 'reads the ssh.github.com:443 alias used behind firewalls' {
+        # Neither version handled this: the old one matched the "github.com" inside
+        # "ssh.github.com" and derived "443/owner".
+        Get-RepoFromOriginUrl 'ssh://git@ssh.github.com:443/owner/name.git' | Should -Be 'owner/name'
+    }
+    It 'reads an explicit port on https' {
+        Get-RepoFromOriginUrl 'https://github.com:443/owner/name.git' | Should -Be 'owner/name'
+    }
     It 'tolerates a trailing slash' {
         Get-RepoFromOriginUrl 'https://github.com/owner/name/' | Should -Be 'owner/name'
     }
