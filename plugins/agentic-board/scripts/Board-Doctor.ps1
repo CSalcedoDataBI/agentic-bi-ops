@@ -120,74 +120,12 @@ finally {
 }
 
 # ------------------------------------------------------------------ pure helpers
-
-# Parse `git worktree list --porcelain` into objects. The porcelain format is a blank-line
-# separated record per worktree: `worktree <path>`, then optional `HEAD <oid>`,
-# `branch refs/heads/<name>` | `detached`, `bare`, `locked [<reason>]`, `prunable <reason>`.
-# We take `prunable` straight from git rather than guessing: git already knows a registered
-# worktree whose directory is gone. PURE over the text -> unit-testable.
-function Get-WorktreeRecords {
-    param([Parameter(Mandatory)][AllowEmptyString()][string]$Porcelain)
-    $records = @()
-    $cur = $null
-    foreach ($rawLine in ($Porcelain -split "`r?`n")) {
-        $line = $rawLine.TrimEnd()
-        if (-not $line) { if ($cur) { $records += $cur; $cur = $null }; continue }
-        if ($line -match '^worktree (.+)$') {
-            if ($cur) { $records += $cur }
-            $cur = [pscustomobject]@{
-                Path = $Matches[1]; Head = ''; Branch = ''; Detached = $false
-                Bare = $false; Locked = $false; Prunable = ''
-            }
-            continue
-        }
-        if (-not $cur) { continue }
-        switch -Regex ($line) {
-            '^HEAD (.+)$'             { $cur.Head     = $Matches[1] }
-            '^branch refs/heads/(.+)$'{ $cur.Branch   = $Matches[1] }
-            '^detached$'              { $cur.Detached = $true }
-            '^bare$'                  { $cur.Bare     = $true }
-            '^locked'                 { $cur.Locked   = $true }
-            '^prunable (.+)$'         { $cur.Prunable = $Matches[1] }
-            '^prunable$'              { $cur.Prunable = 'prunable' }
-        }
-    }
-    if ($cur) { $records += $cur }
-    return @($records)
-}
-
-# Does git STILL register a worktree that HOLDS THIS BRANCH? The question after
-# `git worktree remove --force`, and the authority is git's registry - never the disk (#287).
-# A removal routinely de-registers the worktree while the directory survives, empty, held by an
-# open handle from the session that created it; asking Test-Path there answers "still present"
-# about something git already let go, which kept a merged branch alive and forced a second -Fix
-# pass. An entry git still lists is a real failure; a leftover folder is litter.
 #
-# ASK BY BRANCH, NOT BY PATH, and note that this is the whole point rather than a shortcut. The
-# branch is what we are about to `git branch -D`, and a registered worktree holding it is exactly
-# what makes that fail - so it is the fact worth checking. Matching paths instead means comparing
-# two strings from different producers, which FAILS OPEN when they disagree: git emits the long
-# `C:/Users/Cristobal/...` while a path routed through %TEMP% can carry the 8.3 short name
-# `C:/Users/CRISTO~1/...`. That mismatch reads as "not registered" and licenses the delete. Caught
-# exactly that way while testing this fix, on a locked worktree git was still listing.
-# -Path is kept as a SECONDARY signal for the detached/branchless case; either hit is a block.
-# PURE over the text -> unit-testable.
-function Test-WorktreeStillRegistered {
-    param(
-        [Parameter(Mandatory)][AllowEmptyString()][string]$Porcelain,
-        [string]$Path   = '',
-        [string]$Branch = ''
-    )
-    $norm = { param($p) ($p -replace '\\', '/').TrimEnd('/') }
-    $want = if ($Path) { & $norm $Path } else { $null }
-    foreach ($w in (Get-WorktreeRecords -Porcelain $Porcelain)) {
-        # -eq on strings is case-insensitive, which is right for both a Windows path and the
-        # branch name as git echoes it back.
-        if ($Branch -and $w.Branch -eq $Branch)      { return $true }
-        if ($want   -and (& $norm $w.Path) -eq $want) { return $true }
-    }
-    return $false
-}
+# Get-WorktreeRecords and Test-WorktreeStillRegistered used to live HERE, and moved to
+# Board-Work.ps1 (#289) - the dot-source above brings them in, exactly like Get-SessionCompletion.
+# They moved because the session teardown needs the same "did the removal take?" verdict, and the
+# dependency only runs doctor -> work: Board-Work cannot dot-source us back without a cycle, and
+# a second copy is the drift this file refuses everywhere else.
 
 # Which PR speaks for THIS branch tip? Several PRs can share a reused branch name
 # (-TakeOver reuses `issue-<n>-<slug>`), so "the newest one" is not trustworthy: an old
