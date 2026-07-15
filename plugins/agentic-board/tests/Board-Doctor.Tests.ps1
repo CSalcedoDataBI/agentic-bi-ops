@@ -249,6 +249,59 @@ Describe 'Get-BranchClass (the session registry may only protect)' {
     }
 }
 
+Describe 'the -Fix terminal guard and -Auto (#285)' {
+    # The original guard used [Environment]::UserInteractive, which returns TRUE under
+    # `pwsh -NonInteractive`. So it never fired and Read-Host blew up mid-walk - precisely
+    # what it was written to prevent. Found by actually running -Fix.
+    It 'does not use UserInteractive, which is true even in NonInteractive mode' {
+        $src = Get-Content $script:Script -Raw
+        $src | Should -Not -Match '\[Environment\]::UserInteractive'
+        $src | Should -Not -Match '\[System\.Environment\]::UserInteractive'
+    }
+    It 'guards up front on redirected stdin and again at the prompt itself' {
+        # Two guards because there is no API for -NonInteractive: the catch around Read-Host
+        # is the one that actually covers it.
+        $src = Get-Content $script:Script -Raw
+        $src | Should -Match '\[System\.Console\]::IsInputRedirected'
+        $src | Should -Match 'catch \{[\s\S]{0,400}throw \$script:NeedTty'
+    }
+    It 'passes -AutoOk from exactly one call site, the proven-merged walk' {
+        # Counted string matches at first, which broke the moment a COMMENT mentioned -AutoOk -
+        # and would equally have missed a real call written differently. Ask the AST which
+        # invocations actually pass it: that is the property worth protecting, since a second
+        # call site on the unmerged walk would let -Auto delete work that exists nowhere else.
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:Script, [ref]$null, [ref]$null)
+        $calls = @($ast.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Confirm-Branch' -and
+            ($n.CommandElements | Where-Object {
+                $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq 'AutoOk' })
+        }, $true))
+        $calls.Count | Should -Be 1
+        # ...and it is the merged walk, identifiable by its prompt.
+        $calls[0].Extent.Text | Should -Match 'mergeado'
+    }
+    It 'only lets -Auto skip a prompt when that call site opted in' {
+        (Get-Content $script:Script -Raw) | Should -Match 'if \(\$Auto -and \$AutoOk\) \{ return \$true \}'
+    }
+    It 'cannot have -AutoOk switched on by a stray positional argument' {
+        # Counting the literal above would not catch `Confirm-Branch "p" ([ref]$x) 'n' $true`.
+        # Prove it at the signature instead: the switch is named-only (Codex review, PR #286).
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:Script, [ref]$null, [ref]$null)
+        $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Confirm-Branch' }, $true)
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Body.ParamBlock.Attributes.Extent.Text -join ' ' | Should -Match 'PositionalBinding\s*=\s*\$false'
+        $autoOk = $fn.Body.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'AutoOk' }
+        $autoOk | Should -Not -BeNullOrEmpty
+        # no Position attribute -> unreachable positionally once PositionalBinding is off
+        ($autoOk.Attributes.Extent.Text -join ' ') | Should -Not -Match 'Position\s*='
+    }
+    It 'skips the unmerged walk entirely under -Auto rather than prompting into the void' {
+        $src = Get-Content $script:Script -Raw
+        $src | Should -Match '-Auto NO las toca'
+    }
+}
+
 Describe 'Get-DoctorClassOrder (report contract)' {
     It 'lists merged first - the bulk of the pile and the only safely deletable class' {
         (Get-DoctorClassOrder)[0].Class | Should -Be 'merged'
