@@ -1623,3 +1623,30 @@ Describe 'Get-UnknownStatusValues (never claim a clean board blindly, issue #278
         @(Get-UnknownStatusValues @()).Count | Should -Be 0
     }
 }
+
+Describe 'Resolve-StatusOptionId (every Status WRITE is vocabulary-aware, PR #279)' {
+    BeforeAll {
+        $script:CanonNode = [pscustomobject]@{ options = @(
+            [pscustomobject]@{ id = 'c1'; name = 'Backlog' }
+            [pscustomobject]@{ id = 'c2'; name = 'In Review' }
+        ) }
+        $script:LegacyNode = [pscustomobject]@{ options = @(
+            [pscustomobject]@{ id = 'l1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'l2'; name = 'Review' }
+        ) }
+    }
+    It 'resolves the canonical option on a canonical board' {
+        Resolve-StatusOptionId $script:CanonNode 'Backlog'   | Should -Be 'c1'
+        Resolve-StatusOptionId $script:CanonNode 'In Review' | Should -Be 'c2'
+    }
+    It "resolves -Unlock's Backlog target to a legacy board's 'Todo' (was silently null)" {
+        Resolve-StatusOptionId $script:LegacyNode 'Backlog' | Should -Be 'l1'
+    }
+    It "resolves -ToReview to a board that calls the column 'Review'" {
+        Resolve-StatusOptionId $script:LegacyNode 'In Review' | Should -Be 'l2'
+    }
+    It 'returns $null when no name matches, so the caller can refuse loudly' {
+        Resolve-StatusOptionId $script:LegacyNode 'Blocked' | Should -BeNullOrEmpty
+        Resolve-StatusOptionId $null 'Backlog'              | Should -BeNullOrEmpty
+    }
+}

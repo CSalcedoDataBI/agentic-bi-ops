@@ -82,21 +82,30 @@ function Get-OptionAliases([string]$Field, [string]$Canonical) {
 #
 # Renaming is done by option ID, so item assignments survive (see Apply-FieldPreset).
 # An option is only planned when it is a known legacy alias; unknown names are left
-# alone (never guess), and a rename whose target name ALREADY exists on the field is
-# flagged Conflict - GitHub rejects duplicate option names, so the caller must report
-# it instead of executing it.
+# alone (never guess). A rename is flagged Conflict - reported, never executed - when
+# the canonical name cannot actually be taken, because GitHub rejects two options with
+# the same name. That happens two ways:
+#   - the canonical name ALREADY exists on the field (e.g. both 'Todo' and 'Backlog'), or
+#   - two legacy aliases claim the SAME canonical name (e.g. both 'Todo' and 'To Do'):
+#     only the first can take it, so the rest are conflicts. Without this the plan
+#     promised two safe renames to 'Backlog' and only one ever happened - a plan that
+#     lies about what it will do (Codex review, PR #279).
 function Get-LegacyOptionRenames {
     param([string]$Field, [object[]]$Options)
     $existing = @($Options | ForEach-Object { $_.name })
+    $claimed  = @()   # canonical names already spoken for by an earlier rename in this plan
     foreach ($o in @($Options)) {
         $canon = Get-CanonicalOptionName $Field $o.name
         if (-not $canon)         { continue }   # unknown vocabulary - not ours to rename
         if ($canon -eq $o.name)  { continue }   # already canonical
+        $taken = (@($existing | Where-Object { $_ -eq $canon }).Count -gt 0) -or
+                 (@($claimed  | Where-Object { $_ -eq $canon }).Count -gt 0)
+        if (-not $taken) { $claimed += $canon }
         [pscustomobject]@{
             Id       = $o.id
             From     = $o.name
             To       = $canon
-            Conflict = (@($existing | Where-Object { $_ -eq $canon }).Count -gt 0)
+            Conflict = $taken
         }
     }
 }

@@ -115,3 +115,32 @@ Describe 'Get-LegacyOptionRenames (the -Migrate plan)' {
         @(Get-LegacyOptionRenames -Field 'Status' -Options @()).Count | Should -Be 0
     }
 }
+
+Describe 'Get-LegacyOptionRenames — alias-to-alias collisions (Codex review, PR #279)' {
+    It 'lets only the FIRST of two aliases claim the canonical name; the rest are conflicts' {
+        $opts = @(
+            [pscustomobject]@{ id = 'o1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'o2'; name = 'To Do' }
+        )
+        $plan = @(Get-LegacyOptionRenames -Field 'Status' -Options $opts)
+        $plan.Count       | Should -Be 2
+        $plan[0].Conflict | Should -BeFalse   # 'Todo' takes 'Backlog'
+        $plan[1].Conflict | Should -BeTrue    # 'To Do' cannot also be 'Backlog'
+    }
+    It 'flags BOTH aliases when the canonical name already exists on the field' {
+        $opts = @(
+            [pscustomobject]@{ id = 'o0'; name = 'Backlog' }
+            [pscustomobject]@{ id = 'o1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'o2'; name = 'To Do' }
+        )
+        $plan = @(Get-LegacyOptionRenames -Field 'Status' -Options $opts)
+        @($plan | Where-Object { -not $_.Conflict }).Count | Should -Be 0
+    }
+    It 'still plans distinct canonical targets independently' {
+        $opts = @(
+            [pscustomobject]@{ id = 'p0'; name = 'P0 Critical' }
+            [pscustomobject]@{ id = 'p1'; name = 'P1 High' }
+        )
+        @(Get-LegacyOptionRenames -Field 'Priority' -Options $opts | Where-Object { $_.Conflict }).Count | Should -Be 0
+    }
+}

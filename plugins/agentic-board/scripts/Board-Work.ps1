@@ -197,6 +197,20 @@ function Get-UnknownStatusValues($items) {
         Select-Object -Unique)
 }
 
+# Resolve a CANONICAL Status option to the id the board actually uses for it: the
+# canonical name first, then its legacy aliases. Every WRITE of a Status value must go
+# through this - resolving a literal name is what made the tool blind to legacy boards
+# in the first place (#278), and a write that resolves to $null silently leaves the item
+# where it was. $statusNode is the GraphQL field node (.options with .id/.name).
+function Resolve-StatusOptionId($statusNode, [string]$canonical) {
+    if (-not $statusNode) { return $null }
+    foreach ($n in (Get-OptionAliases 'Status' $canonical)) {
+        $o = $statusNode.options | Where-Object { $_.name -eq $n } | Select-Object -First 1
+        if ($o) { return $o.id }
+    }
+    return $null
+}
+
 # The Status field's option names as configured on the board. Returns @() when the
 # board has no Status field or the call fails - the caller degrades to "cannot tell"
 # rather than asserting a schema it never read.
@@ -2049,8 +2063,14 @@ if ($Lock -gt 0 -or $Unlock -gt 0) {
     if (-not $item) { throw "Issue #$n no esta en el board #$ProjectNum." }
     $repo       = $item.content.repository.nameWithOwner
     $note       = if ($locking) { 'LOCK' } else { 'UNLOCK' }
+    # Resolve through the vocabulary: on a legacy board the release target is 'Todo', and
+    # the old literal 'Backlog' lookup returned $null - the unlock then posted its comment
+    # and unassigned but left the item stranded in In Progress (Codex review, PR #279).
     $targetName = if ($locking) { 'In Progress' } else { 'Backlog' }
-    $targetOpt  = if ($locking) { $ctx.inProgId } else { ($ctx.statusNode.options | Where-Object { $_.name -eq 'Backlog' }).id }
+    $targetOpt  = if ($locking) { $ctx.inProgId } else { Resolve-StatusOptionId $ctx.statusNode 'Backlog' }
+    if (-not $targetOpt) {
+        throw "El board #$ProjectNum no tiene una opcion de Status para '$targetName' (ni un nombre legacy equivalente). Aplica el preset con /board field apply en."
+    }
     $fingerprint = Format-ClaimFingerprint -Note $note -Computer $env:COMPUTERNAME -ProcessId $PID -Date (Get-Date -Format 'yyyy-MM-dd HH:mm')
 
     $assignVerb = if ($locking) { "asignar a $Owner" } else { "desasignar a $Owner" }
@@ -2286,9 +2306,11 @@ query($owner:String!, $num:Int!) {
     $projectId  = $projData.data.user.projectV2.id
     if (-not $projectId) { throw "Board #$ProjectNum no encontrado para $Owner." }
     $statusNode = $projData.data.user.projectV2.fields.nodes | Where-Object { $_.name -eq "Status" }
-    $reviewId   = ($statusNode.options | Where-Object { $_.name -eq "In Review" }).id
+    # Vocabulary-aware, like every other Status write: a board whose column is called
+    # 'Review' is understood instead of being refused (Codex review, PR #279).
+    $reviewId   = Resolve-StatusOptionId $statusNode "In Review"
     if (-not $reviewId) {
-        throw "El board #$ProjectNum no tiene la opcion 'In Review' en Status. Agregala (/board field) antes de usar -ToReview."
+        throw "El board #$ProjectNum no tiene la opcion 'In Review' en Status. Agregala (/board field apply en) antes de usar -ToReview."
     }
 
     # Find the item by reusing Get-BoardItem, which paginates the whole board (#246)
