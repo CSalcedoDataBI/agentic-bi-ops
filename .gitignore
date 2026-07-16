@@ -20,3 +20,6 @@ Thumbs.db
 *.fields.json
 /HANDOFF.md
 /.handoffs/
+
+# Pester artifact (Invoke-Pester -CI). Embeds ABSOLUTE local paths — the guard blocks it as private.
+testResults.xml

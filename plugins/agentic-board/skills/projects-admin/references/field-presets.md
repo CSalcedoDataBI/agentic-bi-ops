@@ -4,9 +4,10 @@ Reusable field sets so a board gets coherent governance fields in one step, in t
 Presets live at `presets/fields.<lang>.json` (`en` default, `es` available). All commands assume
 `$env:GH_TOKEN` is set via the `gh-account` skill.
 
-## Apply a preset (idempotent)
+## Apply a preset (idempotent, standardizes by default)
 ```powershell
-# from the plugin root; existing fields are skipped, only missing ones are created
+# from the plugin root; existing fields are skipped, only missing ones are created,
+# and legacy option names (Todo, P2 Medium, …) are renamed onto the canonical ones
 & "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Lang en
 # Spanish governance:
 & "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Lang es
@@ -15,19 +16,27 @@ Presets live at `presets/fields.<lang>.json` (`en` default, `es` available). All
 Standard set (EN): **Status, Priority, Size, Type, Area, Estimate, Target**.
 Standard set (ES): **Estado, Prioridad, Tamaño, Tipo, Área, Estimado, Objetivo**.
 
-## Standardize an EXISTING board onto the preset (`--migrate`)
-
-A plain apply only **creates missing fields** and **matches options by name**. On a board born from
-GitHub's default template (`Status: Todo / In Progress / Done`) that is not enough: it adds `Backlog`
-*next to* `Todo`, every item stays on `Todo`, and the board ends up with two options meaning the same
-thing. `-Migrate` **renames the legacy option in place** instead:
+A rename touches every item assigned to the option at once, so the plan is **printed and confirmed**
+first. Answering `n` skips the standardizing and applies the rest of the preset.
 
 ```powershell
-# always preview first — a rename touches every item assigned to the option at once
-& "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Migrate -DryRun
-& "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Migrate      # asks s/n
-& "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Migrate -Yes # CI / pre-approved
+& "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -DryRun  # preview
+& "${CLAUDE_PLUGIN_ROOT}/scripts/Apply-FieldPreset.ps1" -Number <num> -Owner <owner> -Yes     # CI / pre-approved
 ```
+
+## Standardizing a board born from GitHub's template
+
+A template board (`Status: Todo / In Progress / Done`) is migrated onto the canonical vocabulary by
+the plain apply above — no flag needed. The legacy option is **renamed in place**, never duplicated.
+
+This was opt-in behind `-Migrate` until issue #300, and that default was the bug: the documented
+command matched options by name only, so it added `Backlog` *next to* `Todo`, every item stayed on
+`Todo`, and the board ended up with two options meaning the same thing — the one state a rename can
+never repair (GitHub forbids two options with the same name). `-Migrate` is still accepted as a no-op.
+
+To opt out, `-NoMigrate` leaves the legacy names alone. Opting out does **not** re-create the old
+behavior: the canonical option is simply not created beside the legacy one. There is no longer any
+path through this script that produces a duplicate.
 
 The rename is sent with the option's **existing id** and the canonical name, so **every item keeps its
 assignment** — no bulk item rewrite, no orphans. The legacy→canonical map lives in

@@ -312,7 +312,8 @@ branch already proven merged by its PR (#273/PR #275). The proof is the PR, not 
 | Link board to a repo | `references/board-ops.md` | `gh project link` |
 | Create / list fields (Status, Priority, Target) | `references/board-ops.md` | `gh project field-create`, `gh project field-list` |
 | Apply a whole field preset (EN/ES, custom values) | `references/field-presets.md` | `Apply-FieldPreset.ps1 -Lang en\|es` |
-| **Standardize an EXISTING board onto the preset** (renames `Todo`→`Backlog` in place, keeps assignments) | `references/field-presets.md` | `Apply-FieldPreset.ps1 -Migrate` (preview with `-DryRun`) |
+| **Standardize an EXISTING board onto the preset** (renames `Todo`→`Backlog` in place, keeps assignments) | `references/field-presets.md` | `Apply-FieldPreset.ps1` — default since #300 (preview with `-DryRun`, opt out with `-NoMigrate`) |
+| Board that ALREADY has both `Todo` and `Backlog` (moves items, then deletes the legacy option) | `references/field-presets.md` | `Apply-FieldPreset.ps1 -MergeConflicts` (preview with `-DryRun`) |
 | Set a field value on an item | `references/board-ops.md` | `gh project item-edit` |
 | Bulk-fill a custom field across ALL items (by rule) | `references/board-ops.md` | `scripts/Set-BoardField.ps1` |
 | **Detect and fill board gaps** | **this file — `/board fill` section** | **`/board fill` / `--dry-run` / `--auto`** |

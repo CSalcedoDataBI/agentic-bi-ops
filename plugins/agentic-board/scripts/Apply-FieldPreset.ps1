@@ -10,16 +10,20 @@
     applied only for fields whose options carry a color (Status, Priority); plain
     string options (e.g. Type) are left with GitHub's default colors.
 
-    -Migrate — standardize an EXISTING board onto the canonical preset (issue #278).
-    Without it, options are matched by NAME only: a board born from GitHub's default
-    template keeps its legacy `Todo` and merely gains a `Backlog` NEXT TO it, so every
-    item stays on `Todo`, the migration never happens, and the board ends up with two
-    options meaning the same thing. With -Migrate, a legacy option (see
-    Get-BoardVocabulary.ps1) is RENAMED IN PLACE onto its canonical name: the mutation
-    is sent with the option's EXISTING id and the canonical name, so every item already
-    assigned to it keeps its assignment — no bulk item rewrite, no orphaned items.
-    Renaming touches every item at once, so the rename plan is printed and confirmed
-    first (-DryRun previews, -Yes skips the prompt for CI).
+    STANDARDIZING IS THE DEFAULT (issue #300). A legacy option (see Get-BoardVocabulary.ps1)
+    is RENAMED IN PLACE onto its canonical name: the mutation is sent with the option's
+    EXISTING id and the canonical name, so every item already assigned to it keeps its
+    assignment — no bulk item rewrite, no orphaned items. Renaming touches every item at once,
+    so the plan is printed and confirmed first (-DryRun previews, -Yes skips the prompt for
+    CI); answering `n` skips the standardizing but still applies the rest of the preset.
+    This used to be opt-in behind -Migrate (issue #278), and that default WAS the bug: matching
+    options by NAME only, the documented command left a template-born board's `Todo` alone and
+    merely added `Backlog` NEXT TO it. Every item stayed on `Todo` and the board ended up with
+    two options meaning the same thing — the one state a rename can never repair, since GitHub
+    forbids two options with the same name. The tool's own happy path manufactured it.
+    -NoMigrate opts out, and opting out does NOT fall back to the old behavior: the canonical
+    option is then simply NOT created beside the legacy one. This script no longer has any path
+    that produces a duplicate. -Migrate is still accepted, as a no-op, so older calls work.
 
     -MergeConflicts — resolve what -Migrate alone can only report (issue #300). A rename
     cannot take a canonical name that ALREADY exists, so a board carrying both `Todo` and
@@ -39,11 +43,11 @@
     Requires $env:GH_TOKEN already set (via the gh-account skill).
     Usage:
       $env:GH_TOKEN = <token>
-      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -Lang en
-      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -Migrate -DryRun
-      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -Migrate
-      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -Migrate -MergeConflicts -DryRun
-      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -Migrate -MergeConflicts
+      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -Lang en             # estandariza (default)
+      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -DryRun              # previsualiza el plan
+      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -Yes                 # CI / ya aprobado
+      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -MergeConflicts      # + resuelve duplicados viejos
+      ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -NoMigrate           # no toca las opciones legacy
       ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -PresetPath custom.json  #>
 [CmdletBinding()]
 param(
@@ -51,10 +55,14 @@ param(
   [Parameter(Mandatory)][string]$Owner,
   [ValidateSet('en','es')][string]$Lang = 'en',
   [string]$PresetPath,
-  # Rename legacy option names onto the canonical ones (in place, by option id).
+  # Deprecated: standardizing is now the DEFAULT. Accepted so existing calls/docs keep working.
   [switch]$Migrate,
+  # Opt OUT of standardizing: leave legacy option names as they are. The preset's canonical
+  # option is then NOT created either — adding it beside the legacy one is what produced the
+  # duplicate this script now refuses to make (#300).
+  [switch]$NoMigrate,
   # Also resolve the rename CONFLICTS: move the legacy option's items onto the canonical
-  # one and delete the legacy option. Destroys an option — opt-in, and implies -Migrate.
+  # one and delete the legacy option. Destroys an option — stays opt-in.
   [switch]$MergeConflicts,
   # Print the plan (creations + renames) and exit without mutating anything.
   [switch]$DryRun,
@@ -63,9 +71,14 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-# Merging only ever resolves conflicts left over by the migration, so asking for it
-# without -Migrate is a typo, not a mode.
-if ($MergeConflicts) { $Migrate = $true }
+# Standardizing is the DEFAULT (#300): a board born from GitHub's template is migrated onto
+# the canonical vocabulary unless you explicitly opt out. It used to be opt-in, which meant
+# the documented command silently added `Backlog` NEXT TO `Todo` and left the board in the
+# one state the tool could not then repair. -Migrate is kept as an accepted no-op so existing
+# calls and docs do not break.
+$Migrate = -not $NoMigrate
+# Merging only ever resolves conflicts left over by the migration.
+if ($MergeConflicts -and $NoMigrate) { Write-Error "-MergeConflicts y -NoMigrate se contradicen: el merge ES la estandarizacion."; exit 1 }
 
 # The canonical/legacy option vocabulary — the map that says `Todo` MEANS `Backlog`.
 . (Join-Path $PSScriptRoot 'Get-BoardVocabulary.ps1')
@@ -188,13 +201,24 @@ function Set-OptionColors($fieldName, $presetOptions) {
     $name  = Get-OptName $po
     $color = Get-OptColor $po
     $match = $current | Where-Object { $_.name -eq $name } | Select-Object -First 1
-    if (-not $match -and $Migrate) {
-      # No option carries the canonical name — adopt the legacy one that MEANS it
-      # (Todo -> Backlog). Same id + new name = rename in place; assignments survive.
-      $match = $current | Where-Object {
+    if (-not $match) {
+      # No option carries the canonical name. Is there a LEGACY one that MEANS it?
+      $legacy = $current | Where-Object {
         ($usedIds -notcontains $_.id) -and ((Get-CanonicalOptionName $fieldName $_.name) -eq $name)
       } | Select-Object -First 1
-      if ($match) { Write-Host "  rename: $fieldName '$($match.name)' -> '$name' (conserva las asignaciones)" -ForegroundColor Cyan }
+      if ($legacy -and $Migrate) {
+        # Adopt it: same id + new name = rename in place; assignments survive.
+        $match = $legacy
+        Write-Host "  rename: $fieldName '$($legacy.name)' -> '$name' (conserva las asignaciones)" -ForegroundColor Cyan
+      } elseif ($legacy) {
+        # Not migrating. Emitting '$name' here would put it NEXT TO the legacy option that
+        # already means it — two options for one meaning, which GitHub then forbids merging
+        # by rename. That is the whole bug of #300, and this is where it was born. Refuse to
+        # create it: leave the legacy option alone (the pass below re-sends it untouched).
+        Write-Host "  skip: $fieldName '$name' - ya existe '$($legacy.name)' con el mismo significado; no creo una opcion duplicada." -ForegroundColor DarkYellow
+        Write-Host "        (corre sin -NoMigrate para renombrar '$($legacy.name)' -> '$name' y estandarizar)" -ForegroundColor DarkGray
+        continue
+      }
     }
     # The mutation replaces the option list wholesale, so anything not re-sent is dropped:
     # carry the live description through or this reconcile silently wipes it.
@@ -265,7 +289,7 @@ if ($DryRun -or ($Migrate -and ($renames.Count -gt 0 -or $merges.Count -gt 0))) 
       }
       if ($merges.Count -gt 0) {
         Write-Host "          Se resuelve solo: corre con -MergeConflicts para mover los items a la opcion canonica y borrar la legacy." -ForegroundColor DarkGray
-        Write-Host ("          -> ./Apply-FieldPreset.ps1 -Number {0} -Owner {1} -Migrate -MergeConflicts -DryRun" -f $Number, $Owner) -ForegroundColor DarkGray
+        Write-Host ("          -> ./Apply-FieldPreset.ps1 -Number {0} -Owner {1} -MergeConflicts -DryRun" -f $Number, $Owner) -ForegroundColor DarkGray
       }
     }
   }
@@ -284,9 +308,11 @@ if ($Migrate -and ($willRename -or $willMerge) -and -not $Yes) {
   $what = if ($willMerge) { "cambios (incluye BORRAR opcion(es) legacy)" } else { "renombres" }
   $answer = Read-Host "Aplicar estos $what al board #$Number? (s/n)"
   if ($answer -notmatch '^(s|si|sí|y|yes)$') {
-    Write-Host "Cancelado - no se cambio nada." -ForegroundColor Yellow
-    Write-Host "Board: https://github.com/users/$Owner/projects/$Number" -ForegroundColor Cyan
-    exit 0
+    # 'no' means "do not STANDARDIZE" — not "do nothing". The rest of the preset still applies
+    # (missing fields, colors). Crucially this does NOT fall back to adding the canonical
+    # option beside the legacy one: declining leaves the field exactly as it is.
+    Write-Host "Sin estandarizar: dejo las opciones legacy como estan (no se crea ninguna duplicada). Sigo con el resto del preset." -ForegroundColor Yellow
+    $Migrate = $false; $MergeConflicts = $false; $willMerge = $false
   }
 }
 
@@ -331,12 +357,12 @@ if ($willMerge) {
 
 $how = if ($MergeConflicts) { "canonical colors reconciled; legacy option names migrated in place; $mergedOk conflict(s) merged" }
        elseif ($Migrate)    { "canonical colors reconciled; legacy option names migrated in place" }
-       else                 { "existing fields left untouched; canonical colors reconciled" }
+       else                 { "NOT standardized (-NoMigrate); legacy option names left as they are" }
 Write-Host "Preset '$Lang' applied to project #$Number ($how)."
 if ($mergedFail -gt 0) {
   Write-Host "$mergedFail merge(s) no se completaron - revisa los WARN de arriba (los items movidos YA estan en su opcion canonica; re-correr es seguro)." -ForegroundColor DarkYellow
 }
 if (-not $Migrate) {
-  Write-Host "(Si el board venia de la plantilla por defecto de GitHub, corre con -Migrate para renombrar 'Todo' -> 'Backlog' y estandarizarlo.)" -ForegroundColor DarkGray
+  Write-Host "(Corre sin -NoMigrate para renombrar las opciones legacy -> canonicas y estandarizar el board.)" -ForegroundColor DarkGray
 }
 Write-Host "Board: https://github.com/users/$Owner/projects/$Number" -ForegroundColor Cyan
