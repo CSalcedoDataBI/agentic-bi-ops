@@ -1,6 +1,27 @@
 # Changelog
 
 
+
+## [0.20.0] - 2026-07-16
+### Added
+- **Add a way to standardize an existing board onto the canonical preset (field apply cannot migrate; /board work reports a false 'no pending')** (#278)
+- **board work: native cross-session lock (/board lock <n>) + PR/commit-aware -Start refusal** (#236)
+- **Board-Plan: repo con punto en el nombre se trunca y el script reporta OK sin crear nada** (#281)
+- **Board-Work: Test-Pending ignora el Status "Todo" (default de GitHub) -> reporta "Sin pendientes" en falso** (#293)
+- **demo: record a GIF/asciinema of a real /board work flow + screenshots** (#210)
+- **doctor: post-remove check asks the filesystem, not git — an empty leftover folder keeps the branch alive** (#287)
+- **feat(board): /board doctor — audit stale, unmerged and ghost branches from git refs** (#274)
+- **feat(work): -Watch mode to auto-detect parallel session completion and auto-clean worktrees** (#135)
+- **First-run welcome banner via SessionStart hook (shown once)** (#270)
+- **plan: discoverability & adoption** (#207)
+- **test: parse every plugin script so a syntax error cannot ship (the $PrLimit: trap from #274)** (#282)
+- **work: session teardown asks the filesystem too — a leftover folder leaks the branch and the registry entry forever** (#289)
+- **work: teardown can still fail OPEN when the worktree drifted off its branch AND the path strings disagree** (#291)
+### Fixed
+- **doctor: el guard de terminal interactiva no detecta NonInteractive, y falta -Auto para el caso ya-revisado** (#285)
+- **fix(work): AutoClean discards uncommitted worktree work (git worktree remove --force)** (#276)
+- **fix(work): AutoClean force-deletes unmerged branches (git branch -D -> -d)** (#273)
+
 ## [0.19.0] - 2026-07-13
 ### Added
 - **ci: docs-freshness gate - regenerate + git diff --exit-code (blocks a stale README)** (#203)
