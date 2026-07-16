@@ -179,14 +179,19 @@ matching recipe from the projects-admin references:
   **bulk-fill any custom field across EVERY item by rule** (`scripts/Set-BoardField.ps1` — single-select
   by title-prefix map, or text by `{title}` template — idempotent, retries 502s)
   (references/field-presets.md + board-ops.md). Visibility-per-view and group-by are UI-only — say so.
-  - **`apply <lang> --migrate` — standardize an EXISTING board onto the canonical preset.** A plain
-    apply only creates MISSING fields and matches options BY NAME, so a board born from GitHub's
-    default template (`Todo / In Progress / Done`) just gains a `Backlog` next to its `Todo`, every
-    item stays on `Todo`, and nothing really migrates. `--migrate` RENAMES the legacy option in place
-    (`Apply-FieldPreset.ps1 -Migrate`, by option id → item assignments survive; `Todo`→`Backlog`,
-    `P2 Medium`→`P2`, …). A rename hits every item at once, so ALWAYS preview with `--dry-run` first
-    and let it confirm (`-Yes` only when already approved). Offer this whenever a board shows legacy
-    Status options — `/board work` now flags them instead of reporting a false "no pending".
+  - **`apply <lang>` standardizes by DEFAULT.** A board born from GitHub's default template
+    (`Todo / In Progress / Done`) is migrated onto the canonical preset with no flag: the legacy
+    option is RENAMED in place (by option id → item assignments survive; `Todo`→`Backlog`,
+    `P2 Medium`→`P2`, …), never duplicated. A rename hits every item at once, so ALWAYS preview with
+    `--dry-run` first and let it confirm (`-Yes` only when already approved); answering `n` skips the
+    standardizing and still applies the rest of the preset.
+    This was opt-in behind `--migrate` until #300, and that default was the bug: matching options by
+    name only, a plain apply added `Backlog` next to `Todo` and left the board in the one state a
+    rename cannot repair. `-Migrate` is still accepted as a no-op. `--no-migrate` opts out and does
+    NOT create the canonical option beside the legacy one — no path duplicates any more.
+  - **`apply <lang> --merge-conflicts`** — for boards ALREADY carrying both (`Todo` *and* `Backlog`):
+    moves the legacy option's items onto the canonical one, verifies, then deletes it. Destroys an
+    option, so it stays opt-in. Preview with `--dry-run` first.
 - **bulk** — batch move/close/label across many items (references/issue-ops.md)
 - **fill** — detect and fill ALL gaps across the board by running `scripts/Board-Fill.ps1`
   (pass -Owner, -Repo, -ProjectNum for the current repo's board):

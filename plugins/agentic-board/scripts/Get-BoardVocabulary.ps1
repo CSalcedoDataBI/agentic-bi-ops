@@ -109,3 +109,46 @@ function Get-LegacyOptionRenames {
         }
     }
 }
+
+# The merge plan that RESOLVES the conflicts Get-LegacyOptionRenames can only report.
+# A rename cannot take a canonical name that already exists, so 'Todo' stays beside
+# 'Backlog' forever - and that is the exact state a plain `apply` (no -Migrate) leaves
+# behind, since it adds 'Backlog' next to the template's 'Todo'. Merging collapses them:
+# the legacy option's items move to the canonical option, then the legacy option is
+# deleted (updateProjectV2Field, re-sending every other option by id).
+#
+# $Options = the field's existing options (objects with .id / .name).
+# Returns one entry per legacy option that can be collapsed onto an EXISTING canonical
+# one. Unknown names are never touched (same rule as the renames: never guess).
+#
+# Reasons about the field as it will look AFTER the renames, because that is when the
+# merges run: a successful rename ('Todo' -> 'Backlog') is what makes a SECOND alias
+# ('To Do' beside it) a merge rather than a conflict. Planning on the raw options would
+# under-report those - and a plan that lies about what it will do is the bug PR #279
+# already fixed once.
+#
+# EXECUTION ORDER IS NOT OPTIONAL: move the items FIRST, verify the move, and only then
+# delete the legacy option. Deleting first strands every item on it with an empty field -
+# GitHub does not reassign them.
+function Get-LegacyOptionMerges {
+    param([string]$Field, [object[]]$Options)
+    $renames = @(Get-LegacyOptionRenames -Field $Field -Options $Options)
+    $projected = foreach ($o in @($Options)) {
+        $r = $renames | Where-Object { $_.Id -eq $o.id -and -not $_.Conflict } | Select-Object -First 1
+        [pscustomobject]@{ id = $o.id; name = $(if ($r) { $r.To } else { $o.name }) }
+    }
+    foreach ($o in @($projected)) {
+        $canon = Get-CanonicalOptionName $Field $o.name
+        if (-not $canon)        { continue }   # unknown vocabulary - not ours to touch
+        if ($canon -eq $o.name) { continue }   # already canonical (incl. just renamed)
+        $target = @($projected | Where-Object { $_.name -eq $canon }) | Select-Object -First 1
+        if (-not $target) { continue }         # canonical name is free - a rename handles it
+        [pscustomobject]@{
+            Field    = $Field
+            FromId   = $o.id
+            FromName = $o.name
+            ToId     = $target.id
+            ToName   = $canon
+        }
+    }
+}
