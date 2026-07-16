@@ -144,3 +144,89 @@ Describe 'Get-LegacyOptionRenames — alias-to-alias collisions (Codex review, P
         @(Get-LegacyOptionRenames -Field 'Priority' -Options $opts | Where-Object { $_.Conflict }).Count | Should -Be 0
     }
 }
+
+Describe 'Get-LegacyOptionMerges (resolving the conflicts, issue #300)' {
+    It "collapses 'Todo' onto an existing 'Backlog' - the state a plain apply leaves behind" {
+        $opts = @(
+            [pscustomobject]@{ id = 'o1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'o2'; name = 'Backlog' }
+            [pscustomobject]@{ id = 'o3'; name = 'Done' }
+        )
+        $plan = @(Get-LegacyOptionMerges -Field 'Status' -Options $opts)
+        $plan.Count       | Should -Be 1
+        $plan[0].FromId   | Should -Be 'o1'
+        $plan[0].FromName | Should -Be 'Todo'
+        $plan[0].ToId     | Should -Be 'o2'
+        $plan[0].ToName   | Should -Be 'Backlog'
+    }
+    It 'plans NO merge when the canonical name is free (a plain rename handles it)' {
+        $opts = @(
+            [pscustomobject]@{ id = 'o1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'o2'; name = 'Done' }
+        )
+        @(Get-LegacyOptionMerges -Field 'Status' -Options $opts).Count | Should -Be 0
+    }
+    It 'plans nothing for an already-canonical board (idempotent)' {
+        $opts = @(
+            [pscustomobject]@{ id = 'o1'; name = 'Backlog' }
+            [pscustomobject]@{ id = 'o2'; name = 'Done' }
+        )
+        @(Get-LegacyOptionMerges -Field 'Status' -Options $opts).Count | Should -Be 0
+    }
+    It 'leaves an unknown option name alone instead of guessing' {
+        $opts = @(
+            [pscustomobject]@{ id = 'o1'; name = 'Icebox' }
+            [pscustomobject]@{ id = 'o2'; name = 'Backlog' }
+        )
+        @(Get-LegacyOptionMerges -Field 'Status' -Options $opts).Count | Should -Be 0
+    }
+    It 'merges the SECOND alias onto the first one once it is renamed (Todo + To Do, no Backlog)' {
+        # 'Todo' renames to 'Backlog'; 'To Do' cannot, so it must merge INTO the renamed
+        # option - by its id (o1), which only exists after the rename.
+        $opts = @(
+            [pscustomobject]@{ id = 'o1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'o2'; name = 'To Do' }
+        )
+        $plan = @(Get-LegacyOptionMerges -Field 'Status' -Options $opts)
+        $plan.Count       | Should -Be 1
+        $plan[0].FromId   | Should -Be 'o2'
+        $plan[0].FromName | Should -Be 'To Do'
+        $plan[0].ToId     | Should -Be 'o1'
+        $plan[0].ToName   | Should -Be 'Backlog'
+    }
+    It 'merges BOTH aliases when the canonical option already exists' {
+        $opts = @(
+            [pscustomobject]@{ id = 'o0'; name = 'Backlog' }
+            [pscustomobject]@{ id = 'o1'; name = 'Todo' }
+            [pscustomobject]@{ id = 'o2'; name = 'To Do' }
+        )
+        $plan = @(Get-LegacyOptionMerges -Field 'Status' -Options $opts)
+        $plan.Count | Should -Be 2
+        @($plan | ForEach-Object { $_.FromName }) | Should -Be @('Todo', 'To Do')
+        @($plan | ForEach-Object { $_.ToId })     | Should -Be @('o0', 'o0')
+    }
+    It 'never merges an option into itself' {
+        $opts = @([pscustomobject]@{ id = 'o1'; name = 'Backlog' })
+        @(Get-LegacyOptionMerges -Field 'Status' -Options $opts | Where-Object { $_.FromId -eq $_.ToId }).Count | Should -Be 0
+    }
+    It 'collapses the verbose Priority aliases onto existing canonical options' {
+        $opts = @(
+            [pscustomobject]@{ id = 'p0'; name = 'P2' }
+            [pscustomobject]@{ id = 'p1'; name = 'P2 Medium' }
+            [pscustomobject]@{ id = 'p2'; name = 'Medium' }
+        )
+        $plan = @(Get-LegacyOptionMerges -Field 'Priority' -Options $opts)
+        $plan.Count | Should -Be 2
+        @($plan | ForEach-Object { $_.ToId }) | Should -Be @('p0', 'p0')
+    }
+    It 'plans nothing for a field outside the vocabulary' {
+        $opts = @(
+            [pscustomobject]@{ id = 'o1'; name = 'Bug' }
+            [pscustomobject]@{ id = 'o2'; name = 'Feature' }
+        )
+        @(Get-LegacyOptionMerges -Field 'Type' -Options $opts).Count | Should -Be 0
+    }
+    It 'plans nothing for an empty option set' {
+        @(Get-LegacyOptionMerges -Field 'Status' -Options @()).Count | Should -Be 0
+    }
+}
