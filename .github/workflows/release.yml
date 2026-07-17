@@ -66,6 +66,10 @@ jobs:
             gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
             $exists = ($LASTEXITCODE -eq 0)
           } catch { $exists = $false }
+          # A missing Release makes `gh release view` exit 1. GitHub's pwsh shell appends
+          # `exit $LASTEXITCODE` to every step, so that 1 would fail this step even though the probe
+          # is doing its job. Clear it — the probe's exit code is captured in $exists already (#339).
+          $global:LASTEXITCODE = 0
           if ($exists) {
             "release=false" | Out-File $env:GITHUB_OUTPUT -Append
             Write-Host "Release $tag already exists — nothing to do."
