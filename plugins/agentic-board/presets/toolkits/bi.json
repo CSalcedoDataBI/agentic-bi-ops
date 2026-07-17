@@ -4,6 +4,7 @@
     "owner": "Microsoft",
     "repo": "microsoft/skills-for-fabric",
     "kind": "plugin",
+    "detect": "fabric-collection",
     "path": null,
     "license": "MIT",
     "homepage": "https://github.com/microsoft/skills-for-fabric",
