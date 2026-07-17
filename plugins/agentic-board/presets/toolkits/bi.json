@@ -1,0 +1,14 @@
+[
+  {
+    "name": "skills-for-fabric",
+    "owner": "Microsoft",
+    "repo": "microsoft/skills-for-fabric",
+    "kind": "plugin",
+    "path": null,
+    "license": "MIT",
+    "homepage": "https://github.com/microsoft/skills-for-fabric",
+    "profiles": ["semantic-model-review", "fabric-app", "data-agent"],
+    "install": "claude plugin marketplace add microsoft/skills-for-fabric",
+    "purpose": "Official Microsoft skills + MCP to operate Microsoft Fabric: semantic models, Fabric apps, data agents, and the Fabric CLI."
+  }
+]
