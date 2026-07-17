@@ -1,7 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [0.21.0] - 2026-07-17
 ### Added
+- **abios-feedback now writes its issues in English, with a CI backstop** (#305). The English-only
+  rule for the tool's own repo lived in three places, none of them loaded when the skill drafts an
+  issue from another (often Spanish) project — so 12 of 170 issues drifted to Spanish in two days.
+  The rule now lives in the skill itself, and a non-blocking `issue-language.yml` workflow labels any
+  opened/edited issue that reads as Spanish (`needs-english`), stripping code fences first so a quoted
+  tool error does not trip it. `lang-ok` opts an issue out.
 - **`Invoke-Gh.ps1` — a shared helper that turns a `gh` failure into a real failure** (#311, part of
   #303). `gh` signals failure only through its exit code, and a native command that exits non-zero
   does not throw in PowerShell — not even under `$ErrorActionPreference = 'Stop'`. Unchecked, a 401
@@ -32,6 +38,10 @@
   `origin/main`: the default branch is resolved, so a `master` repo works. Basing on the current
   branch is still available for dependent work, now as an opt-in (`-BaseCurrent` / `-Base <ref>`,
   honoured by `-Parallel` too instead of being silently ignored).
+- **`field apply --migrate` resolves the legacy/canonical option conflict instead of sending you to
+  the UI** (#300). When a plain apply had already created the canonical option beside the legacy one,
+  `-Migrate` now moves the items across and deletes the legacy option, rather than reporting a
+  conflict it could not act on.
 
 ## [0.20.0] - 2026-07-16
 ### Added
