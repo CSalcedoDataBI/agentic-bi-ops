@@ -24,11 +24,14 @@ New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
 
 $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
 
-# READ EVERYTHING FIRST, and only then write. -RawJson validates the body as JSON but hands
-# back gh's original text: a backup is persisted verbatim, so round-tripping it through
-# ConvertTo-Json would reshape it (and -Depth would quietly truncate it).
-# Read-then-write also means a failure on the third read cannot leave two files behind that
-# look like a partial backup nobody labelled as one.
+# Read everything first, and only then write, so a failure on the third read cannot leave
+# two files behind that look like a partial backup nobody labelled as one.
+#
+# -RawJson validates the body as JSON but hands back gh's text instead of a parsed object:
+# the snapshot must not be re-serialised, because ConvertTo-Json would reshape it and -Depth
+# would quietly truncate it. It is NOT byte-for-byte gh output - PowerShell has already split
+# stdout into lines and dropped the terminators before any of this runs - but it is
+# unreshaped and untruncated, which is what a restorable backup actually needs.
 $meta   = Invoke-Gh -GhArgs @('project', 'view',       "$Number", '--owner', $Owner, '--format', 'json') `
                     -What "leer el board #$Number de $Owner" -RawJson -Retries 2
 $fields = Invoke-Gh -GhArgs @('project', 'field-list', "$Number", '--owner', $Owner, '--format', 'json') `
@@ -41,22 +44,38 @@ if (-not $title) { throw "El board #$Number no devolvio un titulo - no hago un b
 $safe   = ($title -replace '[^\w\-]+', '_').Trim('_')
 $base   = Join-Path $BackupDir ("{0}_{1}" -f $safe, $stamp)
 
-$meta   | Out-File ("$base.project.json") -Encoding UTF8
-$fields | Out-File ("$base.fields.json")  -Encoding UTF8
-$items  | Out-File ("$base.items.json")   -Encoding UTF8
+# WriteAllText, not Out-File: Out-File -Encoding UTF8 writes a BOM on Windows PowerShell 5.1
+# (which this script supports - see the header) and none on pwsh 7, so the same backup came
+# out different depending on the host. A snapshot's encoding should not depend on who ran it.
+$snapshotFiles = @{ "$base.project.json" = $meta; "$base.fields.json" = $fields; "$base.items.json" = $items }
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+foreach ($f in $snapshotFiles.Keys) { [System.IO.File]::WriteAllText($f, $snapshotFiles[$f], $utf8NoBom) }
 
-# Verify what was WRITTEN, not what we meant to write. The point of this script is that the
-# file is there on the day someone needs it, and an empty file that reports "Backup OK" is
-# the one failure that is only ever discovered when it is already too late.
-foreach ($f in @("$base.project.json", "$base.fields.json", "$base.items.json")) {
-    if (-not (Test-Path $f))            { throw "El backup no se escribio: $f" }
-    if ((Get-Item $f).Length -eq 0)     { throw "El backup quedo VACIO: $f" }
+# Verify what was WRITTEN, not what we meant to write - by READING IT BACK and parsing it.
+# A size check would be theatre: Invoke-Gh -RawJson already refused an empty body, so a
+# zero-byte file was never reachable. What this catches is the write itself going wrong
+# (truncation, a mangled encoding) - the failure a backup can only reveal on restore day.
+foreach ($f in $snapshotFiles.Keys) {
+    if (-not (Test-Path $f)) { throw "El backup no se escribio: $f" }
+    try   { $null = (Get-Content $f -Raw) | ConvertFrom-Json }
+    catch { throw "El backup quedo ilegible (no parsea como JSON): $f" }
 }
 
 # restorable live clone (fields/views + draft issues)
 $cloneTitle = "$title $dash backup $stamp"
-Invoke-Gh -GhArgs @('project', 'copy', "$Number", '--source-owner', $Owner, '--target-owner', $Owner, '--drafts', '--title', $cloneTitle) `
-          -What "clonar el board #$Number" -Retries 2 | Out-Null
+try {
+    Invoke-Gh -GhArgs @('project', 'copy', "$Number", '--source-owner', $Owner, '--target-owner', $Owner, '--drafts', '--title', $cloneTitle) `
+              -What "clonar el board #$Number" -Retries 2 | Out-Null
+} catch {
+    # The snapshot is already on disk and is perfectly good. Dying here without saying so
+    # would leave three valid files the caller believes do not exist - so they either re-run
+    # and pile up duplicate snapshots, or assume they have no backup at all. Report what
+    # exists, report what failed, and still fail: the header promises BOTH halves.
+    Write-Host "Backup PARCIAL:" -ForegroundColor Yellow
+    Write-Host ("  JSON snapshot OK : {0}.project.json (+ .fields.json, .items.json)" -f $base) -ForegroundColor Yellow
+    Write-Host  "  Live clone FALLO : el snapshot JSON sirve para restaurar; el clon vivo no se creo." -ForegroundColor Yellow
+    throw
+}
 
 Write-Host "Backup OK:"
 Write-Host ("  JSON snapshot: {0}.project.json (+ .fields.json, .items.json)" -f $base)

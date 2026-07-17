@@ -15,7 +15,16 @@ $ErrorActionPreference = 'Stop'
 
 $resp  = Invoke-Gh -GhArgs @('project', 'item-list', "$Number", '--owner', $Owner, '--format', 'json', '--limit', '500') `
                    -What "leer los items del board #$Number de $Owner" -Json -Retries 2
-$items = @($resp.items)
+
+# -Json covers a non-zero exit, an empty body and an unparseable body - but NOT "parsed
+# fine, wrong shape" (an error object like {"message":"Not Found"}, or a gh schema change).
+# That case must fail here, because @($null).Count is 1, not 0: `@($resp.items)` on a
+# missing property yields a one-element array holding $null, and the report would claim
+# "0 of 1 tracked items done" over an empty table - a document that contradicts itself.
+if (-not $resp.PSObject.Properties['items']) {
+    throw "No pude leer los items del board #$Number - gh devolvio JSON sin 'items'."
+}
+$items = @($resp.items | Where-Object { $null -ne $_ })
 
 $rank  = @{ 'Backlog' = 0; 'In Progress' = 1; 'In Review' = 2; 'Done' = 3 }
 $sorted = $items | Sort-Object `

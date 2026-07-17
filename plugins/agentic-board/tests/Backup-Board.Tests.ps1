@@ -12,7 +12,11 @@
 
     So the seam is a fake `gh.cmd` placed first on PATH. It is more faithful than any mock:
     the real script, the real Invoke-Gh, the real Invoke-GhRaw and its real 2>$errFile
-    redirection all run - only the binary at the end is ours. #>
+    redirection all run - only the binary at the end is ours.
+
+    A .cmd is Windows-only. CI runs Pester on windows-latest, so it always executes there;
+    the guard below is for a contributor on macOS/Linux, where these would otherwise hard-fail
+    for a reason that has nothing to do with the code under test. #>
 
 BeforeAll {
     $script:Backup   = (Join-Path $PSScriptRoot '..' 'scripts' 'Backup-Board.ps1'         | Resolve-Path).Path
@@ -58,7 +62,11 @@ exit /b 0
 
 AfterAll { Remove-Item $script:FakeDir -Recurse -Force -ErrorAction SilentlyContinue }
 
-Describe 'Backup-Board: a failed read must not become an empty backup' {
+# NOT named $isWindows: that collides (case-insensitively) with PowerShell 7's read-only
+# automatic $IsWindows, and the clash silently skipped this entire file.
+$onWindows = [System.Environment]::OSVersion.Platform -eq 'Win32NT'
+
+Describe 'Backup-Board: a failed read must not become an empty backup' -Skip:(-not $onWindows) {
     BeforeEach {
         $script:Dir   = Join-Path ([System.IO.Path]::GetTempPath()) ('bkp' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         $script:Count = Join-Path ([System.IO.Path]::GetTempPath()) ('cnt' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.txt')
@@ -117,12 +125,37 @@ Describe 'Backup-Board: a failed read must not become an empty backup' {
         $files = @(Get-ChildItem $script:Dir -File)
         $files.Count | Should -Be 3
         @($files | Where-Object { $_.Length -eq 0 }).Count | Should -Be 0
-        # -RawJson, not a re-serialisation: a backup is persisted verbatim.
+        # -RawJson, not a re-serialisation: the snapshot is unreshaped.
         (Get-Content $files[0].FullName -Raw).Trim() | Should -Be '{"title":"My Board"}'
+    }
+
+    It 'writes the snapshot WITHOUT a BOM, whatever host ran it' {
+        # Out-File -Encoding UTF8 emits a BOM on Windows PowerShell 5.1 and none on pwsh 7,
+        # so the same backup used to differ by host. A snapshot's bytes should not depend on
+        # who ran the script.
+        Invoke-WithFakeGh -Path $script:Backup -Params @{ Number = 13; Owner = 'o'; BackupDir = $script:Dir } `
+                          -Env @{ FAKE_GH_OUT = '{"title":"My Board"}' } | Out-Null
+        $f = @(Get-ChildItem $script:Dir -File)[0].FullName
+        $bytes = [System.IO.File]::ReadAllBytes($f)
+        # EF BB BF is the UTF-8 BOM.
+        ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+    }
+
+    It 'reports the snapshot it DID write when only the live clone fails' {
+        # The clone is call 4, after the three files are on disk. Dying silently would leave
+        # three valid files the caller believes do not exist - so they re-run and pile up
+        # duplicates, or assume they have no backup. It must still FAIL (the script promises
+        # snapshot AND clone), but it must say what survived.
+        $out = Invoke-WithFakeGh -Path $script:Backup -Params @{ Number = 13; Owner = 'o'; BackupDir = $script:Dir } `
+                                 -Env @{ FAKE_GH_OUT = '{"title":"My Board"}'; FAKE_GH_COUNT = $script:Count; FAKE_GH_FAIL_ON = '4' }
+        $out | Should -Not -Match 'Backup OK'
+        $out | Should -Match 'Backup PARCIAL'
+        $out | Should -Match 'JSON snapshot OK'
+        @(Get-ChildItem $script:Dir -File).Count | Should -Be 3   # they exist, and they are named
     }
 }
 
-Describe 'Export-BoardSnapshot: a failed read must not become a "0 of 0 done" report' {
+Describe 'Export-BoardSnapshot: a failed read must not become a "0 of 0 done" report' -Skip:(-not $onWindows) {
     BeforeEach { $script:OutFile = Join-Path ([System.IO.Path]::GetTempPath()) ('snap' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.md') }
     AfterEach  { Remove-Item $script:OutFile -Force -ErrorAction SilentlyContinue }
 
@@ -133,6 +166,28 @@ Describe 'Export-BoardSnapshot: a failed read must not become a "0 of 0 done" re
                                  -Env @{ FAKE_GH_EXIT = '1'; FAKE_GH_ERR = 'HTTP 401: Bad credentials' }
         Test-Path $script:OutFile | Should -BeFalse
         $out | Should -Not -Match 'Snapshot written'
+    }
+
+    It 'writes no file when gh exits 0 with valid JSON of the WRONG SHAPE' {
+        # -Json catches a bad exit, an empty body and unparseable text - but not "parsed
+        # fine, no items property" (an error object, a gh schema change). This case is why
+        # the script asserts the property instead of trusting @($resp.items): @($null).Count
+        # is 1, so the first version of this fix rendered "_0 of 1 tracked items done._"
+        # above an empty table - a self-contradicting report, published with a success
+        # message, and strictly WORSE than the "0 of 0" it replaced.
+        $out = Invoke-WithFakeGh -Path $script:Snapshot -Params @{ Number = 13; Owner = 'o'; OutFile = $script:OutFile } `
+                                 -Env @{ FAKE_GH_OUT = '{"message":"Not Found"}' }
+        Test-Path $script:OutFile | Should -BeFalse
+        $out | Should -Not -Match 'Snapshot written'
+        $out | Should -Match "sin 'items'"
+    }
+
+    It 'renders an EMPTY board as empty - a board with no items is not an error' {
+        # The other half of the contract: fail on unreadable, not on genuinely empty.
+        $out = Invoke-WithFakeGh -Path $script:Snapshot -Params @{ Number = 13; Owner = 'o'; OutFile = $script:OutFile } `
+                                 -Env @{ FAKE_GH_OUT = '{"items":[]}' }
+        Test-Path $script:OutFile | Should -BeTrue
+        (Get-Content $script:OutFile -Raw) | Should -Match '0 of 0 tracked items done'
     }
 
     It 'renders the board on success' {

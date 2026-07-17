@@ -68,6 +68,46 @@ Describe 'Invoke-Gh -Json' {
     }
 }
 
+Describe 'Invoke-Gh -RawJson (validate as JSON, hand back the text)' {
+    # For callers that PERSIST what gh sent (Backup-Board). Re-serialising a backup would
+    # reshape it and -Depth would truncate it, so the text has to survive - but validated,
+    # or the snapshot is worthless.
+
+    It 'returns a STRING, not a parsed object' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"title":"My Board"}'; ExitCode = 0; StdErr = '' } }
+        $r = Invoke-Gh -GhArgs @('project', 'view') -RawJson
+        $r | Should -BeOfType [string]
+        $r | Should -Be '{"title":"My Board"}'
+    }
+
+    It 'still THROWS on an unparseable body - text, but validated text' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = 'not json'; ExitCode = 0; StdErr = '' } }
+        { Invoke-Gh -GhArgs @('project', 'view') -RawJson } | Should -Throw
+    }
+
+    It 'still THROWS on an empty body (it implies -Json)' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = ''; ExitCode = 0; StdErr = '' } }
+        { Invoke-Gh -GhArgs @('project', 'view') -RawJson } | Should -Throw -ExpectedMessage '*sin salida*'
+    }
+
+    It 'still THROWS on a non-zero exit' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = ''; ExitCode = 1; StdErr = 'HTTP 401: Bad credentials' } }
+        { Invoke-Gh -GhArgs @('project', 'view') -RawJson } | Should -Throw
+    }
+
+    It 'still honours the graphql errors[] check when combined with -Graphql' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"errors":[{"message":"nope"}]}'; ExitCode = 0; StdErr = '' } }
+        { Invoke-Gh -GhArgs @('api', 'graphql') -RawJson -Graphql } | Should -Throw -ExpectedMessage '*nope*'
+    }
+
+    It 'does not reshape the body it was given' {
+        # The whole point: a parsed round-trip would reorder/retype this; the text does not.
+        $body = '{"z":1,"a":{"deep":{"deeper":[1,2,3]}}}'
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = $body; ExitCode = 0; StdErr = '' } }.GetNewClosure()
+        Invoke-Gh -GhArgs @('x') -RawJson | Should -Be $body
+    }
+}
+
 Describe 'Invoke-Gh -Graphql (exit 0 WITH an errors[] body)' {
     # graphql's separate failure mode: the request succeeds, the query does not.
 
