@@ -104,6 +104,166 @@ Describe 'Get-IssueWorktreePath (grouped worktree layout)' {
     }
 }
 
+Describe 'Resolve-IssueBaseRef (an issue branch starts from the remote default, #294)' {
+    # Real git repos over a real file-URL "origin" - the resolution order it implements
+    # (origin/HEAD -> gh -> convention) is entirely git state, so mocking git would
+    # only assert that the mock was called.
+    BeforeEach {
+        $script:Origin = Join-Path $TestDrive ('o' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:Clone  = "$($script:Origin)-clone"
+        git init -q --bare -b main $script:Origin
+        $seed = "$($script:Origin)-seed"
+        git clone -q $script:Origin $seed 2>&1 | Out-Null
+        Push-Location $seed
+        'base' | Set-Content (Join-Path $seed 'a.txt')
+        git add -A 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m base
+        git push -q origin main 2>&1 | Out-Null
+        Pop-Location
+        git clone -q $script:Origin $script:Clone 2>&1 | Out-Null
+        Push-Location $script:Clone
+    }
+    AfterEach { Pop-Location }
+
+    It 'resolves the remote default branch from origin/HEAD' {
+        Resolve-IssueBaseRef | Should -Be 'origin/main'
+    }
+
+    It 'resolves a default branch that is NOT called main' {
+        # A repo on `master` (or `develop`) must not silently fall back to origin/main.
+        Push-Location $script:Origin
+        git symbolic-ref HEAD refs/heads/develop 2>&1 | Out-Null
+        Pop-Location
+        Push-Location $script:Clone
+        git branch -q develop main 2>&1 | Out-Null
+        git push -q origin develop 2>&1 | Out-Null
+        git remote set-head origin -a 2>&1 | Out-Null
+        Resolve-IssueBaseRef | Should -Be 'origin/develop'
+        Pop-Location
+    }
+
+    It 'falls back to convention when origin/HEAD is absent' {
+        # origin/HEAD is written at clone time and is routinely missing (fetch-built
+        # clones, older gits). Deleting it must not lose the base.
+        git symbolic-ref -d refs/remotes/origin/HEAD 2>&1 | Out-Null
+        Resolve-IssueBaseRef | Should -Be 'origin/main'
+    }
+
+    It 'returns empty rather than an unresolvable ref when there is no origin at all' {
+        # A local-only repo still has to start an issue - it just cannot promise a base.
+        $solo = Join-Path $TestDrive ('s' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $solo | Out-Null
+        Push-Location $solo
+        git init -q -b main
+        git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+        Resolve-IssueBaseRef | Should -BeNullOrEmpty
+        Pop-Location
+    }
+}
+
+Describe 'New-IssueWorktree bases a NEW branch on the remote default (#294)' {
+    # The regression proper: a 1-line fix opened a PR with 56 files and +2332/-253
+    # because the worktree was cut from whatever HEAD happened to be.
+    BeforeEach {
+        $script:Origin2 = Join-Path $TestDrive ('O' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:Clone2  = "$($script:Origin2)-clone"
+        git init -q --bare -b main $script:Origin2
+        $seed = "$($script:Origin2)-seed"
+        git clone -q $script:Origin2 $seed 2>&1 | Out-Null
+        Push-Location $seed
+        'base' | Set-Content (Join-Path $seed 'a.txt')
+        git add -A 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m base
+        git push -q origin main 2>&1 | Out-Null
+        Pop-Location
+        git clone -q $script:Origin2 $script:Clone2 2>&1 | Out-Null
+        Push-Location $script:Clone2
+        # A local feature branch carrying a commit that main has never seen.
+        git checkout -q -b feature-x
+        'contamination' | Set-Content (Join-Path $script:Clone2 'foreign.txt')
+        git add -A 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m 'foreign work nobody reviewed'
+    }
+    AfterEach { Pop-Location }
+
+    It 'does NOT carry the current branch commits into the issue worktree' {
+        $wt = New-IssueWorktree 'o/r' 42 'issue-42-fix' (Resolve-IssueBaseRef)
+        $wt | Should -Not -BeNullOrEmpty
+        # The load-bearing assertion: the foreign commit must not be an ancestor.
+        Push-Location $wt
+        (Test-Path (Join-Path $wt 'foreign.txt')) | Should -BeFalse
+        $ahead = git rev-list --count origin/main..HEAD
+        $ahead | Should -Be '0'
+        Pop-Location
+    }
+
+    It 'still honours an explicit base ref (dependent work is opt-in, not the default)' {
+        $wt = New-IssueWorktree 'o/r' 43 'issue-43-dep' 'feature-x'
+        Push-Location $wt
+        (Test-Path (Join-Path $wt 'foreign.txt')) | Should -BeTrue
+        Pop-Location
+    }
+
+    It 'falls back to HEAD when no base can be resolved, rather than failing the start' {
+        $wt = New-IssueWorktree 'o/r' 44 'issue-44-nobase' ''
+        $wt | Should -Not -BeNullOrEmpty
+        (Test-Path (Join-Path $wt 'foreign.txt')) | Should -BeTrue
+    }
+}
+
+Describe 'New-IssueBranchInPlace bases a NEW branch on the remote default (#294)' {
+    # The half of #294 the report did not describe. A CLEAN working copy parked on a
+    # feature branch is not dirty and does not match issue-*, so it never reaches the
+    # worktree path - it lands here, where `checkout -b` had the identical defect.
+    BeforeEach {
+        $script:Origin3 = Join-Path $TestDrive ('i' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:Clone3  = "$($script:Origin3)-clone"
+        git init -q --bare -b main $script:Origin3
+        $seed = "$($script:Origin3)-seed"
+        git clone -q $script:Origin3 $seed 2>&1 | Out-Null
+        Push-Location $seed
+        'base' | Set-Content (Join-Path $seed 'a.txt')
+        git add -A 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m base
+        git push -q origin main 2>&1 | Out-Null
+        Pop-Location
+        git clone -q $script:Origin3 $script:Clone3 2>&1 | Out-Null
+        Push-Location $script:Clone3
+        # Clean tree, parked on a feature branch with an unmerged commit.
+        git checkout -q -b feature-y
+        'contamination' | Set-Content (Join-Path $script:Clone3 'foreign.txt')
+        git add -A 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m 'foreign work nobody reviewed'
+        git config user.email t@t
+        git config user.name t
+    }
+    AfterEach { Pop-Location }
+
+    It 'does NOT inherit the feature branch commits when given the remote default' {
+        New-IssueBranchInPlace 'issue-50-fix' (Resolve-IssueBaseRef) | Should -Be 'origin/main'
+        (git branch --show-current) | Should -Be 'issue-50-fix'
+        (Test-Path (Join-Path $script:Clone3 'foreign.txt')) | Should -BeFalse
+        (git rev-list --count origin/main..HEAD) | Should -Be '0'
+    }
+
+    It 'inherits the current HEAD when no base is given (the pre-fix behaviour, now opt-in)' {
+        New-IssueBranchInPlace 'issue-51-dep' '' | Should -Be ''
+        (Test-Path (Join-Path $script:Clone3 'foreign.txt')) | Should -BeTrue
+    }
+
+    It 'checks out an existing branch instead of recreating it off the base' {
+        git branch issue-52-old main 2>&1 | Out-Null
+        New-IssueBranchInPlace 'issue-52-old' 'origin/main' | Should -Be 'existing'
+        (git branch --show-current) | Should -Be 'issue-52-old'
+    }
+
+    It 'falls back to HEAD - loudly - when the base ref does not resolve' {
+        # Must not fail the start, but must not pretend it used the base either.
+        New-IssueBranchInPlace 'issue-53-badbase' 'origin/does-not-exist' | Should -Be ''
+        (git branch --show-current) | Should -Be 'issue-53-badbase'
+    }
+}
+
 Describe 'Get-SessionBriefing' {
     BeforeAll { $script:Brief = Get-SessionBriefing 42 'owner/repo' 'issue-42-x' 'C:\wt\path' }
     It 'is a single line (safe to pass on a command line)' {

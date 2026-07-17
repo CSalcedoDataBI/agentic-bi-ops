@@ -95,6 +95,18 @@
     GitHub fills the Linked pull requests column on the board by itself.
     -Parallel always creates a branch (in a worktree), so -Branch is implied there.
 
+.PARAMETER Base
+    With -Start -Branch / -Parallel: the ref the new issue branch starts from.
+    Defaults to the remote's default branch, freshly fetched (origin/main on this
+    repo) - never the current HEAD, which would drag the commits of whatever branch
+    you happened to be standing on into the issue's PR (#294). Pass an explicit ref
+    only for deliberately dependent work.
+
+.PARAMETER BaseCurrent
+    With -Start -Branch: base the issue branch on the CURRENT HEAD instead of the
+    remote default - the opt-in for work that genuinely builds on the branch you are
+    standing on. Mutually exclusive with -Base.
+
 .PARAMETER TokenVar
     Windows USER env var holding the PAT. Defaults to GITHUB_TOKEN_PERSONAL;
     use GITHUB_TOKEN_BUSINESS for the PAL-Devs account.
@@ -148,6 +160,8 @@ param(
     [int]   $MaxConcurrent = 0,
     [switch]$DryRun,
     [switch]$Branch,
+    [string]$Base          = "",
+    [switch]$BaseCurrent,
     [switch]$IgnoreBlocked,
     [switch]$TakeOver,
     [string]$TokenVar      = "GITHUB_TOKEN_PERSONAL",
@@ -592,10 +606,77 @@ function Get-IssueWorktreePath([string]$repo, [int]$issueNum, [string]$parentDir
     return (Join-Path (Join-Path $parentDir "$repoName--worktrees") "issue-$issueNum")
 }
 
+# The ref a NEW issue branch must start from: the remote's default branch, freshly
+# fetched. Cutting the branch from the current HEAD instead is what let another
+# branch's unmerged commits ride into an issue's PR - a 1-line fix that opened as 56
+# files, +2332/-253, and passed the gate (#294). Basing on the current HEAD is still
+# legitimate for dependent work, so it stays available, but as an OPT-IN (-BaseCurrent).
+#
+# Best-effort by design: every step degrades instead of throwing, because a repo with
+# no reachable origin still has to be able to start an issue - it just cannot promise
+# a clean base, and says so at the call site.
+function Resolve-IssueBaseRef([string]$repo = "", [switch]$NoFetch) {
+    if (-not $NoFetch) { git fetch origin --quiet 2>$null | Out-Null }
+
+    # 1. origin/HEAD - what this clone recorded as the remote's default branch.
+    $head = git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and $head) {
+        git rev-parse --verify --quiet $head 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { return $head }
+    }
+
+    # 2. Ask GitHub. origin/HEAD is written at clone time: it is absent in fetch-built
+    #    clones and stale if the remote's default moved since.
+    if ($repo) {
+        $name = gh repo view $repo --json defaultBranchRef -q .defaultBranchRef.name 2>$null
+        if ($LASTEXITCODE -eq 0 -and $name) {
+            git rev-parse --verify --quiet "origin/$name" 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return "origin/$name" }
+        }
+    }
+
+    # 3. Convention, verified - never return a ref that does not resolve.
+    foreach ($candidate in @('origin/main', 'origin/master')) {
+        git rev-parse --verify --quiet $candidate 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { return $candidate }
+    }
+    return ""
+}
+
+# Check out the issue branch in the CURRENT working copy (the non-worktree path: the
+# tree is clean and not parked on another issue-*). Same base discipline as the worktree
+# path (#294) - a clean working copy parked on a feature branch is not dirty and does not
+# match issue-*, so it lands HERE, and a bare `checkout -b` off that HEAD drags the
+# feature branch's commits into this issue's PR exactly like the worktree path did.
+# Extracted so the base choice is unit-testable against a real repo without mocking gh.
+# Returns the ref the branch was based on ('' = current HEAD, 'existing' = no new branch).
+function New-IssueBranchInPlace([string]$branchName, [string]$baseRef = "") {
+    git rev-parse --verify --quiet $branchName 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        git checkout $branchName 2>&1 | Out-Null
+        Write-Host "  OK  Rama $branchName ya existia - checkout hecho" -ForegroundColor Green
+        return 'existing'
+    }
+    if ($baseRef) {
+        git checkout -b $branchName $baseRef 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  OK  Rama $branchName creada y activa (desde $baseRef)" -ForegroundColor Green
+            return $baseRef
+        }
+        # An unresolvable base must not silently become "branch off HEAD" - that is the
+        # #294 failure mode wearing a different hat. Say so, then fall back loudly.
+        Write-Host "  WARN no pude basar la rama en '$baseRef' - uso el HEAD actual." -ForegroundColor DarkYellow
+        Write-Host "       Revisa que el PR no arrastre commits ajenos antes de mergear." -ForegroundColor DarkYellow
+    }
+    git checkout -b $branchName 2>&1 | Out-Null
+    Write-Host "  OK  Rama $branchName creada y activa (desde el HEAD actual)" -ForegroundColor Green
+    return ''
+}
+
 # Create an isolated worktree <parent>/<repo>--worktrees/issue-<n> for a branch.
 # Returns the path or $null. $baseRef (e.g. origin/main) is used only when creating a
-# NEW branch: parallel starts each independent issue off a fresh main; single start
-# passes "" to keep branching off the current HEAD.
+# NEW branch; "" falls back to the current HEAD (see Resolve-IssueBaseRef for why that
+# is the fallback and not the default).
 function New-IssueWorktree([string]$repo, [int]$issueNum, [string]$branchName, [string]$baseRef = "") {
     $wtPath   = Get-IssueWorktreePath $repo $issueNum (Split-Path (Get-Location) -Parent)
     # Reuse: is the branch already checked out in some worktree?
@@ -764,14 +845,7 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
                 }
                 $result.workPath = New-IssueWorktree $repo $IssueNum $branchName $BaseRef
             } else {
-                git rev-parse --verify --quiet $branchName 2>$null | Out-Null
-                if ($LASTEXITCODE -eq 0) {
-                    git checkout $branchName 2>&1 | Out-Null
-                    Write-Host "  OK  Rama $branchName ya existia - checkout hecho" -ForegroundColor Green
-                } else {
-                    git checkout -b $branchName 2>&1 | Out-Null
-                    Write-Host "  OK  Rama $branchName creada y activa" -ForegroundColor Green
-                }
+                New-IssueBranchInPlace $branchName $BaseRef
                 $result.workPath = (Get-Location).Path
             }
         }
@@ -2164,6 +2238,10 @@ if (-not $env:GH_TOKEN) {
 }
 if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
 
+# -Base and -BaseCurrent contradict each other; silently honouring one would put the
+# branch on a base the caller did not ask for - the exact class of bug #294 was.
+if ($Base -and $BaseCurrent) { throw "-Base and -BaseCurrent are mutually exclusive: pick the ref, or the current HEAD." }
+
 # ==============================================================================
 # LOCK MODE: -Lock <n> / -Unlock <n>  -> in ONE step mark an issue owned-elsewhere
 # (post the [abios-claim] fingerprint, move Status, AND assign the owner) WITHOUT
@@ -2471,12 +2549,16 @@ if ($Parallel.Count -gt 0) {
 
     $ctx = Resolve-BoardStatus $Owner $ProjectNum
 
-    # Fresh base so each independent worktree branches off up-to-date main.
+    # Fresh base so each independent worktree branches off the up-to-date default branch.
+    # Shares Resolve-IssueBaseRef with single -Start (#294): this path used to hardcode
+    # origin/main, which silently based every worktree on the wrong branch in a repo whose
+    # default is master.
     $baseRef = ""
     if (-not $DryRun) {
-        git fetch origin --quiet 2>$null
-        git rev-parse --verify --quiet origin/main 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) { $baseRef = "origin/main" }
+        $baseRef = if ($Base) { $Base } else { Resolve-IssueBaseRef -repo $Repo }
+        if (-not $baseRef) {
+            Write-Host "  WARN no pude resolver la rama por defecto del remoto - los worktrees nacen del HEAD actual." -ForegroundColor DarkYellow
+        }
     }
 
     $results = @()
@@ -2684,7 +2766,26 @@ Write-Host "=== Empezando issue #$Start (board #$ProjectNum de $Owner) ===" -For
 Write-Host ""
 
 $ctx = Resolve-BoardStatus $Owner $ProjectNum
+
+# Resolve the base BEFORE starting: an issue branch starts from the remote default, not
+# from whatever HEAD is (#294). Only needed when we are actually going to branch.
+$startBase = ""
+if ($Branch -and -not $DryRun) {
+    if ($BaseCurrent) {
+        Write-Host "  -BaseCurrent: la rama nace del HEAD actual (trabajo dependiente)." -ForegroundColor DarkGray
+    } elseif ($Base) {
+        $startBase = $Base
+    } else {
+        $startBase = Resolve-IssueBaseRef -repo $Repo
+        if (-not $startBase) {
+            Write-Host "  WARN no pude resolver la rama por defecto del remoto - la rama nace del HEAD actual." -ForegroundColor DarkYellow
+            Write-Host "       Revisa que el PR no arrastre commits ajenos antes de mergear." -ForegroundColor DarkYellow
+        }
+    }
+}
+
 $r = Invoke-IssueStart -IssueNum $Start -Ctx $ctx -Owner $Owner -MakeBranch:$Branch `
+                       -BaseRef $startBase `
                        -DryRunStart:$DryRun -IgnoreBlocked:$IgnoreBlocked -TakeOver:$TakeOver
 
 if ($r.skipped) {
