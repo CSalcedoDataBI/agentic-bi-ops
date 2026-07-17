@@ -163,12 +163,14 @@ function Get-PendingBoardIssues {
     param([string]$Owner, [int]$ProjectNum)
     $nodes = Get-AllPages {
         param($cursor)
-        $after = if ($cursor) { 'after: "' + $cursor + '"' } else { '' }
+        # Cursor as a GraphQL variable (-f cursor=), not interpolated as after: "$cursor": embedded
+        # double-quotes in a native gh.exe arg are not escaped, so gh saw the base64 cursor unquoted
+        # and its `==` padding parsed as bare tokens -> parse error on every board >100 items (#329).
         $q = @"
-query(`$o:String!, `$n:Int!) {
+query(`$o:String!, `$n:Int!, `$cursor:String) {
   user(login:`$o) {
     projectV2(number:`$n) {
-      items(first:100 $after) {
+      items(first:100, after:`$cursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
           fieldValues(first:20) {
@@ -188,8 +190,9 @@ query(`$o:String!, `$n:Int!) {
   }
 }
 "@
-        $resp  = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$q",'-F',"o=$Owner",'-F',"n=$ProjectNum") `
-                           -What "leer los items del board #$ProjectNum" -Graphql
+        $ghArgs = @('api','graphql','-f',"query=$q",'-F',"o=$Owner",'-F',"n=$ProjectNum")
+        if ($cursor) { $ghArgs += @('-f',"cursor=$cursor") }
+        $resp  = Invoke-Gh -GhArgs $ghArgs -What "leer los items del board #$ProjectNum" -Graphql
         $items = $resp.data.user.projectV2.items
         return @{ nodes = $items.nodes; hasNext = $items.pageInfo.hasNextPage; endCursor = $items.pageInfo.endCursor }
     }

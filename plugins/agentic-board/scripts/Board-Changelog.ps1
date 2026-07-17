@@ -129,13 +129,15 @@ if (-not $Version) {
 #    on boards >100 items, so the changelog silently missed recent entries) ───────
 $nodes = @(); $cursor = $null
 do {
-    $after = if ($cursor) { 'after: "' + $cursor + '"' } else { '' }
+    # Cursor as a GraphQL variable (-f cursor=), never interpolated as after: "$cursor": embedded
+    # double-quotes in a native gh.exe arg are not escaped, so gh saw the base64 cursor unquoted and
+    # its `==` padding parsed as bare tokens -> parse error on every board >100 items (#329).
     $q = @"
-query(`$owner:String!, `$num:Int!) {
+query(`$owner:String!, `$num:Int!, `$cursor:String) {
   user(login:`$owner) {
     projectV2(number:`$num) {
       id
-      items(first:100 $after) {
+      items(first:100, after:`$cursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
           fieldValues(first:20) {
@@ -159,8 +161,9 @@ query(`$owner:String!, `$num:Int!) {
   }
 }
 "@
-    $data = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$q",'-F',"owner=$Owner",'-F',"num=$ProjectNum") `
-                      -What "leer los items del board #$ProjectNum de $Owner" -Graphql
+    $ghArgs = @('api','graphql','-f',"query=$q",'-F',"owner=$Owner",'-F',"num=$ProjectNum")
+    if ($cursor) { $ghArgs += @('-f',"cursor=$cursor") }
+    $data = Invoke-Gh -GhArgs $ghArgs -What "leer los items del board #$ProjectNum de $Owner" -Graphql
     $pv = $data.data.user.projectV2
     if (-not $pv.id) {
         throw "No pude resolver el board #$ProjectNum de $Owner (revisa cuenta / scope 'project')."

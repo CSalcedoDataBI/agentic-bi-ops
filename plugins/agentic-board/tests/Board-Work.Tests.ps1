@@ -59,6 +59,33 @@ Describe 'Board-Work graphql reads fail closed (#314, part of #303)' {
             Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":null,"errors":[{"message":"boom"}]}'; ExitCode = 0; StdErr = '' } }
             { Get-BoardItem 'PVT_x' 5 } | Should -Throw
         }
+        It 'passes the page-2 cursor as a -f variable, never spliced into the query as after: "..." (#329)' {
+            # A board >100 items needs a 2nd page. The cursor must ride as a GraphQL variable
+            # (-f cursor=), NOT be interpolated into the query text as after: "$cursor": PowerShell
+            # does not escape embedded double-quotes in a native gh.exe argument, so gh saw the
+            # base64 cursor UNQUOTED and its `==` padding parsed as bare tokens -> the board-wide
+            # "Expected NAME, actual EQUALS" that broke every read once the board crossed 100 items.
+            # Page is chosen by CALL COUNT, not arg content, so a regression that still paginates
+            # (via query interpolation) terminates and fails on the assertions instead of looping.
+            $script:pgCalls = @(); $script:pgN = 0
+            Mock Invoke-GhRaw {
+                $script:pgCalls += ,@($GhArgs); $script:pgN++
+                if ($script:pgN -ge 2) {
+                    [pscustomobject]@{ Output = '{"data":{"node":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"I2","content":{"__typename":"Issue","number":5}}]}}}}'; ExitCode = 0; StdErr = '' }
+                } else {
+                    [pscustomobject]@{ Output = '{"data":{"node":{"items":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR=="},"nodes":[{"id":"I1","content":{"__typename":"Issue","number":99}}]}}}}'; ExitCode = 0; StdErr = '' }
+                }
+            }
+            $item = Get-BoardItem 'PVT_x' 5
+            $item.content.number  | Should -Be 5            # found on the 2nd page
+            $script:pgCalls.Count | Should -Be 2            # both pages fetched
+            (@($script:pgCalls[1]) -contains 'cursor=CUR==') | Should -BeTrue   # cursor as a -f value
+            foreach ($c in $script:pgCalls) {
+                $qArg = @($c) | Where-Object { $_ -like 'query=*' }
+                $qArg | Should -Not -Match 'after:\s*"'     # the #329 anti-pattern (embedded quotes)
+                $qArg | Should -Match 'after:\$cursor'      # cursor referenced as a variable
+            }
+        }
     }
 
     Context 'Resolve-BoardStatus (board id + Status field that every start writes against)' {

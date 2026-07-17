@@ -468,12 +468,16 @@ function Get-BoardItem([string]$projectId, [int]$issueNum) {
     foreach ($attempt in 1..2) {
         $nodes = Get-AllPages {
             param($cursor)
-            $after = if ($cursor) { 'after: "' + $cursor + '"' } else { '' }
+            # The cursor rides as a GraphQL VARIABLE (-f cursor=), NOT interpolated into the query
+            # as after: "$cursor". Embedded double-quotes in a native gh.exe argument are not escaped
+            # by PowerShell, so gh saw the base64 cursor unquoted and its `==` padding parsed as bare
+            # tokens -> "Expected NAME, actual EQUALS" on every board >100 items (#329). `$cursor is
+            # backtick-escaped so the query carries the literal variable ref, not the value.
             $q = @"
-query(`$proj:ID!) {
+query(`$proj:ID!, `$cursor:String) {
   node(id:`$proj) {
     ... on ProjectV2 {
-      items(first:100 $after) {
+      items(first:100, after:`$cursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id
@@ -501,8 +505,9 @@ query(`$proj:ID!) {
 "@
             # -Graphql + retries: a transient failure retries, a hard failure (or errors[]) THROWS
             # instead of silently truncating pagination -> a target issue falsely "not on board" (#314).
-            $resp  = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$q",'-F',"proj=$projectId") `
-                               -What "leer los items del board" -Graphql -Retries 2
+            $ghArgs = @('api','graphql','-f',"query=$q",'-F',"proj=$projectId")
+            if ($cursor) { $ghArgs += @('-f',"cursor=$cursor") }
+            $resp  = Invoke-Gh -GhArgs $ghArgs -What "leer los items del board" -Graphql -Retries 2
             $items = $resp.data.node.items
             return @{ nodes = $items.nodes; hasNext = $items.pageInfo.hasNextPage; endCursor = $items.pageInfo.endCursor }
         }

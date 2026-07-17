@@ -45,6 +45,31 @@ Describe 'Get-BoardItems fails closed on a gh failure (#313, part of #303)' {
         Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"node":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"i1"},{"id":"i2"}]}}}}'; ExitCode = 0; StdErr = '' } }
         @(Get-BoardItems 'PVT_x').Count | Should -Be 2
     }
+    It 'passes the page-2 cursor as a -f variable, never spliced into the query as after: "..." (#329)' {
+        # A board >100 items needs a 2nd page. Interpolating after: "$cursor" put embedded quotes
+        # into a native gh.exe arg, which PowerShell drops, so gh saw the base64 cursor unquoted
+        # and its `==` padding broke the query. The cursor now rides as a GraphQL variable instead.
+        # Page chosen by CALL COUNT, not arg content, so a regression that still paginates
+        # terminates and fails on the assertions rather than looping forever.
+        $script:pgCalls = @(); $script:pgN = 0
+        Mock Invoke-GhRaw {
+            $script:pgCalls += ,@($GhArgs); $script:pgN++
+            if ($script:pgN -ge 2) {
+                [pscustomobject]@{ Output = '{"data":{"node":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"i2"}]}}}}'; ExitCode = 0; StdErr = '' }
+            } else {
+                [pscustomobject]@{ Output = '{"data":{"node":{"items":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR=="},"nodes":[{"id":"i1"}]}}}}'; ExitCode = 0; StdErr = '' }
+            }
+        }
+        $nodes = @(Get-BoardItems 'PVT_x')
+        $nodes.Count         | Should -Be 2             # both pages accumulated
+        $script:pgCalls.Count | Should -Be 2
+        (@($script:pgCalls[1]) -contains 'cursor=CUR==') | Should -BeTrue
+        foreach ($c in $script:pgCalls) {
+            $qArg = @($c) | Where-Object { $_ -like 'query=*' }
+            $qArg | Should -Not -Match 'after:\s*"'
+            $qArg | Should -Match 'after:\$cursor'
+        }
+    }
 }
 
 Describe 'Convert-DraftToIssue fails closed on a graphql errors[] body (#315)' {
