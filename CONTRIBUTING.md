@@ -109,8 +109,28 @@ plugins/agentic-board/scripts/New-Release.ps1 -Bump patch     # bump plugin.json
 It bumps the version (targeted, so the rest of `plugin.json` is byte-preserved), folds the board's
 Done issues into `CHANGELOG.md` under the new version (via `Board-Changelog.ps1`), and validates
 that `marketplace.json` hasn't drifted from `plugin.json` (`-SyncManifest` rewrites it from the
-source of truth). Then review `git diff` and commit `chore(release): X.Y.Z` yourself — tagging and
-pushing stay manual. `-Check` is exit-code clean (0 ok / 1 drift) so a CI gate can call it.
+source of truth). Then review `git diff` and commit `chore(release): X.Y.Z` yourself. `-Check` is
+exit-code clean (0 ok / 1 drift) so a CI gate can call it.
+
+### What happens after the version-bump lands on `main`
+
+Two channels, so users never install whatever `main` HEAD happens to be:
+
+- **`main`** is the development channel — every merged PR lands here.
+- **`release`** is the branch installs actually fetch. `marketplace.json`'s plugin `source` is a
+  `git-subdir` pinned at `ref: release` (#323), so a fresh install or `plugin update` gets the
+  `release` commit, not `main` HEAD.
+
+When a `chore(release): X.Y.Z` commit changes `plugin.json`'s version on `main`, the **Release**
+workflow (`.github/workflows/release.yml`, #322) fires automatically and:
+
+1. creates the git tag `vX.Y.Z` + a GitHub Release, notes taken from that version's `CHANGELOG.md`
+   block (`scripts/Get-ReleaseNotes.ps1`), on the exact commit that set the version, and
+2. fast-forwards the `release` branch to that commit — the one push that moves pinned installs.
+
+So tagging and the release channel are **no longer manual**: land the version bump on `main` and CI
+does the rest. `plugin.json`'s `version` is still what drives `plugin update` detection for users, so
+it must change on every release (the bump commit is exactly that).
 
 ## Good first issues
 

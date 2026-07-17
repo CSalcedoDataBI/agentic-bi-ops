@@ -105,3 +105,17 @@ jobs:
             --notes-file release-notes.md \
             --target "$SHA"
           echo "::notice::Released $TAG at $SHA"
+
+      - name: Advance the release channel to the released commit
+        if: steps.v.outputs.release == 'true'
+        env:
+          SHA: ${{ steps.v.outputs.sha }}
+        run: |
+          # Installs pin the plugin at ref `release` (marketplace.json git-subdir source, #323), so
+          # that branch — NOT main HEAD — is what a fresh install or `plugin update` fetches. It must
+          # advance to each released commit; this push is the ONLY thing that moves pinned installs.
+          # A normal push creates the branch (first release) or fast-forwards it (the released commit
+          # is a descendant of the prior release). A non-fast-forward is rejected loudly rather than
+          # rewriting the channel. Pushes made with GITHUB_TOKEN do not retrigger workflows.
+          git push origin "$SHA:refs/heads/release"
+          echo "::notice::release channel -> $SHA"
