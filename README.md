@@ -281,13 +281,50 @@ Honestly out of scope (GitHub exposes no API): view layouts, charts/insights, pr
 
 ---
 
+## Toolkit provisioning (skills-ops)
+
+agentic-board doesn't rebuild the BI tooling ecosystem — it **references, installs, and
+monitors** the tools that already exist, so a Fabric / Power BI project gets the right toolkit
+without reinventing anything. Zero weight for non-BI users: it's a curated JSON catalog plus a
+couple of scripts that only run when you invoke a profile.
+
+**Profiles** (`presets/toolkits/<profile>.json`):
+
+| Profile | Provisions |
+|---|---|
+| `quality` (default) | Skill-authoring / review toolkit |
+| `bi` | Microsoft Fabric + Power BI ecosystem — task bundles `semantic-model-review`, `fabric-app`, `data-agent` |
+
+**Commands:**
+
+- `/skills bootstrap bi` — install the gaps for a profile (never duplicating what's already
+  installed). Detects by kind: a `skill-clone` folder is clean-cloned with its LICENSE; a
+  `plugin` surfaces its own install command.
+- `/skills freshness` — report-only: compares each installed skill's recorded commit SHA against
+  upstream and flags `fresh` / `behind` / `unknown`. It never reinstalls — you decide.
+
+**Catalogued tools (attribution).** Every tool keeps its owner and license; nothing is vendored:
+
+| Tool | Owner | License | Profile |
+|---|---|---|---|
+| [skills-for-fabric](https://github.com/microsoft/skills-for-fabric) | Microsoft | MIT | `bi` |
+| [skill-creator](https://github.com/anthropics/skills) | Anthropic | See repo | `quality` |
+| [writing-skills](https://github.com/obra/superpowers) | obra | MIT | `quality` |
+| [skill-improver](https://github.com/trailofbits/skills) | Trail of Bits | CC BY-SA 4.0 | `quality` |
+| [second-opinion](https://github.com/trailofbits/skills) | Trail of Bits | CC BY-SA 4.0 | `quality` |
+
+Add your own public repos (or another developer's) as `skill-clone` entries in
+`presets/toolkits/bi.json` — always with owner + license. Schema: `presets/toolkits/README.md`.
+
+---
+
 ## Module roadmap
 
 | Module | Description | Foundation |
 |---|---|---|
 | **M1** (current) | Cross-account GitHub Projects & issues governance | `gh-account` |
-| **M2** (in progress) | PBIP / Fabric git ops — branch-per-report, **TMDL diff review** (breaking schema-change detection, wired into the review gate) | `gh-account`, `tmdl-review` |
-| **M3** | Semantic-model review agents wired to the board | `gh-account` |
+| **M2** (shipped) | **TMDL diff review** — breaking schema-change detection wired into the review gate (the surviving slice of the old PBIP/Fabric git-ops idea) | `tmdl-review` |
+| **M3** (current) | **BI toolkit provisioning** — *reference / install / monitor* the Microsoft Fabric + Power BI tooling ecosystem by profile (`/skills bootstrap bi`, `/skills freshness`), rather than rebuild it. See [Toolkit provisioning](#toolkit-provisioning-skills-ops) | `skills-ops` |
 | **M4** (in progress) | BI release automation — **changelog generation** from board Done issues (`/board changelog`) | `gh-account` |
 | **M5** | Knowledge-ops — per-project references registry by domain (`knowledge/registry.json` + generated `KNOWLEDGE.md`), `/knowledge add` + `harvest`; Phase 2 wiki publish + capture-in-handoff | `gh-account` |
 
