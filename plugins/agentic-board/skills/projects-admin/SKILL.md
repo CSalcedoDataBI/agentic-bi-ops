@@ -213,7 +213,8 @@ them instead of one-by-one (each still finishes through the same step 5):
 
 | Command | What it does |
 |---------|--------------|
-| `Board-Work.ps1 -ProjectNum <n> -Parallel <n1,n2,...>` | Batch-start each issue (In Progress + assign + claim), each in its OWN isolated worktree `../<repo>--issue-<n>` branched off a fresh `origin/main`. Blocked / claimed / closed issues are skipped with a reason — the batch never aborts |
+| `Board-Work.ps1 -ProjectNum <n> -Parallel <n1,n2,...>` | Batch-start each issue (In Progress + assign + claim), each in its OWN isolated worktree, branched off the freshly fetched **default branch** (resolved, not assumed — a `master` repo works). Blocked / claimed / closed issues are skipped with a reason — the batch never aborts |
+| `... -Start <n> -Branch -BaseCurrent` (or `-Base <ref>`) | Opt in to basing the issue branch on the current HEAD (or an explicit ref) instead of the default branch — for work that genuinely builds on the branch you are standing on. Also honoured by `-Parallel`. Without it, the branch always starts from the default branch, so the PR cannot drag another branch's unmerged commits (#294) |
 | `... -Parallel <nums> -Launch` | After starting, spawn ONE visible Claude session per worktree, each briefed to take its issue through step 5. Windows Terminal tab (grouped in one named window) when `wt` is on PATH; otherwise a standalone `pwsh` window per worktree |
 | `... -Parallel <nums> [-Launch] -DryRun` | Plan the whole batch (and, with `-Launch`, preview the exact launch commands) without mutating the board, touching git, or spawning anything |
 | `Board-Work.ps1 -Sessions` | Monitor the LIVE fleet from `sessions.json` (branch, worktree, launch method `via`, and the PR opened per branch). Dead-PID entries pruned on read; needs no `-ProjectNum` |

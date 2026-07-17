@@ -87,6 +87,10 @@ matching recipe from the projects-admin references:
      labels, sub-issues). Then CONTINUE WORKING that issue in this session: treat the printed
      context as the task briefing. Always pass `-Branch` when the issue belongs to the current
      repo. `--dry-run` previews without mutating; a CLOSED issue is refused.
+     - The work branch always starts from the repo's **default branch, freshly fetched** — never
+       from the current HEAD, which would drag the commits of whatever branch you were standing
+       on into this issue's PR. For work that genuinely builds on the current branch, opt in with
+       `-BaseCurrent` (or `-Base <ref>` for an explicit base).
      - **Busy working copy?** If the folder has uncommitted changes or sits on another
        `issue-*` branch (another session active), `-Branch` does NOT switch — it creates an
        isolated **git worktree** `../<repo>--issue-<n>` automatically (the official
@@ -135,7 +139,8 @@ matching recipe from the projects-admin references:
   - **Parallel (several independent issues at once).** When the user picks MORE THAN ONE
     independent pending issue, batch-start them instead of looping:
     `scripts/Board-Work.ps1 -ProjectNum <n> -Parallel <n1,n2,...>` starts each (In Progress +
-    assign + claim) in its OWN worktree `../<repo>--issue-<n>` off a fresh `origin/main`;
+    assign + claim) in its OWN worktree `../<repo>--issue-<n>` off the freshly fetched default
+    branch (`origin/main` here — resolved, not assumed, so a `master` repo works too);
     blocked / claimed / closed issues are skipped with a reason (the batch never aborts).
     Add `-Launch` to open one visible Claude session per worktree — a Windows Terminal (`wt`)
     tab when available, else a `pwsh` window — each briefed to take its issue through step 5
