@@ -1,0 +1,50 @@
+[
+  {
+    "name": "skill-creator",
+    "owner": "Anthropic",
+    "repo": "anthropics/skills",
+    "kind": "skill-clone",
+    "path": "skill-creator",
+    "license": "See repo (Anthropic)",
+    "homepage": "https://github.com/anthropics/skills",
+    "profiles": ["quality"],
+    "install": null,
+    "purpose": "Create, test, benchmark and optimize skills; description-triggering eval loop."
+  },
+  {
+    "name": "writing-skills",
+    "owner": "obra",
+    "repo": "obra/superpowers",
+    "kind": "skill-clone",
+    "path": "skills/writing-skills",
+    "license": "MIT",
+    "homepage": "https://github.com/obra/superpowers",
+    "profiles": ["quality"],
+    "install": null,
+    "purpose": "Author high-quality SKILL.md — discovery optimization, RED/GREEN pressure tests."
+  },
+  {
+    "name": "skill-improver",
+    "owner": "Trail of Bits",
+    "repo": "trailofbits/skills",
+    "kind": "skill-clone",
+    "path": "skill-improver",
+    "license": "CC BY-SA 4.0",
+    "homepage": "https://github.com/trailofbits/skills",
+    "profiles": ["quality"],
+    "install": null,
+    "purpose": "Iterative fix-review loop to raise an existing skill to standard."
+  },
+  {
+    "name": "second-opinion",
+    "owner": "Trail of Bits",
+    "repo": "trailofbits/skills",
+    "kind": "skill-clone",
+    "path": "second-opinion",
+    "license": "CC BY-SA 4.0",
+    "homepage": "https://github.com/trailofbits/skills",
+    "profiles": ["quality"],
+    "install": null,
+    "purpose": "External LLM review (Codex/Gemini) of uncommitted changes — an extra reviewer."
+  }
+]
