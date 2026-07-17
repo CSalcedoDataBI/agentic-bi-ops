@@ -8,7 +8,14 @@ param(
   [string]$OutFile
 )
 $ErrorActionPreference = 'Stop'
-$items = (gh project item-list $Number --owner $Owner --format json --limit 500 | ConvertFrom-Json).items
+# gh fails by exit code only, and a native command exiting non-zero does not throw (#303).
+# Unchecked, a 401 made this publish a snapshot reading "0 of 0 tracked items done." - a
+# document that looks like a finished board rather than a failed read.
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
+$resp  = Invoke-Gh -GhArgs @('project', 'item-list', "$Number", '--owner', $Owner, '--format', 'json', '--limit', '500') `
+                   -What "leer los items del board #$Number de $Owner" -Json -Retries 2
+$items = @($resp.items)
 
 $rank  = @{ 'Backlog' = 0; 'In Progress' = 1; 'In Review' = 2; 'Done' = 3 }
 $sorted = $items | Sort-Object `

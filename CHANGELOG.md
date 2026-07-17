@@ -12,6 +12,13 @@
   is still returned as empty — that half of the contract is pinned by tests too.
 
 ### Fixed
+- **A failed backup no longer writes a plausible empty file** (#312, part of #303). `Backup-Board.ps1`
+  and `Export-BoardSnapshot.ps1` ran `gh` unchecked, so a 401 produced three empty JSON files and
+  printed `Backup OK:` — a failure only ever discovered on restore day. Both now go through
+  `Invoke-Gh`; the backup reads everything BEFORE it writes anything (so a late failure cannot leave
+  a half-backup nobody labelled as one), persists gh's bytes verbatim via `-RawJson`, and verifies
+  the files it actually wrote rather than the ones it meant to. `Export-BoardSnapshot` no longer
+  publishes `0 of 0 tracked items done.` when it simply could not read the board.
 - **work: an issue branch starts from the remote default branch, not the current HEAD** (#294).
   `-Start -Branch` cut the branch from whatever HEAD happened to be, so starting an issue from a
   feature branch dragged its unmerged commits into the issue's PR — a 1-line fix opened as 56
