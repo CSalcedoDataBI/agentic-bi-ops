@@ -40,6 +40,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# A gh failure on the reads below must THROW, not read as an empty board: an empty $items
+# reports a false "set=0" success, and an empty $proj/$fields would drive the item-edit
+# writes with a bad project id (#303).
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 function Resolve-FieldValue([string]$title) {
   if ($TextTemplate) { return $TextTemplate.Replace('{title}', $title) }
   if ($Value)        { return $Value }
@@ -55,15 +60,18 @@ function Resolve-FieldValue([string]$title) {
 
 if (-not $env:GH_TOKEN) { Write-Error "GH_TOKEN not set — run the gh-account skill first."; exit 1 }
 
-$proj   = (gh project view $Number --owner $Owner --format json | ConvertFrom-Json).id
-$fields = (gh project field-list $Number --owner $Owner --format json | ConvertFrom-Json).fields
+$proj   = (Invoke-Gh -GhArgs @('project','view',"$Number",'--owner',$Owner,'--format','json') `
+                     -What "leer el board #$Number" -Json).id
+$fields = (Invoke-Gh -GhArgs @('project','field-list',"$Number",'--owner',$Owner,'--format','json') `
+                     -What "leer los campos del board #$Number" -Json).fields
 $fdef   = $fields | Where-Object { $_.name -eq $Field }
 if (-not $fdef) { Write-Error "Field '$Field' not found on project #$Number (owner $Owner)."; exit 1 }
 $isSelect = [bool]$fdef.options
 $optById  = @{}; if ($isSelect) { foreach ($o in $fdef.options) { $optById[$o.name] = $o.id } }
 $fieldKey = ($Field -replace '[^A-Za-z0-9]','').ToLower()   # how item-list surfaces the value
 
-$items = (gh project item-list $Number --owner $Owner --format json --limit $Limit | ConvertFrom-Json).items
+$items = (Invoke-Gh -GhArgs @('project','item-list',"$Number",'--owner',$Owner,'--format','json','--limit',"$Limit") `
+                    -What "listar los items del board #$Number" -Json).items
 $set=0; $skip=0; $fail=0
 foreach ($it in $items) {
   if ($it.title -notmatch $Filter) { $skip++; continue }

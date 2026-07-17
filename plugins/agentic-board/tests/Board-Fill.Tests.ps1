@@ -28,6 +28,25 @@ Describe 'Get-OwnerRoot (owner-type -> GraphQL root, issue #86)' {
     }
 }
 
+Describe 'Get-BoardItems fails closed on a gh failure (#313, part of #303)' {
+    # Board-Fill dot-sources Invoke-Gh BEFORE its guard, so dot-sourcing the script above also
+    # defines the Invoke-GhRaw seam - mocking it reproduces any exit code / body with no token
+    # and no network. Before #313 a gh failure mid-scan returned an EMPTY page and the gap
+    # detector reported a healthy "no gaps" board it had never read (the #86 false-clean).
+    It 'THROWS when the item read exits non-zero instead of returning an empty page' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = ''; ExitCode = 1; StdErr = 'HTTP 401: Bad credentials' } }
+        { Get-BoardItems 'PVT_x' } | Should -Throw
+    }
+    It 'THROWS on a graphql errors[] body despite exit 0 (the read succeeded, the query did not)' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":null,"errors":[{"message":"Could not resolve to a node"}]}'; ExitCode = 0; StdErr = '' } }
+        { Get-BoardItems 'PVT_x' } | Should -Throw
+    }
+    It 'returns the page nodes when the read succeeds - an empty board is not an error' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"node":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"i1"},{"id":"i2"}]}}}}'; ExitCode = 0; StdErr = '' } }
+        @(Get-BoardItems 'PVT_x').Count | Should -Be 2
+    }
+}
+
 Describe 'Get-AllPages (board pagination - issue #246)' {
     It 'concatenates nodes across pages and stops when hasNext is false' {
         $script:calls = 0

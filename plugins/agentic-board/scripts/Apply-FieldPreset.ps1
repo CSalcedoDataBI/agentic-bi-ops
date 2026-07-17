@@ -83,12 +83,17 @@ if ($MergeConflicts -and $NoMigrate) { Write-Error "-MergeConflicts y -NoMigrate
 # The canonical/legacy option vocabulary — the map that says `Todo` MEANS `Backlog`.
 . (Join-Path $PSScriptRoot 'Get-BoardVocabulary.ps1')
 
+# A gh failure on the field-list read below must THROW, not read as "the board has no fields":
+# that empty result is exactly the premise this script would then CREATE every field from (#303).
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 if (-not $PresetPath) { $PresetPath = Join-Path $PSScriptRoot "..\presets\fields.$Lang.json" }
 if (-not (Test-Path $PresetPath)) { Write-Error "Preset not found: $PresetPath"; exit 1 }
 
 # read as UTF-8 explicitly so accented names (ES preset: Área, revisión…) survive on Windows PowerShell 5.1
 $preset   = Get-Content $PresetPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$existing = (gh project field-list $Number --owner $Owner --format json | ConvertFrom-Json).fields.name
+$existing = (Invoke-Gh -GhArgs @('project','field-list',"$Number",'--owner',$Owner,'--format','json') `
+                       -What "leer los campos del board #$Number" -Json).fields.name
 
 function Get-OptName($o)  { if ($o -is [string]) { $o } else { $o.name } }
 function Get-OptColor($o) { if ($o -is [string]) { $null } else { $o.color } }
@@ -98,12 +103,18 @@ function Get-OptColor($o) { if ($o -is [string]) { $null } else { $o.color } }
 $script:FieldCache = @{}
 function Get-SingleSelectField($fieldName) {
   if ($script:FieldCache.ContainsKey($fieldName)) { return $script:FieldCache[$fieldName] }
-  $q = gh api graphql -f query='
+  # -Graphql fails closed on BOTH gh's exit code and a graphql errors[] body: a failed read
+  # here would otherwise return a $null field and silently SKIP the color/rename it drives (#303).
+  # A genuinely-absent field still comes back as $null (no errors[]), so callers' `-not $field.id`
+  # guard keeps working — only a real failure now throws instead of passing as "field not found".
+  $ssfQuery = '
 query($owner:String!,$num:Int!,$field:String!){
   user(login:$owner){ projectV2(number:$num){
     field(name:$field){ ... on ProjectV2SingleSelectField { id options { id name color description } } }
   }}
-}' -F "owner=$Owner" -F "num=$Number" -f "field=$fieldName" | ConvertFrom-Json
+}'
+  $q = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$ssfQuery",'-F',"owner=$Owner",'-F',"num=$Number",'-f',"field=$fieldName") `
+                 -What "leer el campo '$fieldName' del board #$Number" -Graphql
   $script:FieldCache[$fieldName] = $q.data.user.projectV2.field
   return $script:FieldCache[$fieldName]
 }
