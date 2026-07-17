@@ -15,6 +15,8 @@ for the user to pick (they can answer with just the number):
                 y abrir un issue SANEADO en el repo dueño de la skill (jamás en tu proyecto privado)
 3. bootstrap  → instalar las skills de buenas prácticas que te falten (skill-creator, writing-skills,
                 skill-improver, second-opinion) sin duplicar lo que ya tienes
+4. freshness  → revisar si las herramientas instaladas (skill-clone) siguen al día con su upstream
+                (SHA local vs último commit) — SOLO reporta, no reinstala nada
 ```
 
 When they answer (number or name), invoke the matching skill and follow it:
@@ -33,6 +35,11 @@ When they answer (number or name), invoke the matching skill and follow it:
   `quality` (default: skill-authoring toolkit) or `bi` (Microsoft Fabric / Power BI ecosystem).
   Gaps install by kind: `skill-clone` via `Install-SkillFromRepo.ps1` (clean clone, LICENSE
   preserved); `plugin` by surfacing its own `install` command (e.g. `microsoft/skills-for-fabric`).
+- **freshness** → run `Get-ToolkitFreshness.ps1` (read-only, no token). It scans
+  `~/.claude/skills/*/.abios-provenance.json` (written by `Install-SkillFromRepo.ps1`) and compares
+  each installed commit SHA against the latest upstream commit for its path, reporting
+  `fresh` / `behind` / `unknown`. It never reinstalls — the user decides whether to re-run
+  bootstrap. Plugin-kind tools carry no provenance and are out of scope (best-effort by design).
 
 Identity: any operation that files an issue must first set `$env:GH_TOKEN` via the `gh-account`
 skill (default CSalcedoDataBI). Read-only report/audit needs no token.
