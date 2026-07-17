@@ -1,0 +1,59 @@
+name: Issue language
+
+# This repo is English-only (#305). `abios-feedback` files its issues from OTHER projects, usually
+# while the conversation is in Spanish, so the rule written in the skill needs a backstop that does
+# not depend on the agent having read it — instruction alone is what drifted, 12 issues in two days.
+#
+# This never blocks: GitHub has no pre-create hook for issues, so the honest choice is between
+# labelling and pretending. It labels, and it clears the label again on edit, so fixing the issue
+# closes the loop without anyone touching the board.
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  check:
+    # `lang-ok` is the escape hatch for issues that legitimately discuss Spanish in English, or
+    # quote it outside a code fence. The detector is tuned to make this rare, not impossible.
+    if: ${{ !contains(github.event.issue.labels.*.name, 'lang-ok') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Score the issue text
+        id: score
+        shell: pwsh
+        # The title and body arrive as env vars and are NEVER interpolated into the script body:
+        # an issue body is attacker-controlled text, and `${{ }}` would splice it straight into the
+        # shell before pwsh ever sees it.
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          $v = ./scripts/Test-IssueLanguage.ps1 -Title "$env:ISSUE_TITLE" -Body "$env:ISSUE_BODY"
+          Write-Host "title=$($v.TitleScore) body=$($v.BodyScore) english=$($v.IsEnglish)"
+          "is_english=$($v.IsEnglish.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
+          "reason=$($v.Reason)"                             | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Flag as needing English
+        if: ${{ steps.score.outputs.is_english == 'false' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUMBER: ${{ github.event.issue.number }}
+          REASON: ${{ steps.score.outputs.reason }}
+        run: |
+          echo "Not English ($REASON) — labelling #$NUMBER"
+          gh issue edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --add-label needs-english
+
+      - name: Clear the flag once it reads as English
+        if: ${{ steps.score.outputs.is_english == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          # --remove-label is a no-op when the label is absent, so this needs no guard.
+          gh issue edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label needs-english || true
