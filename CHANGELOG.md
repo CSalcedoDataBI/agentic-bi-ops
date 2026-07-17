@@ -1,6 +1,16 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **`Invoke-Gh.ps1` — a shared helper that turns a `gh` failure into a real failure** (#311, part of
+  #303). `gh` signals failure only through its exit code, and a native command that exits non-zero
+  does not throw in PowerShell — not even under `$ErrorActionPreference = 'Stop'`. Unchecked, a 401
+  becomes an empty result, which several scripts read as "the board is empty" and then write from.
+  Covers all three failure modes: non-zero exit, exit 0 with an unparseable body (`-Json`), and exit
+  0 with a graphql `errors[]` body (`-Graphql`). Retries only what retrying can fix (5xx/timeouts,
+  never a 401), and captures stderr instead of leaving `2>$null` to bury it. A genuinely empty result
+  is still returned as empty — that half of the contract is pinned by tests too.
+
 ### Fixed
 - **work: an issue branch starts from the remote default branch, not the current HEAD** (#294).
   `-Start -Branch` cut the branch from whatever HEAD happened to be, so starting an issue from a
