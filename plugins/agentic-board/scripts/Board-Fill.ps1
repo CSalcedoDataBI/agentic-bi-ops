@@ -99,8 +99,12 @@ function Get-OwnerType {
     # so a real auth/network failure surfaces instead of being mistaken for "owner
     # not found". Returns 'User', 'Organization', or $null (login does not exist).
     param([string]$Owner)
-    $resp = gh api graphql -f query='
-query($o:String!) { repositoryOwner(login:$o) { __typename } }' -F "o=$Owner" | ConvertFrom-Json
+    # -Graphql fails closed on a non-zero exit AND on an exit-0 errors[] body, and surfaces gh's
+    # stderr in the throw. A genuinely-missing login returns repositoryOwner=null with no errors[],
+    # so it still comes back as $null - only a real failure throws now (#303/#315).
+    $ownerQuery = 'query($o:String!) { repositoryOwner(login:$o) { __typename } }'
+    $resp = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$ownerQuery",'-F',"o=$Owner") `
+                      -What "resolver el tipo de owner '$Owner'" -Graphql
     return $resp.data.repositoryOwner.__typename
 }
 
@@ -131,7 +135,8 @@ query($owner:String!, $num:Int!) {
   }
 }
 '@ -replace 'ROOT', $root
-    $resp = gh api graphql -f query=$query -F "owner=$Owner" -F "num=$Num" | ConvertFrom-Json
+    $resp = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$query",'-F',"owner=$Owner",'-F',"num=$Num") `
+                      -What "resolver el board #$Num de $Owner" -Graphql
     return $resp.data.$root.projectV2
 }
 
@@ -219,6 +224,40 @@ query(`$proj:ID!) {
     }
 }
 
+# Convert one draft note to a real issue. Extracted so the errors[]-fail-closed behavior is
+# unit-testable at the Invoke-Gh seam: -Graphql throws on an exit-0 errors[] body, so a failed
+# conversion is a FAIL, never a $null number that still counts as converted (#303/#315).
+function Convert-DraftToIssue($draftId, $repoId, $title) {
+    $convQuery = '
+mutation($itemId:ID!, $repoId:ID!) {
+  convertProjectV2DraftIssueItemToIssue(input:{
+    itemId: $itemId
+    repositoryId: $repoId
+  }) {
+    item { content { ... on Issue { number } } }
+  }
+}'
+    $result = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$convQuery",'-F',"itemId=$draftId",'-F',"repoId=$repoId") `
+                        -What "convertir el draft '$title' a issue" -Graphql
+    return $result.data.convertProjectV2DraftIssueItemToIssue.item.content.number
+}
+
+# The core gap-fill write. Extracted so the errors[]-fail-closed behavior is unit-testable at the
+# seam: updateProjectV2ItemFieldValue can 200 with an errors[] body (stale option id, field
+# permissions), so -Graphql throws on that as well as on a non-zero exit - a field that was never
+# written is then a FAIL for the caller to count, never a false OK (#303/#315).
+function Set-ItemSingleSelectValue($projId, $itemId, $fieldId, $optId) {
+    $updItemQuery = '
+mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
+  updateProjectV2ItemFieldValue(input:{
+    projectId:$proj, itemId:$item, fieldId:$field,
+    value:{singleSelectOptionId:$opt}
+  }) { projectV2Item { id } }
+}'
+    $null = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$updItemQuery",'-f',"proj=$projId",'-f',"item=$itemId",'-f',"field=$fieldId",'-f',"opt=$optId") `
+                      -What "escribir el valor del campo en el item" -Graphql
+}
+
 # Dot-source guard: tests set this to load the functions above without running
 # the token check or any gh call (same contract as Board-Work.ps1).
 if ($env:ABIOS_BOARDFILL_DOTSOURCE) { return }
@@ -282,10 +321,12 @@ $repoParts = $Repo -split "/"
 $repoOwner = $repoParts[0]
 $repoName  = $repoParts[1]
 
-$repoData = gh api graphql -f query='
+$repoIdQuery = '
 query($owner:String!, $name:String!) {
   repository(owner:$owner, name:$name) { id }
-}' -F "owner=$repoOwner" -F "name=$repoName" | ConvertFrom-Json
+}'
+$repoData = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$repoIdQuery",'-F',"owner=$repoOwner",'-F',"name=$repoName") `
+                      -What "resolver el repo '$Repo'" -Graphql
 $repoId = $repoData.data.repository.id
 if (-not $repoId) {
     throw "No pude resolver el repo '$Repo' (no existe o el token ($TokenVar) no tiene acceso). Aborto."
@@ -308,16 +349,7 @@ if ($drafts.Count -gt 0) {
             $draftId = $draft.id
             $title   = $draft.content.title
             try {
-                $result = gh api graphql -f query='
-mutation($itemId:ID!, $repoId:ID!) {
-  convertProjectV2DraftIssueItemToIssue(input:{
-    itemId: $itemId
-    repositoryId: $repoId
-  }) {
-    item { content { ... on Issue { number } } }
-  }
-}' -F "itemId=$draftId" -F "repoId=$repoId" 2>&1 | ConvertFrom-Json
-                $num = $result.data.convertProjectV2DraftIssueItemToIssue.item.content.number
+                $num = Convert-DraftToIssue $draftId $repoId $title
                 Write-Host "  -> #$num $title" -ForegroundColor DarkCyan
                 $convOk++
             } catch {
@@ -449,22 +481,16 @@ foreach ($entry in $plan) {
     foreach ($ch in $entry.Changes) {
         try {
             if ($ch.Type -eq "assignee") {
+                # An unchecked write reports "OK" for an assignment that never happened. Invoke-Gh
+                # throws on a non-zero exit (caught below -> FAIL, $fail++) so the count is honest.
                 $assignUrl = "repos/$Repo/issues/$($entry.IssueNum)/assignees"
-                gh api $assignUrl -X POST -F "assignees[]=$Owner" | Out-Null
+                $null = Invoke-Gh -GhArgs @('api',$assignUrl,'-X','POST','-F',"assignees[]=$Owner") `
+                                  -What "asignar #$($entry.IssueNum) a $Owner"
                 Write-Host "  OK  #$($entry.IssueNum) assignee -> $Owner" -ForegroundColor Green
                 $ok++
             }
             elseif ($ch.Type -eq "single") {
-                $itemId  = $entry.ItemId
-                $fieldId = $ch.FieldId
-                $optId   = $ch.TargetId
-                gh api graphql -f query='
-mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
-  updateProjectV2ItemFieldValue(input:{
-    projectId:$proj, itemId:$item, fieldId:$field,
-    value:{singleSelectOptionId:$opt}
-  }) { projectV2Item { id } }
-}' -f "proj=$projectId" -f "item=$itemId" -f "field=$fieldId" -f "opt=$optId" | Out-Null
+                Set-ItemSingleSelectValue $projectId $entry.ItemId $ch.FieldId $ch.TargetId
                 Write-Host "  OK  #$($entry.IssueNum) $($ch.Display)" -ForegroundColor Green
                 $ok++
             }

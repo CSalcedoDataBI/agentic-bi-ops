@@ -47,6 +47,35 @@ Describe 'Get-BoardItems fails closed on a gh failure (#313, part of #303)' {
     }
 }
 
+Describe 'Convert-DraftToIssue fails closed on a graphql errors[] body (#315)' {
+    # convertProjectV2DraftIssueItemToIssue can 200 with an errors[] body. Before #315 that parsed
+    # to a $null number and the draft was still COUNTED as converted - "converted" reported for a
+    # note that is still a draft. -Graphql throws on errors[] so the caller records a FAIL instead.
+    It 'THROWS on an exit-0 errors[] body instead of returning a $null number' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":null,"errors":[{"message":"repo not writable"}]}'; ExitCode = 0; StdErr = '' } }
+        { Convert-DraftToIssue 'DRAFT_1' 'REPO_1' 'my draft' } | Should -Throw
+    }
+    It 'returns the new issue number on success' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"convertProjectV2DraftIssueItemToIssue":{"item":{"content":{"number":42}}}}}'; ExitCode = 0; StdErr = '' } }
+        Convert-DraftToIssue 'DRAFT_1' 'REPO_1' 'my draft' | Should -Be 42
+    }
+}
+
+Describe 'Set-ItemSingleSelectValue fails closed on a graphql errors[] body (#315)' {
+    # The core gap-fill write: updateProjectV2ItemFieldValue can 200 with an errors[] body (a stale
+    # option id, a field-scoped permission). Before #315 that was piped to Out-Null with no check,
+    # so the run printed "OK  #n Status -> Backlog" and counted it while the field stayed empty.
+    # -Graphql throws so the caller records a FAIL instead of a false OK.
+    It 'THROWS on an exit-0 errors[] body instead of silently succeeding' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"updateProjectV2ItemFieldValue":null},"errors":[{"message":"stale option id"}]}'; ExitCode = 0; StdErr = '' } }
+        { Set-ItemSingleSelectValue 'PVT_1' 'ITEM_1' 'FIELD_1' 'OPT_1' } | Should -Throw
+    }
+    It 'does not throw when the write succeeds' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"ITEM_1"}}}}'; ExitCode = 0; StdErr = '' } }
+        { Set-ItemSingleSelectValue 'PVT_1' 'ITEM_1' 'FIELD_1' 'OPT_1' } | Should -Not -Throw
+    }
+}
+
 Describe 'Get-AllPages (board pagination - issue #246)' {
     It 'concatenates nodes across pages and stops when hasNext is false' {
         $script:calls = 0

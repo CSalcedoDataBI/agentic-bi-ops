@@ -44,19 +44,27 @@ if (-not $env:GH_TOKEN) {
 }
 if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
 
+# gh api graphql can return exit 0 with an errors[] body, and gh signals a plain failure only via
+# its exit code - either way an unchecked read here would post a status update off a misread board
+# (a wrong "0 Done" body, or the mutation's own silent failure). -Graphql fails closed on both (#303).
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 $boardUrl = "https://github.com/users/$Owner/projects/$ProjectNum"
 
 # Resolve project id
-$projData = gh api graphql -f query='
+$pidQuery = '
 query($owner:String!, $num:Int!) {
   user(login:$owner) { projectV2(number:$num) { id title } }
-}' -f "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
+}'
+$projData = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$pidQuery",'-f',"owner=$Owner",'-F',"num=$ProjectNum") `
+                      -What "leer el board #$ProjectNum" -Graphql
 $projectId = $projData.data.user.projectV2.id
 if (-not $projectId) { throw "Board #$ProjectNum no encontrado para $Owner." }
 
 # Auto-generate the body from live board data when not given
 if (-not $Body) {
-    $items = (gh project item-list $ProjectNum --owner $Owner --format json --limit 200 | ConvertFrom-Json).items
+    $items = (Invoke-Gh -GhArgs @('project','item-list',"$ProjectNum",'--owner',$Owner,'--format','json','--limit','200') `
+                        -What "listar los items del board #$ProjectNum" -Json).items
     $done    = @($items | Where-Object { $_.status -eq "Done" }).Count
     $inProg  = @($items | Where-Object { $_.status -eq "In Progress" }).Count
     $pending = @($items | Where-Object { (-not $_.status) -or ($_.status -eq "Backlog") })
@@ -71,12 +79,14 @@ if (-not $Body) {
     if ($next) { $Body += "`n**Siguiente:** $next" }
 }
 
-$result = gh api graphql -f query='
+$updQuery = '
 mutation($p:ID!, $b:String!, $s:ProjectV2StatusUpdateStatus!) {
   createProjectV2StatusUpdate(input:{projectId:$p, body:$b, status:$s}) {
     statusUpdate { id createdAt }
   }
-}' -f "p=$projectId" -f "b=$Body" -f "s=$Status" | ConvertFrom-Json
+}'
+$result = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$updQuery",'-f',"p=$projectId",'-f',"b=$Body",'-f',"s=$Status") `
+                    -What "publicar el status update" -Graphql
 
 $id = $result.data.createProjectV2StatusUpdate.statusUpdate.id
 if (-not $id) { throw "La mutacion no devolvio statusUpdate - revisa scopes del token." }

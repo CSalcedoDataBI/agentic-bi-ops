@@ -50,6 +50,10 @@ $ErrorActionPreference = "Stop"
 # again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
 . (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
 
+# gh api graphql can return exit 0 with an errors[] body: addSubIssue would then report a linked
+# child that is actually loose. -Graphql fails closed on that AND on a plain non-zero exit (#303).
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 if (-not $env:GH_TOKEN) {
     $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
 }
@@ -61,8 +65,10 @@ if (-not $Repo) {
 }
 if (-not $Repo) { throw "No pude derivar el repo del origin - pasa -Repo owner/name." }
 
-# Parent must exist and be open
-$parentData = gh issue view $Parent --repo $Repo --json id,title,state | ConvertFrom-Json
+# Parent must exist and be open. A failed read here would leave $parentId empty and every
+# addSubIssue below would orphan its child - so fail closed on the read (#303).
+$parentData = Invoke-Gh -GhArgs @('issue','view',"$Parent",'--repo',$Repo,'--json','id,title,state') `
+                        -What "leer el issue padre #$Parent" -Json
 if ($parentData.state -eq "CLOSED") { throw "El issue padre #$Parent esta CERRADO - reabrelo antes de desglosarlo." }
 $parentId    = $parentData.id
 $parentTitle = $parentData.title
@@ -90,12 +96,19 @@ foreach ($t in $Tasks) {
         $childId = gh issue view $num --repo $Repo --json id -q .id
         if ($LASTEXITCODE -ne 0 -or -not $childId) { throw "gh issue view #$num fallo (exit $LASTEXITCODE)" }
 
-        gh api graphql -f query='
+        # addSubIssue can 200 with an errors[] body (already-linked, permissions) - -Graphql throws
+        # on that as well as on a non-zero exit, so a loose child is never listed as linked.
+        $linkQuery = '
 mutation($p:ID!, $c:ID!) {
   addSubIssue(input:{issueId:$p, subIssueId:$c}) { issue { number } }
-}' -f "p=$parentId" -f "c=$childId" | Out-Null
-        # The issue exists but is not linked - say so instead of silently listing it as a child.
-        if ($LASTEXITCODE -ne 0) { throw "#$num se creo pero addSubIssue fallo (exit $LASTEXITCODE) - queda suelto, enlazalo a mano" }
+}'
+        try {
+            $null = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$linkQuery",'-f',"p=$parentId",'-f',"c=$childId") `
+                              -What "enlazar #$num como sub-issue de #$Parent" -Graphql
+        } catch {
+            # The issue exists but is not linked - say so instead of silently listing it as a child.
+            throw "#$num se creo pero addSubIssue fallo ($($_.Exception.Message)) - queda suelto, enlazalo a mano"
+        }
 
         Write-Host "  OK  #$num  $t" -ForegroundColor Green
         $created += $num
