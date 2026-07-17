@@ -14,14 +14,20 @@
 
     The contract, and both halves matter equally:
       * gh exits non-zero            -> throw, with the operation named and gh's stderr attached.
-      * gh succeeds and returns []   -> return []. A genuinely empty board is NOT an error.
+      * gh succeeds and returns []   -> return it as an empty result, NOT an error. A genuinely
+                                        empty board is not a failure.
     If those two ever collapse into each other the helper has failed at its only job, so the
     test suite pins them as a pair.
+
+    (Precisely: an empty JSON array comes back as $null, because `'[]' | ConvertFrom-Json` emits
+    nothing. That is what every consumer already expects - @($x).Count, foreach and ForEach-Object
+    all see zero either way - but the distinction is written down here rather than papered over.)
 
     Three failure modes, not one:
       1. non-zero exit                        -> -GhArgs alone covers it.
       2. exit 0 with an unparseable/empty body -> -Json (gh --json always emits at least [] or {}).
       3. exit 0 with a graphql errors[] body   -> -Graphql. The request succeeded; the query did not.
+         -Graphql implies -Json: the check needs the parsed body, so the two cannot be separated.
 
     stderr is captured here rather than left to each call site, because the `2>$null` idiom
     that ~30 sites use hides the message AND the exit code goes unread, so the failure leaves
@@ -33,8 +39,12 @@
     Usage:
       $board  = Invoke-Gh -GhArgs @('project','view','13','--owner','x','--format','json') `
                           -What 'leer el board #13' -Json
-      $resp   = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$q") -What 'mover el item' -Json -Graphql
+      $resp   = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$q") -What 'mover el item' -Graphql
       $null   = Invoke-Gh -GhArgs @('project','item-edit',...) -What 'escribir el campo' -Retries 3
+
+    A body on stdin (`gh api graphql --input -`) travels as -StdIn, NOT as a pipe into this
+    function - see Invoke-GhRaw for why a pipe would hang instead of failing:
+      $resp   = Invoke-Gh -GhArgs @('api','graphql','--input','-') -StdIn $body -What '...' -Graphql
 #>
 
 # The ONE place the gh executable is touched. A seam, so the retry/parse/throw logic above
@@ -42,10 +52,16 @@
 # stdout is kept CLEAN (stderr goes to its own file, never merged with 2>&1, which would
 # splice ErrorRecords into a body about to be parsed as JSON).
 function Invoke-GhRaw {
-    param([string[]]$GhArgs)
+    param([string[]]$GhArgs, [string]$StdIn)
     $errFile = [System.IO.Path]::GetTempFileName()
     try {
-        $out  = & gh @GhArgs 2>$errFile
+        # $StdIn feeds `gh ... --input -`. It must be piped HERE, explicitly: a native
+        # command does NOT inherit the enclosing function's pipeline input, so a caller
+        # writing `$body | Invoke-Gh ...` does not fail - gh blocks reading the console
+        # forever. A hang is worse than the 401 this file exists to stop, so the body
+        # travels as a parameter and the pipe is built where gh can actually see it.
+        if ($PSBoundParameters.ContainsKey('StdIn')) { $out = $StdIn | & gh @GhArgs 2>$errFile }
+        else                                         { $out = & gh @GhArgs 2>$errFile }
         $code = $LASTEXITCODE           # read FIRST: any native call after this clobbers it
         $err  = ''
         if (Test-Path $errFile) {
@@ -67,11 +83,17 @@ function Invoke-GhRaw {
 function Test-GhTransientError {
     param([string]$StdErr)
     if (-not $StdErr) { return $false }
+    # 'secondary rate limit' arrives as a 403, so it has to be matched by TEXT, not status:
+    # a plain permissions 403 must stay non-transient. This is the failure /board work
+    # -Parallel actually produces - N processes hammering the API - so leaving it out made
+    # -Retries useless for the one case it was needed. (Primary rate limiting is NOT here:
+    # it resets on the hour, and a 500ms backoff cannot outwait it.)
     return ($StdErr -match 'HTTP 5\d\d' -or
             $StdErr -match 'i/o timeout' -or
             $StdErr -match 'connection reset' -or
             $StdErr -match 'TLS handshake timeout' -or
-            $StdErr -match 'temporary failure')
+            $StdErr -match 'temporary failure' -or
+            $StdErr -match 'secondary rate limit')
 }
 
 function Invoke-Gh {
@@ -80,13 +102,21 @@ function Invoke-Gh {
         [string]$What = 'la operacion gh',
         [switch]$Json,
         [switch]$Graphql,
+        [string]$StdIn,
         [int]   $Retries = 0,
         [int]   $RetryDelayMs = 500
     )
 
+    # -Graphql IMPLIES -Json. Checking errors[] means parsing the body, and the parse only
+    # happens under -Json - so `-Graphql` alone used to return before the check ever ran,
+    # making the switch a silent no-op at exactly the call sites it was written for. A
+    # caller that asks for the graphql check must GET the graphql check.
+    if ($Graphql) { $Json = $true }
+
     $attempt = 0
     while ($true) {
-        $r = Invoke-GhRaw -GhArgs $GhArgs
+        $r = if ($PSBoundParameters.ContainsKey('StdIn')) { Invoke-GhRaw -GhArgs $GhArgs -StdIn $StdIn }
+             else                                         { Invoke-GhRaw -GhArgs $GhArgs }
         if ($r.ExitCode -eq 0) { break }
 
         # Retry only a transient failure, and only while attempts remain.

@@ -93,6 +93,22 @@ Describe 'Invoke-Gh -Graphql (exit 0 WITH an errors[] body)' {
         Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"x":1},"errors":[]}'; ExitCode = 0; StdErr = '' } }
         { Invoke-Gh -GhArgs @('api', 'graphql') -Json -Graphql } | Should -Not -Throw
     }
+
+    It 'THROWS on errors[] even WITHOUT -Json - the switch must never be a silent no-op' {
+        # -Graphql alone used to return the raw body before the errors[] check ran, so a
+        # caller that asked for the check silently got none: bug #303 restored at exactly
+        # the call sites this switch exists for. -Graphql now implies -Json.
+        Mock Invoke-GhRaw {
+            [pscustomobject]@{ Output = '{"data":null,"errors":[{"message":"Could not resolve to a node"}]}'; ExitCode = 0; StdErr = '' }
+        }
+        { Invoke-Gh -GhArgs @('api', 'graphql') -What 'mover el item' -Graphql } |
+            Should -Throw -ExpectedMessage '*Could not resolve to a node*'
+    }
+
+    It 'parses the body under -Graphql alone (it implies -Json)' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"node":{"id":"X"}}}'; ExitCode = 0; StdErr = '' } }
+        (Invoke-Gh -GhArgs @('api', 'graphql') -Graphql).data.node.id | Should -Be 'X'
+    }
 }
 
 Describe 'Test-GhTransientError (only retry what retrying can fix)' {
@@ -111,6 +127,16 @@ Describe 'Test-GhTransientError (only retry what retrying can fix)' {
     }
     It 'is false for empty stderr' {
         Test-GhTransientError -StdErr '' | Should -BeFalse
+    }
+    It 'treats a SECONDARY rate limit as transient - what -Parallel actually produces' {
+        Test-GhTransientError -StdErr 'HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes.' |
+            Should -BeTrue
+    }
+    It 'does NOT treat a plain permissions 403 as transient (matched by text, not status)' {
+        Test-GhTransientError -StdErr 'HTTP 403: Resource not accessible by integration' | Should -BeFalse
+    }
+    It 'matches case-insensitively (gh has changed the casing of these strings before)' {
+        Test-GhTransientError -StdErr 'http 502: bad gateway' | Should -BeTrue
     }
 }
 
@@ -174,6 +200,45 @@ Describe 'Invoke-GhRaw against the REAL gh (the seam every other test mocks away
 
     It 'end-to-end: a real succeeding gh call returns its output' -Skip:(-not $hasGh) {
         (Invoke-Gh -GhArgs @('--version') -What 'leer la version') -join ' ' | Should -Match 'gh version'
+    }
+}
+
+Describe 'Invoke-Gh -StdIn (the `gh api graphql --input -` sites)' {
+    # Apply-FieldPreset.ps1 feeds graphql over stdin. The obvious conversion,
+    # `$body | Invoke-Gh -GhArgs @('api','graphql','--input','-')`, does NOT work and does
+    # NOT fail: a native command inside a function never sees the function's pipeline
+    # input, so gh blocks on the console forever. Under a headless -Launch fleet session a
+    # silent hang is worse than the 401 this whole file exists to stop - hence -StdIn.
+
+    It 'the in-function pipe idiom Invoke-GhRaw relies on really reaches a native stdin' {
+        # Pins the IDIOM (`$var | & <native>` built INSIDE the function), not Invoke-GhRaw's
+        # own line - that one hardcodes gh, and `gh api graphql --input -` would need a token
+        # and the network. git is in this repo's toolchain and reads stdin, so it stands in.
+        # Mocking would prove nothing here: the hang IS the seam.
+        #
+        # Run in a job with a timeout so that a REGRESSION (gh blocking on the console) fails
+        # this test instead of wedging the whole suite forever - which is what the bug does.
+        $sha = ''
+        $job = Start-Job { $body = 'hello'; $body | & git hash-object --stdin 2>$null }
+        if (Wait-Job $job -Timeout 20) { $sha = (Receive-Job $job) -join '' }
+        Remove-Job $job -Force -ErrorAction SilentlyContinue
+        # Asserting a NON-empty sha, not a literal one: the exact hash depends on the line
+        # ending PowerShell's pipe appends (CRLF here -> ef0493b..., not the "hello\n"
+        # value every reference would tell you). What is under test is that the bytes
+        # arrived at all; pinning the platform's newline would only make this brittle.
+        $sha | Should -Match '^[0-9a-f]{40}$'
+    }
+
+    It 'passes -StdIn through Invoke-Gh to Invoke-GhRaw' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"ok":1}}'; ExitCode = 0; StdErr = '' } } -ParameterFilter { $StdIn -eq 'BODY' }
+        (Invoke-Gh -GhArgs @('api', 'graphql', '--input', '-') -StdIn 'BODY' -Graphql).data.ok | Should -Be 1
+        Should -Invoke Invoke-GhRaw -Times 1 -Exactly -ParameterFilter { $StdIn -eq 'BODY' }
+    }
+
+    It 'does not pass -StdIn when the caller did not ask for it' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = 'ok'; ExitCode = 0; StdErr = '' } }
+        Invoke-Gh -GhArgs @('repo', 'view') | Out-Null
+        Should -Invoke Invoke-GhRaw -Times 1 -Exactly -ParameterFilter { -not $PSBoundParameters.ContainsKey('StdIn') }
     }
 }
 
