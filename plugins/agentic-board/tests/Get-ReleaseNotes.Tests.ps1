@@ -78,7 +78,10 @@ Describe 'Get-ChangelogSection (release-notes extraction, #322)' {
         $notes | Should -Not -Match '\s$'
     }
     It 'handles CRLF line endings' {
-        $crlf = $script:Sample -replace "`n", "`r`n"
+        # Normalise to LF first, THEN to CRLF, so the sample is genuinely \r\n regardless of how
+        # this test file was checked out. A naive -replace "`n","`r`n" would double-convert an
+        # already-CRLF checkout (Windows CI) into \r\r\n — a malformed ending real files never have.
+        $crlf = ($script:Sample -replace "`r`n", "`n") -replace "`n", "`r`n"
         $notes = Get-ChangelogSection -Text $crlf -Version '0.20.0'
         $notes | Should -Match 'Older thing \(#3\)'
         $notes | Should -Not -Match 'Unreleased'
