@@ -50,6 +50,9 @@ $ErrorActionPreference = "Stop"
 
 # The single resolver for the internal state dir (new name + migration + fallback).
 . (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
+# gh must fail closed on the board read (#303/#316): a graphql failure that read as an empty board
+# would be written to the plan as "nothing pending" - a misread driving a wrong plan (#86 class).
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
 
 # ------------------------------------------------------------------ pure planner core
 function Split-CsvArg {
@@ -185,7 +188,9 @@ query(`$o:String!, `$n:Int!) {
   }
 }
 "@
-        $items = (gh api graphql -f query=$q -F "o=$Owner" -F "n=$ProjectNum" | ConvertFrom-Json).data.user.projectV2.items
+        $resp  = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$q",'-F',"o=$Owner",'-F',"n=$ProjectNum") `
+                           -What "leer los items del board #$ProjectNum" -Graphql
+        $items = $resp.data.user.projectV2.items
         return @{ nodes = $items.nodes; hasNext = $items.pageInfo.hasNextPage; endCursor = $items.pageInfo.endCursor }
     }
 

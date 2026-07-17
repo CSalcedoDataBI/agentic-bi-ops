@@ -64,6 +64,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# gh must fail closed on the sites that DRIVE the gate verdict and the ruleset write (#303/#316):
+# a false-empty review read reads as "0 unresolved -> GATE PASSED" and authorizes a merge. The
+# CI/review POLLING reads stay best-effort (a transient failure must keep polling, not throw).
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 if (-not $env:GH_TOKEN) {
     $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
 }
@@ -76,7 +81,8 @@ $rp = $Repo -split "/"
 # ==============================================================================
 if ($InstallRuleset) {
     $name = "pr-before-merge (agentic-board)"
-    $existing = gh api "repos/$Repo/rulesets" 2>$null | ConvertFrom-Json
+    # -Json fails closed: a read failure must not read as "no rulesets" and POST a DUPLICATE.
+    $existing = Invoke-Gh -GhArgs @('api',"repos/$Repo/rulesets") -What "leer los rulesets de $Repo" -Json
     if (@($existing | Where-Object { $_.name -eq $name }).Count -gt 0) {
         Write-Host "Ruleset '$name' ya existe en $Repo - nada que hacer." -ForegroundColor Green
         exit 0
@@ -99,7 +105,10 @@ if ($InstallRuleset) {
         })
         bypass_actors = @(@{ actor_id = 5; actor_type = "RepositoryRole"; bypass_mode = "always" })
     } | ConvertTo-Json -Depth 10
-    $payload | gh api "repos/$Repo/rulesets" -X POST --input - | Out-Null
+    # plain -StdIn: a native non-zero never threw, so the write silently no-op'd and still printed
+    # "OK instalado" - the ruleset the user believes protects the branch was never created (#316).
+    $null = Invoke-Gh -GhArgs @('api',"repos/$Repo/rulesets",'-X','POST','--input','-') -StdIn $payload `
+                      -What "instalar el ruleset '$name' en $Repo"
     Write-Host "OK ruleset '$name' instalado: PRs obligatorios hacia la rama default de $Repo." -ForegroundColor Green
     Write-Host "NOTA honesta: los admins del repo tienen bypass (el tooling sigue funcionando);" -ForegroundColor DarkGray
     Write-Host "la proteccion dura para humanos, el gate del flujo work aplica para el agente." -ForegroundColor DarkGray
@@ -153,7 +162,10 @@ if ($copilotRequested) {
 }
 
 # ── 1.5. Small-PR guard (GitHub PR BP: small, focused pull requests) ──────────
-$size = gh pr view $PR --repo $Repo --json additions,deletions,changedFiles | ConvertFrom-Json
+# -Json fails closed: a read failure must not yield null additions (-> 0 lines) that silently
+# skips the small-PR guard for a PR that could be huge (#316).
+$size = Invoke-Gh -GhArgs @('pr','view',"$PR",'--repo',$Repo,'--json','additions,deletions,changedFiles') `
+                  -What "leer el tamano del PR #$PR" -Json
 $totalLines = $size.additions + $size.deletions
 Write-Host ""
 Write-Host ("  Tamano del PR: {0} archivo(s), +{1}/-{2} ({3} lineas)" -f $size.changedFiles, $size.additions, $size.deletions, $totalLines) -ForegroundColor Cyan
@@ -167,7 +179,10 @@ if ($totalLines -gt $MaxLines -or $size.changedFiles -gt $MaxFiles) {
 # ── 1.7. TMDL diff review (M2.2): breaking schema changes in PBIP models ──────
 # Warn-only: this step never changes the gate verdict. It surfaces breaking
 # semantic-model changes so the reviewer acknowledges them before merging.
-$tmdlChanged = gh api "repos/$Repo/pulls/$PR/files" --paginate --jq '.[] | select(.filename | endswith(".tmdl")) | .filename' 2>$null
+# plain: --jq emits filtered text (not JSON). A genuinely no-.tmdl PR returns empty at exit 0 (fine),
+# but a READ FAILURE must throw instead of silently skipping the TMDL breaking-change review (#316).
+$tmdlChanged = Invoke-Gh -GhArgs @('api',"repos/$Repo/pulls/$PR/files",'--paginate','--jq','.[] | select(.filename | endswith(".tmdl")) | .filename') `
+                         -What "leer los archivos del PR #$PR"
 if ($tmdlChanged) {
     Write-Host ""
     Write-Host "  Cambios en modelo TMDL detectados - corriendo review de esquema..." -ForegroundColor Cyan
@@ -200,7 +215,10 @@ if ($checksExit -ne 0) {
 
 # ── 3. Wait for the review, then collect decision + threads ───────────────────
 function Get-ReviewState {
-    $q = gh api graphql -f query='
+    # THE gate verdict read. -Graphql throws on exit OR errors[] so a failed read can never come
+    # back as 0 reviews / 0 unresolved / null decision -> a false GATE PASSED that authorizes a
+    # merge. -Retries rides out a transient blip during the poll; a hard failure fails the gate (#316).
+    $reviewQuery = '
 query($o:String!, $r:String!, $n:Int!) {
   repository(owner:$o, name:$r) {
     pullRequest(number:$n) {
@@ -209,7 +227,9 @@ query($o:String!, $r:String!, $n:Int!) {
       reviewThreads(first:50) { nodes { isResolved } }
     }
   }
-}' -f "o=$($rp[0])" -f "r=$($rp[1])" -F "n=$PR" | ConvertFrom-Json
+}'
+    $q = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$reviewQuery",'-f',"o=$($rp[0])",'-f',"r=$($rp[1])",'-F',"n=$PR") `
+                   -What "leer el estado del review del PR #$PR" -Graphql -Retries 2
     return $q.data.repository.pullRequest
 }
 

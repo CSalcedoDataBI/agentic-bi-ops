@@ -17,6 +17,25 @@ BeforeAll {
     $all = @('claude','codex','gemini','copilot')
 }
 
+Describe 'Get-PendingBoardIssues fails closed on the board read (#316, part of #303)' {
+    # Fleet-Plan dot-sources Invoke-Gh before its guard, so the Invoke-GhRaw seam is defined here.
+    # A failed board read used to yield $null -> an EMPTY plan written to the ledger as "nothing
+    # pending" (the #86 class: a misread driving a wrong write). -Graphql now throws instead.
+    It 'THROWS on a non-zero exit instead of returning an empty (no-pending) plan' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = ''; ExitCode = 1; StdErr = 'HTTP 401: Bad credentials' } }
+        { Get-PendingBoardIssues 'owner' 13 } | Should -Throw
+    }
+    It 'THROWS on a graphql errors[] body despite exit 0' {
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":null,"errors":[{"message":"boom"}]}'; ExitCode = 0; StdErr = '' } }
+        { Get-PendingBoardIssues 'owner' 13 } | Should -Throw
+    }
+    It 'returns empty (no throw) for a successfully-read board with nothing pending' {
+        # One CLOSED issue -> filtered out before the per-issue blocked_by read, so no real gh call.
+        Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"user":{"projectV2":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"fieldValues":{"nodes":[]},"content":{"__typename":"Issue","number":9,"state":"CLOSED","title":"done","repository":{"nameWithOwner":"o/r"},"labels":{"nodes":[]}}}]}}}}}'; ExitCode = 0; StdErr = '' } }
+        @(Get-PendingBoardIssues 'owner' 13).Count | Should -Be 0
+    }
+}
+
 Describe 'Select-CliForIssue (capability routing with availability fallback)' {
     It 'routes security/architecture/large work to claude' {
         Select-CliForIssue (New-Iss 1 -Labels 'security') $all | Should -Be 'claude'

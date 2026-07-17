@@ -74,6 +74,12 @@ $ErrorActionPreference = "Stop"
 # again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
 . (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
 
+# gh must fail closed on the diff reads (#303/#316): an empty read of the changed files or the
+# base/head SHAs would make this report "no breaking changes" over a diff it never actually read -
+# a false all-clear on a semantic-model review. (An added file legitimately 404s at base; that
+# single case is special-cased below, not swallowed wholesale.)
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 # ==============================================================================
 # Helpers
 # ==============================================================================
@@ -311,14 +317,27 @@ function Compare-Models {
 
 function Get-ChangedTmdlFiles-PR {
     param([string]$Repo, [int]$PR)
-    $files = gh api "repos/$Repo/pulls/$PR/files" --paginate --jq '.[] | select(.filename | endswith(".tmdl")) | .filename' 2>$null
+    # plain: --jq emits filtered text. A PR with no .tmdl legitimately returns empty at exit 0; a
+    # READ FAILURE must throw instead of an empty list read as "nothing changed" (#316).
+    $files = Invoke-Gh -GhArgs @('api',"repos/$Repo/pulls/$PR/files",'--paginate','--jq','.[] | select(.filename | endswith(".tmdl")) | .filename') `
+                       -What "leer los archivos del PR #$PR"
     return @($files | Where-Object { $_ })
 }
 
 function Get-Content-AtRef-API {
     param([string]$Repo, [string]$Ref, [string]$Path)
     $escaped = ($Path -split '/' | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
-    $b64 = gh api "repos/$Repo/contents/$escaped`?ref=$Ref" --jq '.content' 2>$null
+    # A file that is ADDED in the PR does not exist at the base ref: gh returns 404, and that empty
+    # is legitimate ("" base content = everything reads as added). But a 401/5xx must NOT be swallowed
+    # as "" - that would silently compare against empty and miss real breaking changes. So: 404 -> "",
+    # any other failure -> throw (#316).
+    try {
+        $b64 = Invoke-Gh -GhArgs @('api',"repos/$Repo/contents/$escaped`?ref=$Ref",'--jq','.content') `
+                         -What "leer $Path @ $Ref"
+    } catch {
+        if ($_.Exception.Message -match '404|Not Found') { return "" }
+        throw
+    }
     if (-not $b64) { return "" }
     try {
         return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($b64 -replace '\s', '')))
@@ -358,8 +377,10 @@ if ($mode -eq "pr") {
 # Gather (path, baseContent, headContent) per changed .tmdl file.
 $pairs = @()
 if ($mode -eq "pr") {
-    $baseSha = gh api "repos/$Repo/pulls/$PR" --jq '.base.sha' 2>$null
-    $headSha = gh api "repos/$Repo/pulls/$PR" --jq '.head.sha' 2>$null
+    # plain: an empty base/head sha would make every file read as fully added/deleted - a false
+    # review over an unread diff. A read failure must throw (#316).
+    $baseSha = Invoke-Gh -GhArgs @('api',"repos/$Repo/pulls/$PR",'--jq','.base.sha') -What "leer base.sha del PR #$PR"
+    $headSha = Invoke-Gh -GhArgs @('api',"repos/$Repo/pulls/$PR",'--jq','.head.sha') -What "leer head.sha del PR #$PR"
     $changed = Get-ChangedTmdlFiles-PR -Repo $Repo -PR $PR
     foreach ($p in $changed) {
         $pairs += [pscustomobject]@{
