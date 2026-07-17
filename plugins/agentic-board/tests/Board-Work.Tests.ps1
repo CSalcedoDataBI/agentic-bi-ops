@@ -45,6 +45,57 @@ BeforeAll {
     }
 }
 
+Describe 'Board-Work graphql reads fail closed (#314, part of #303)' {
+    # Board-Work dot-sources Invoke-Gh BEFORE its guard, so the Invoke-GhRaw seam is defined here
+    # too. Mocking it reproduces any exit code / body with no token and no network. These reads
+    # DRIVE writes (Status moves) and board lookups; a silent failure is the #303/#314 class.
+
+    Context 'Get-BoardItem (paginated board scan)' {
+        It 'THROWS on a non-zero exit instead of silently truncating pagination (false "not on board")' {
+            Mock Invoke-GhRaw { [pscustomobject]@{ Output = ''; ExitCode = 1; StdErr = 'HTTP 401: Bad credentials' } }
+            { Get-BoardItem 'PVT_x' 5 } | Should -Throw
+        }
+        It 'THROWS on a graphql errors[] body despite exit 0' {
+            Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":null,"errors":[{"message":"boom"}]}'; ExitCode = 0; StdErr = '' } }
+            { Get-BoardItem 'PVT_x' 5 } | Should -Throw
+        }
+    }
+
+    Context 'Resolve-BoardStatus (board id + Status field that every start writes against)' {
+        It 'names the graphql failure, not a misleading "board not found", on an errors[] body' {
+            # A null-id guard already throws here, so a bare Should -Throw would pass even
+            # un-hardened (for the wrong reason). Assert the MESSAGE so only -Graphql satisfies it.
+            Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":null,"errors":[{"message":"boom"}]}'; ExitCode = 0; StdErr = '' } }
+            { Resolve-BoardStatus 'owner' 13 } | Should -Throw -ExpectedMessage '*resolver el board*'
+        }
+        It 'returns the context (id + In Progress option) on a successful read - empty is not failure' {
+            Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"user":{"projectV2":{"id":"PID","fields":{"nodes":[{"id":"F","name":"Status","options":[{"id":"O","name":"In Progress"}]}]}}}}}'; ExitCode = 0; StdErr = '' } }
+            $ctx = Resolve-BoardStatus 'owner' 13
+            $ctx.projectId | Should -Be 'PID'
+            $ctx.inProgId  | Should -Be 'O'
+        }
+    }
+}
+
+Describe 'Invoke-BatchIssueStart (a fail-closed throw must not abort the -Parallel batch, #314)' {
+    # #314 made the Status move + board read throw on a gh failure. On the batch path that would
+    # abort the whole foreach and skip the summary - so the batch wraps each start and converts a
+    # throw into a recorded skip. Mocking Invoke-IssueStart keeps this off git and the network.
+    It 'converts a throw into a skip result so the batch keeps going' {
+        Mock Invoke-IssueStart { throw "No pude mover #7 a In Progress (gh exit 1)" }
+        $r = Invoke-BatchIssueStart -IssueNum 7 -Ctx $script:Ctx -Owner 'me'
+        $r.started | Should -BeFalse
+        $r.issue   | Should -Be 7
+        $r.skipped | Should -Match 'error al iniciar'
+    }
+    It 'passes a successful start straight through' {
+        Mock Invoke-IssueStart { [pscustomobject]@{ issue = 5; started = $true; skipped = ''; workPath = 'wp' } }
+        $r = Invoke-BatchIssueStart -IssueNum 5 -Ctx $script:Ctx -Owner 'me'
+        $r.started | Should -BeTrue
+        $r.skipped | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Get-ParallelQueue (batch parsing)' {
     It 'de-duplicates while preserving the requested order' {
         (Get-ParallelQueue 5,5,7,5) | Should -Be @(5,7)

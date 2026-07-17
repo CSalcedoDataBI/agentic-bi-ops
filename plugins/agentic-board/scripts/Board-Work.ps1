@@ -178,6 +178,10 @@ $ErrorActionPreference = "Stop"
 # The canonical/legacy option vocabulary (issue #278): lets this script understand a
 # board born from GitHub's default template ('Todo') as well as a canonical one.
 . (Join-Path $PSScriptRoot 'Get-BoardVocabulary.ps1')
+# gh fails closed (#303/#314): a non-zero exit OR an exit-0 graphql errors[] body must THROW,
+# not read as an empty board or a write that silently no-op'd. Pure at load; dot-sourced before
+# the guard so unit tests get the seam. Session-monitor reads deliberately stay best-effort.
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
 
 # NOTE: the GH_TOKEN check lives in the main-entry guard below (after every function
 # is defined) so the pure helpers can be dot-sourced for unit tests without a token
@@ -413,7 +417,9 @@ function Get-ParallelQueue([string[]]$nums) {
 
 # Resolve the board id + Status field + "In Progress" option once, reuse per issue.
 function Resolve-BoardStatus([string]$owner, [int]$projectNum) {
-    $projData = gh api graphql -f query='
+    # -Graphql fails closed on a non-zero exit AND on an exit-0 errors[] body, so a read failure
+    # throws here (naming the board) instead of a null id mislabelled "board not found" (#303/#314).
+    $statusQuery = '
 query($owner:String!, $num:Int!) {
   user(login:$owner) {
     projectV2(number:$num) {
@@ -425,7 +431,9 @@ query($owner:String!, $num:Int!) {
       }
     }
   }
-}' -F "owner=$owner" -F "num=$projectNum" | ConvertFrom-Json
+}'
+    $projData = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$statusQuery",'-F',"owner=$owner",'-F',"num=$projectNum") `
+                          -What "resolver el board #$projectNum de $owner" -Graphql
 
     $projectId  = $projData.data.user.projectV2.id
     if (-not $projectId) { throw "Board #$projectNum no encontrado para $owner." }
@@ -491,7 +499,11 @@ query(`$proj:ID!) {
   }
 }
 "@
-            $items = (gh api graphql -f query=$q -F "proj=$projectId" | ConvertFrom-Json).data.node.items
+            # -Graphql + retries: a transient failure retries, a hard failure (or errors[]) THROWS
+            # instead of silently truncating pagination -> a target issue falsely "not on board" (#314).
+            $resp  = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$q",'-F',"proj=$projectId") `
+                               -What "leer los items del board" -Graphql -Retries 2
+            $items = $resp.data.node.items
             return @{ nodes = $items.nodes; hasNext = $items.pageInfo.hasNextPage; endCursor = $items.pageInfo.endCursor }
         }
         $item = $nodes |
@@ -853,18 +865,27 @@ function Invoke-IssueStart {
     }
 
     # -- Execute: Status -> In Progress -----------------------------------------
-    gh api graphql -f query='
+    # -Graphql throws on a non-zero exit OR an exit-0 errors[] body, so we never print "OK" for a
+    # move that never happened - the whole start aborts loudly instead (the issue must really be
+    # In Progress before we claim/branch it, or the multi-session guard is built on a lie) (#314).
+    $startStatusMutation = '
 mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
   updateProjectV2ItemFieldValue(input:{
     projectId:$proj, itemId:$item, fieldId:$field,
     value:{singleSelectOptionId:$opt}
   }) { projectV2Item { id } }
-}' -f "proj=$($Ctx.projectId)" -f "item=$($item.id)" -f "field=$($Ctx.statusNode.id)" -f "opt=$($Ctx.inProgId)" | Out-Null
+}'
+    $null = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$startStatusMutation",'-f',"proj=$($Ctx.projectId)",'-f',"item=$($item.id)",'-f',"field=$($Ctx.statusNode.id)",'-f',"opt=$($Ctx.inProgId)") `
+                      -What "mover #$IssueNum a In Progress" -Graphql
     Write-Host "  OK  Status -> In Progress" -ForegroundColor Green
 
     # -- Execute: assign owner --------------------------------------------------
+    # Routed through Invoke-Gh so the catch actually fires: a bare native non-zero never threw, so
+    # the old try/catch printed "OK Assignee" for an assignment that silently failed (#314). The
+    # warn-and-continue policy is preserved deliberately.
     try {
-        gh api "repos/$repo/issues/$IssueNum/assignees" -X POST -F "assignees[]=$Owner" | Out-Null
+        $null = Invoke-Gh -GhArgs @('api',"repos/$repo/issues/$IssueNum/assignees",'-X','POST','-F',"assignees[]=$Owner") `
+                          -What "asignar #$IssueNum a $Owner"
         Write-Host "  OK  Assignee -> $Owner" -ForegroundColor Green
     } catch {
         Write-Host "  WARN no se pudo asignar: $_" -ForegroundColor DarkYellow
@@ -874,7 +895,8 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
     $claimNote = if ($TakeOver) { "TAKEOVER" } else { "claim" }
     $fingerprint = Format-ClaimFingerprint -Note $claimNote -Computer $env:COMPUTERNAME -ProcessId $PID -Date (Get-Date -Format 'yyyy-MM-dd HH:mm') -Branch $branchName
     try {
-        gh issue comment $IssueNum --repo $repo --body $fingerprint | Out-Null
+        $null = Invoke-Gh -GhArgs @('issue','comment',"$IssueNum",'--repo',$repo,'--body',$fingerprint) `
+                          -What "registrar el claim en #$IssueNum"
         Write-Host "  OK  Claim registrado ($claimNote)" -ForegroundColor Green
     } catch {
         Write-Host "  WARN no se pudo registrar el claim: $_" -ForegroundColor DarkYellow
@@ -2180,6 +2202,29 @@ function Invoke-SessionWatch {
     }
 }
 
+# Batch-path wrapper around Invoke-IssueStart. Since #314 made the Status move and the board read
+# FAIL CLOSED (throw), a single issue's gh failure would otherwise abort the whole -Parallel foreach
+# and skip the summary. Here a throw is converted into a recorded skip (same result shape) so the
+# batch keeps going - the documented "skip a failing issue and continue" contract. A single -Start
+# deliberately does NOT use this: there the throw should surface.
+function Invoke-BatchIssueStart {
+    param(
+        [int]$IssueNum, $Ctx, [string]$Owner, [string]$Base,
+        [switch]$BaseCurrent, [switch]$DryRun, [switch]$IgnoreBlocked, [switch]$TakeOver
+    )
+    try {
+        return Invoke-IssueStart -IssueNum $IssueNum -Ctx $Ctx -Owner $Owner -MakeBranch -PreferWorktree `
+                                 -Base $Base -BaseCurrent:$BaseCurrent -DryRunStart:$DryRun `
+                                 -IgnoreBlocked:$IgnoreBlocked -TakeOver:$TakeOver
+    } catch {
+        Write-Host ("  SKIP #{0}: error al iniciar - {1}" -f $IssueNum, $_.Exception.Message) -ForegroundColor Red
+        return [PSCustomObject]@{
+            issue = $IssueNum; title = ""; repo = ""; branch = ""; workPath = ""
+            started = $false; dryRun = [bool]$DryRun; skipped = "error al iniciar: $($_.Exception.Message)"
+        }
+    }
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: when the test harness sets ABIOS_BOARDWORK_DOTSOURCE,
 # the script returns here with only the functions defined - no token check, no gh
@@ -2313,25 +2358,35 @@ if ($Lock -gt 0 -or $Unlock -gt 0) {
         exit 0
     }
 
-    gh issue comment $n --repo $repo --body $fingerprint | Out-Null
+    # The [abios-claim] comment IS the lock marker other sessions read - if it silently fails to
+    # post, -Start would not see the lock. Fail closed (throw) so a lock that did not happen is
+    # never reported as posted (#314).
+    $null = Invoke-Gh -GhArgs @('issue','comment',"$n",'--repo',$repo,'--body',$fingerprint) `
+                      -What "postear el comentario [abios-claim] en #$n"
     if ($targetOpt) {
-        gh api graphql -f query='
+        # -Graphql throws on exit OR errors[]: the multi-session LOCK the user believes protects
+        # their work must not be reported "OK" when the status move silently no-op'd (#314).
+        $lockStatusMutation = '
 mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
   updateProjectV2ItemFieldValue(input:{
     projectId:$proj, itemId:$item, fieldId:$field,
     value:{singleSelectOptionId:$opt}
   }) { projectV2Item { id } }
-}' -f "proj=$($ctx.projectId)" -f "item=$($item.id)" -f "field=$($ctx.statusNode.id)" -f "opt=$targetOpt" | Out-Null
+}'
+        $null = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$lockStatusMutation",'-f',"proj=$($ctx.projectId)",'-f',"item=$($item.id)",'-f',"field=$($ctx.statusNode.id)",'-f',"opt=$targetOpt") `
+                          -What "mover #$n a $targetName" -Graphql
         Write-Host ("OK  #{0} Status -> {1}" -f $n, $targetName) -ForegroundColor Green
     } else {
         Write-Host ("WARN el board no tiene la opcion '{0}' en Status - solo se posteo el comentario {1}." -f $targetName, $note) -ForegroundColor DarkYellow
     }
     # Assign (lock) / unassign (unlock) the owner so the In Progress + assigned state
     # that Invoke-IssueStart's guard checks for is real - a status move alone is not
-    # enough to make -Start refuse (Codex review, PR #268).
+    # enough to make -Start refuse (Codex review, PR #268). Routed through Invoke-Gh so the
+    # warn actually fires on a real failure (a bare native non-zero never threw) (#314).
     try {
         $method = if ($locking) { 'POST' } else { 'DELETE' }
-        gh api "repos/$repo/issues/$n/assignees" -X $method -F "assignees[]=$Owner" | Out-Null
+        $null = Invoke-Gh -GhArgs @('api',"repos/$repo/issues/$n/assignees",'-X',$method,'-F',"assignees[]=$Owner") `
+                          -What "$assignVerb en #$n"
         Write-Host ("OK  #{0} {1}" -f $n, $assignVerb) -ForegroundColor Green
     } catch {
         Write-Host ("WARN no se pudo {0}: {1}" -f $assignVerb, $_) -ForegroundColor DarkYellow
@@ -2374,7 +2429,9 @@ if ($ListBoards) {
         Write-Host "=== Boards vinculados a $Repo (contando pendientes) ===" -ForegroundColor Cyan
         Write-Host ""
         $rp = $Repo -split "/"
-        $linked = gh api graphql -f query='
+        # -Graphql fails closed: a read failure must not read as "the repo has no linked boards"
+        # and send the user to /board init to create a DUPLICATE of a board it could not see (#314).
+        $linkedQuery = '
 query($o:String!, $r:String!) {
   repository(owner:$o, name:$r) {
     projectsV2(first:20) {
@@ -2384,7 +2441,9 @@ query($o:String!, $r:String!) {
       }
     }
   }
-}' -f "o=$($rp[0])" -f "r=$($rp[1])" | ConvertFrom-Json
+}'
+        $linked = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$linkedQuery",'-f',"o=$($rp[0])",'-f',"r=$($rp[1])") `
+                            -What "leer los boards vinculados a $Repo" -Graphql
         $boards = @($linked.data.repository.projectsV2.nodes |
                     Where-Object { -not $_.closed -and $_.title -notmatch '(?i)backup' } |
                     ForEach-Object { [PSCustomObject]@{ number = $_.number; title = $_.title; ownerLogin = $_.owner.login } })
@@ -2396,7 +2455,8 @@ query($o:String!, $r:String!) {
         # Account scope: every board of the owner
         Write-Host "=== Boards de $Owner (contando pendientes, puede tardar unos segundos) ===" -ForegroundColor Cyan
         Write-Host ""
-        $projects = (gh project list --owner $Owner --format json --limit 30 | ConvertFrom-Json).projects
+        $projects = (Invoke-Gh -GhArgs @('project','list','--owner',$Owner,'--format','json','--limit','30') `
+                               -What "listar los boards de $Owner" -Json).projects
         $boards   = @($projects | Where-Object { $_.title -notmatch '(?i)backup' } |
                       ForEach-Object { [PSCustomObject]@{ number = $_.number; title = $_.title; ownerLogin = $Owner } })
         if ($boards.Count -eq 0) { Write-Host "No hay boards para $Owner."; exit 0 }
@@ -2405,7 +2465,10 @@ query($o:String!, $r:String!) {
     $rows = @()
     foreach ($b in $boards) {
         try {
-            $items   = (gh project item-list $b.number --owner $b.ownerLogin --format json --limit 200 | ConvertFrom-Json).items
+            # -Json throws on a failed read (caught below -> honest "?"): a bare read would yield
+            # $null under pwsh 7 and print "pendientes: 0", a false clean for that board (#314).
+            $items   = (Invoke-Gh -GhArgs @('project','item-list',"$($b.number)",'--owner',$b.ownerLogin,'--format','json','--limit','200') `
+                                  -What "listar los items del board #$($b.number)" -Json).items
             $pending = @($items | Where-Object { Test-Pending $_ }).Count
             $total   = @($items).Count
         } catch {
@@ -2456,7 +2519,10 @@ if ($Start -le 0 -and $ToReview -le 0 -and $Parallel.Count -eq 0) {
     $statusOpts = Get-StatusOptionNames $ProjectNum
     Show-StatusSchemaWarning $statusOpts $ProjectNum
 
-    $items   = (gh project item-list $ProjectNum --owner $Owner --format json --limit 200 | ConvertFrom-Json).items
+    # -Json fails closed: a read failure must THROW, not yield an empty list the script then
+    # reports as "Sin pendientes" - the green all-clear over a board full of open issues (#278/#314).
+    $items   = (Invoke-Gh -GhArgs @('project','item-list',"$ProjectNum",'--owner',$Owner,'--format','json','--limit','200') `
+                          -What "listar los items del board #$ProjectNum" -Json).items
     $pending = @($items | Where-Object { Test-Pending $_ })
 
     if ($pending.Count -eq 0) {
@@ -2526,7 +2592,9 @@ if ($Start -le 0 -and $ToReview -le 0 -and $Parallel.Count -eq 0) {
 # testing while the gate runs. Merge later moves it to Done (close->Done + fill).
 # ==============================================================================
 if ($ToReview -gt 0) {
-    $projData = gh api graphql -f query='
+    # -Graphql fails closed on exit OR errors[], so a read failure throws here instead of a null
+    # id mislabelled "board not found" - this read drives the In Review write below (#314).
+    $toReviewQuery = '
 query($owner:String!, $num:Int!) {
   user(login:$owner) {
     projectV2(number:$num) {
@@ -2534,7 +2602,9 @@ query($owner:String!, $num:Int!) {
       fields(first:30) { nodes { ... on ProjectV2SingleSelectField { id name options { id name } } } }
     }
   }
-}' -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
+}'
+    $projData = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$toReviewQuery",'-F',"owner=$Owner",'-F',"num=$ProjectNum") `
+                          -What "resolver el board #$ProjectNum de $Owner" -Graphql
 
     $projectId  = $projData.data.user.projectV2.id
     if (-not $projectId) { throw "Board #$ProjectNum no encontrado para $Owner." }
@@ -2557,13 +2627,17 @@ query($owner:String!, $num:Int!) {
         exit 0
     }
 
-    gh api graphql -f query='
+    # -Graphql throws on exit OR errors[]: never print "OK -> In Review" for a move that silently
+    # no-op'd (PR is open, the gate expects In Review, but the item stayed put) (#314).
+    $toReviewMutation = '
 mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
   updateProjectV2ItemFieldValue(input:{
     projectId:$proj, itemId:$item, fieldId:$field,
     value:{singleSelectOptionId:$opt}
   }) { projectV2Item { id } }
-}' -f "proj=$projectId" -f "item=$($item.id)" -f "field=$($statusNode.id)" -f "opt=$reviewId" | Out-Null
+}'
+    $null = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$toReviewMutation",'-f',"proj=$projectId",'-f',"item=$($item.id)",'-f',"field=$($statusNode.id)",'-f',"opt=$reviewId") `
+                      -What "mover #$ToReview a In Review" -Graphql
     Write-Host "OK  #$ToReview '$($item.content.title)' -> Status In Review (en review/testing)." -ForegroundColor Green
     Write-Host "Board: $boardUrl" -ForegroundColor Cyan
     exit 0
@@ -2591,9 +2665,9 @@ if ($Parallel.Count -gt 0) {
     $results = @()
     foreach ($n in $queue) {
         Write-Host ("--- #{0} ---" -f $n) -ForegroundColor Cyan
-        $r = Invoke-IssueStart -IssueNum $n -Ctx $ctx -Owner $Owner -MakeBranch -PreferWorktree `
-                               -Base $Base -BaseCurrent:$BaseCurrent -DryRunStart:$DryRun `
-                               -IgnoreBlocked:$IgnoreBlocked -TakeOver:$TakeOver
+        $r = Invoke-BatchIssueStart -IssueNum $n -Ctx $ctx -Owner $Owner `
+                                    -Base $Base -BaseCurrent:$BaseCurrent -DryRun:$DryRun `
+                                    -IgnoreBlocked:$IgnoreBlocked -TakeOver:$TakeOver
         $results += $r
         Write-Host ""
     }
