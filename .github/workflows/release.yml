@@ -1,0 +1,103 @@
+name: Release
+
+# Release L1 (#322, part of #321): the tool tags nobody's repos but its own — it installs rulesets,
+# templates and add-to-project CI into OTHER repos while its own repo had zero tags and zero
+# releases, so installs (relative marketplace `source`, no pinned ref) track main HEAD and two users
+# can run different code under one version string (#295). This closes the provenance half: when
+# plugin.json's version changes on main, cut a git tag v<version> and a GitHub Release whose body is
+# that version's CHANGELOG block. CI-driven, not a documented manual step — "tagging stays manual"
+# scored 0 tags for months; a backstop that fires on the change itself does not degrade (#305).
+#
+# Layer 2 (#323 — pin the marketplace at a release ref so installs stop following HEAD) is separate.
+
+on:
+  push:
+    branches: [main]
+    # Only a plugin.json change can bump the version. The release-existence check below makes the
+    # job idempotent, so a non-version edit (e.g. description) to this file is a harmless no-op.
+    paths:
+      - 'plugins/agentic-board/.claude-plugin/plugin.json'
+  workflow_dispatch:   # manual re-run / backfill
+
+permissions:
+  contents: write   # push the tag + create the release
+
+# Serialise releases: a rapid double-push, or a push racing a manual dispatch, must not both reach
+# `gh release create` and turn one run red on "release already exists".
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags, and `git log -- plugin.json` needs the history
+
+      - name: Read version and decide whether to release
+        id: v
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $pjPath = 'plugins/agentic-board/.claude-plugin/plugin.json'
+          $ver = (Get-Content $pjPath -Raw | ConvertFrom-Json).version
+          if (-not $ver) { throw 'plugin.json has no version.' }
+          $tag = "v$ver"
+          "version=$ver" | Out-File $env:GITHUB_OUTPUT -Append
+          "tag=$tag"     | Out-File $env:GITHUB_OUTPUT -Append
+
+          # Tag the commit that actually SET this version (the last change to plugin.json), not the
+          # push tip: a batched push, or a workflow_dispatch long after the bump, would otherwise
+          # tag the wrong commit and defeat the point (provenance). Falls back to the event sha.
+          $sha = (git log -1 --format=%H -- $pjPath 2>$null | Out-String).Trim()
+          if (-not $sha) { $sha = $env:GITHUB_SHA }
+          "sha=$sha" | Out-File $env:GITHUB_OUTPUT -Append
+
+          # Idempotency keys on the RELEASE, not the tag. A tag can exist without a Release — a
+          # human backfilling with `git tag`/`git push --tags` (exactly the #321 scenario), or a
+          # half-failed prior run — and that Release must still get created; an existing Release must
+          # never be recreated. GitHub's pwsh runs with $ErrorActionPreference='stop', so a missing
+          # release (gh exit 1) would THROW; the try/catch + $LASTEXITCODE reads it as "absent".
+          $exists = $false
+          try {
+            gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+            $exists = ($LASTEXITCODE -eq 0)
+          } catch { $exists = $false }
+          if ($exists) {
+            "release=false" | Out-File $env:GITHUB_OUTPUT -Append
+            Write-Host "Release $tag already exists — nothing to do."
+          } else {
+            "release=true"  | Out-File $env:GITHUB_OUTPUT -Append
+            Write-Host "No release $tag yet — will create it at $sha."
+          }
+
+      - name: Extract release notes from the CHANGELOG
+        if: steps.v.outputs.release == 'true'
+        shell: pwsh
+        # The version is a controlled semver string, but it still travels as an env var (never
+        # spliced into the script via ${{ }}) to match this repo's injection-safe convention.
+        env:
+          VER: ${{ steps.v.outputs.version }}
+        run: |
+          ./scripts/Get-ReleaseNotes.ps1 -Version "$env:VER" -ChangelogPath CHANGELOG.md > release-notes.md
+          Write-Host "----- release notes -----"
+          Get-Content release-notes.md
+
+      - name: Create the tag and GitHub Release
+        if: steps.v.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.v.outputs.tag }}
+          SHA: ${{ steps.v.outputs.sha }}
+        run: |
+          # gh release create makes the tag at $SHA when it does not exist (--target is ignored if
+          # the tag already exists), so the tag and the release are created together — and when a
+          # tag was pre-created by hand, this still attaches the missing Release to it.
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            --target "$SHA"
+          echo "::notice::Released $TAG at $SHA"
