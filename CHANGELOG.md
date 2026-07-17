@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.22.0] - 2026-07-17
+### Added
+- **release L1: CI tags + a GitHub Release when `plugin.json`'s version changes on `main`** (#322).
+  `.github/workflows/release.yml` cuts the tag `v<version>` and a Release (notes taken from that
+  version's CHANGELOG block via `scripts/Get-ReleaseNotes.ps1`) on the exact commit that set the
+  version. Idempotency keys on the Release, not the tag, so a hand-created tag still gets its Release.
+- **release L2: the marketplace is pinned at a `release` channel, so installs stop tracking `main`
+  HEAD** (#323). Both `marketplace.json` entries use a `git-subdir` source at `ref: release`; the
+  release workflow fast-forwards that branch to each released commit. Two users on the same version
+  string now get the same code (closes the #295 "two codebases" class).
+- **skills-ops toolkit catalog** (#331) — a `bi.json` schema with the `microsoft/skills-for-fabric`
+  entry, and quality skills migrated to `quality.json`.
+- **skills-ops profile-aware bootstrap** (#332) — `Get-SkillGaps -Profile`, plugin-vs-skill-clone
+  install, and `/skills bootstrap <profile>`.
+- **skills-ops freshness monitor** (#333) — install provenance in `Install-SkillFromRepo`,
+  `Get-ToolkitFreshness.ps1`, and `/skills freshness`.
+### Fixed
+- **Board reads no longer break once a board passes 100 items** (#329). Every paginated Projects-v2
+  read built its page-2 cursor as `after: "$cursor"` — PowerShell drops the embedded quotes when it
+  hands the argument to `gh.exe`, so the base64 cursor arrived unquoted and its `==` padding parsed as
+  bare tokens (`Expected NAME, actual EQUALS`). Latent until a second page existed; at 182 items it
+  broke `-Start`, `-ToReview`, `-Parallel`, `-Fleet`, the changelog, the gap-filler and the fleet
+  planner at once. The cursor now travels as a GraphQL variable, never spliced into the query text.
+- **gh hardening: a `gh` failure is now a failure, not an empty result, across the whole suite**
+  (#313, #314, #315, #316, completing #303). The read-then-write paths (Board-Fill, Set-BoardField,
+  Resolve-Board, Apply-FieldPreset), Board-Work's ~25 unchecked sites (claims, locks, pending, session
+  state), the `gh api graphql` exit-0-with-`errors[]` bodies, and the remaining scripts (Board-Handoff,
+  Tmdl-DiffReview, Fleet-*, Board-Changelog, Board-ReviewGate) all fail closed via `Invoke-Gh`.
+- **release.yml: the release-existence probe no longer fails its own step** (#339). `gh release view`
+  exits 1 when the Release is absent (the intended path), and GitHub's pwsh shell appends
+  `exit $LASTEXITCODE`; the probe now clears it so the step exits 0 and goes on to create the release.
+
 ## [0.21.0] - 2026-07-17
 ### Added
 - **abios-feedback now writes its issues in English, with a CI backstop** (#305). The English-only
