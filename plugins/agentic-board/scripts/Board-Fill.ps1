@@ -68,6 +68,11 @@ $ErrorActionPreference = "Stop"
 # through it, so one board can satisfy every fill regardless of which vocabulary it uses.
 . (Join-Path $PSScriptRoot 'Get-BoardVocabulary.ps1')
 
+# Fail closed on the item read (#303): a gh failure mid-scan must THROW, not return an empty
+# page that the gap detector then reads as a healthy "no gaps" board (the #86 false-clean).
+# Dot-sourced BEFORE the guard so tests loading the functions also get the seam to mock.
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 # ── Functions (pure + gh helpers; defined before the dot-source guard) ─────────
 
 function Get-OwnerRoot {
@@ -207,7 +212,9 @@ query(`$proj:ID!) {
   }
 }
 "@
-        $items = (gh api graphql -f query=$q -F "proj=$projId" | ConvertFrom-Json).data.node.items
+        $resp  = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$q",'-F',"proj=$projId") `
+                           -What "leer los items del board" -Graphql
+        $items = $resp.data.node.items
         return @{ nodes = $items.nodes; hasNext = $items.pageInfo.hasNextPage; endCursor = $items.pageInfo.endCursor }
     }
 }

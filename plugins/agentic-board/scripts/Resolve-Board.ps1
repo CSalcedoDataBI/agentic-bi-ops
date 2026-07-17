@@ -12,11 +12,17 @@ param(
   [bool]$CreateIfMissing = $true
 )
 $ErrorActionPreference = 'Stop'
+
+# A gh failure must NOT read as "no boards exist" — that empty result is the exact premise
+# this script would then CREATE a board from, duplicating the one it could not read (#303/#86).
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 $dash     = [char]0x2014                       # em-dash, built in code (no non-ASCII in source)
 $repoName = $Repo.Split('/')[-1]
 if (-not $Title) { $Title = "$repoName $dash Roadmap" }
 
-$projects   = (gh project list --owner $Owner --format json | ConvertFrom-Json).projects
+$projects   = (Invoke-Gh -GhArgs @('project','list','--owner',$Owner,'--format','json') `
+                         -What "listar los boards de $Owner" -Json).projects
 $candidates = $projects | Where-Object { $_.title -notmatch '(?i)backup' }
 
 $match = $candidates | Where-Object { $_.title -eq $Title } | Select-Object -First 1
@@ -28,8 +34,11 @@ if ($match) {
 }
 if (-not $CreateIfMissing) { Write-Host "No board found for $Repo (CreateIfMissing=false)"; return $null }
 
-$num = (gh project create --owner $Owner --title $Title --format json | ConvertFrom-Json).number
-gh project link $num --owner $Owner --repo $Repo | Out-Null
-gh project edit $num --owner $Owner --description "Roadmap + issue tracking for $Repo. Anchored to that repo." | Out-Null
+$num = (Invoke-Gh -GhArgs @('project','create','--owner',$Owner,'--title',$Title,'--format','json') `
+                  -What "crear el board '$Title'" -Json).number
+Invoke-Gh -GhArgs @('project','link',"$num",'--owner',$Owner,'--repo',$Repo) `
+          -What "enlazar el board #$num a $Repo" | Out-Null
+Invoke-Gh -GhArgs @('project','edit',"$num",'--owner',$Owner,'--description',"Roadmap + issue tracking for $Repo. Anchored to that repo.") `
+          -What "describir el board #$num" | Out-Null
 Write-Host ("CREATED board #{0}: '{1}' (linked to {2})" -f $num, $Title, $Repo) -ForegroundColor Yellow
 return $num
