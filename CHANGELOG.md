@@ -8,7 +8,8 @@
   files, +2332/-253, and passed the gate. Both branch paths are fixed (the isolated worktree and
   the in-place `checkout -b`, which had the identical defect), and `-Parallel` no longer hardcodes
   `origin/main`: the default branch is resolved, so a `master` repo works. Basing on the current
-  branch is still available for dependent work, now as an opt-in (`-BaseCurrent` / `-Base <ref>`).
+  branch is still available for dependent work, now as an opt-in (`-BaseCurrent` / `-Base <ref>`,
+  honoured by `-Parallel` too instead of being silently ignored).
 
 ## [0.20.0] - 2026-07-16
 ### Added

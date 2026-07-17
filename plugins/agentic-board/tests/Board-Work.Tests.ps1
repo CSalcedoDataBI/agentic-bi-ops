@@ -145,8 +145,13 @@ Describe 'Resolve-IssueBaseRef (an issue branch starts from the remote default, 
     It 'falls back to convention when origin/HEAD is absent' {
         # origin/HEAD is written at clone time and is routinely missing (fetch-built
         # clones, older gits). Deleting it must not lose the base.
+        #
+        # -NoFetch is load-bearing, not an optimisation: since git 2.47
+        # remote.origin.followRemoteHEAD defaults to `create`, so the fetch inside
+        # Resolve-IssueBaseRef RECREATES origin/HEAD and step 1 answers again. Without
+        # this switch the test passes with the convention fallback deleted entirely.
         git symbolic-ref -d refs/remotes/origin/HEAD 2>&1 | Out-Null
-        Resolve-IssueBaseRef | Should -Be 'origin/main'
+        Resolve-IssueBaseRef -NoFetch | Should -Be 'origin/main'
     }
 
     It 'returns empty rather than an unresolvable ref when there is no origin at all' {
@@ -161,9 +166,90 @@ Describe 'Resolve-IssueBaseRef (an issue branch starts from the remote default, 
     }
 }
 
-Describe 'New-IssueWorktree bases a NEW branch on the remote default (#294)' {
-    # The regression proper: a 1-line fix opened a PR with 56 files and +2332/-253
-    # because the worktree was cut from whatever HEAD happened to be.
+Describe 'New-IssueWorkspace picks the base itself (the #294 wiring)' {
+    # THE regression test. New-IssueWorktree already honoured a base ref before #294 -
+    # the bug was that nobody passed it one. So a test that hands the base in passes
+    # against the buggy code and proves nothing; this one calls the wiring exactly as
+    # Invoke-IssueStart does, and goes red if the base resolution is removed.
+    BeforeEach {
+        # New-IssueWorkspace refuses to branch unless origin matches the issue's repo, so
+        # the remote has to SPELL owner/name. A Windows path cannot (it separates with \),
+        # hence a real bare repo at .../o/r reached over a file:/// URL: it contains the
+        # literal "o/r", and fetch still works locally without touching the network.
+        $script:Repo4   = 'o/r'
+        $root           = Join-Path $TestDrive ('W' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:Origin4 = Join-Path $root 'o\r'
+        New-Item -ItemType Directory -Path $script:Origin4 -Force | Out-Null
+        git init -q --bare -b main $script:Origin4
+        $url = 'file:///' + ($script:Origin4 -replace '\\', '/')
+        $script:Clone4 = Join-Path $root 'clone'
+
+        $seed = Join-Path $root 'seed'
+        git clone -q $url $seed 2>&1 | Out-Null
+        Push-Location $seed
+        'base' | Set-Content (Join-Path $seed 'a.txt')
+        git add -A 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m base
+        git push -q origin main 2>&1 | Out-Null
+        Pop-Location
+
+        git clone -q $url $script:Clone4 2>&1 | Out-Null
+        Push-Location $script:Clone4
+        git config user.email t@t
+        git config user.name t
+        # Clean tree, parked on a feature branch with a commit main has never seen.
+        git checkout -q -b feature-z
+        'contamination' | Set-Content (Join-Path $script:Clone4 'foreign.txt')
+        git add -A 2>&1 | Out-Null
+        git -c user.email=t@t -c user.name=t commit -q -m 'foreign work nobody reviewed'
+    }
+    AfterEach { Pop-Location }
+
+    It 'the fixture really is a clone of the issue repo (else every test below passes vacuously)' {
+        # Guard on the guard: if the origin check silently stopped matching, New-IssueWorkspace
+        # would return '' and the contamination assertions would "pass" having branched nothing.
+        (git remote get-url origin) | Should -Match 'o/r'
+    }
+
+    It 'does NOT inherit the current branch commits - via the worktree path (dirty tree)' {
+        'uncommitted' | Set-Content (Join-Path $script:Clone4 'dirty.txt')   # forces the worktree path
+        $wp = New-IssueWorkspace -repo $script:Repo4 -issueNum 60 -branchName 'issue-60-fix'
+        $wp | Should -Not -BeNullOrEmpty
+        (Test-Path (Join-Path $wp 'foreign.txt')) | Should -BeFalse
+        Push-Location $wp
+        (git rev-list --count origin/main..HEAD) | Should -Be '0'
+        Pop-Location
+    }
+
+    It 'does NOT inherit the current branch commits - via the in-place path (clean tree)' {
+        $wp = New-IssueWorkspace -repo $script:Repo4 -issueNum 61 -branchName 'issue-61-fix'
+        $wp | Should -Be $script:Clone4
+        (git branch --show-current) | Should -Be 'issue-61-fix'
+        (Test-Path (Join-Path $script:Clone4 'foreign.txt')) | Should -BeFalse
+    }
+
+    It '-BaseCurrent opts back in to the current HEAD' {
+        $wp = New-IssueWorkspace -repo $script:Repo4 -issueNum 62 -branchName 'issue-62-dep' -BaseCurrent
+        (Test-Path (Join-Path $wp 'foreign.txt')) | Should -BeTrue
+    }
+
+    It '-Base pins an explicit ref' {
+        $wp = New-IssueWorkspace -repo $script:Repo4 -issueNum 63 -branchName 'issue-63-dep' -Base 'feature-z'
+        (Test-Path (Join-Path $wp 'foreign.txt')) | Should -BeTrue
+    }
+
+    It 'refuses to branch when the cwd is not a clone of the issue repo' {
+        New-IssueWorkspace -repo 'someone/else' -issueNum 64 -branchName 'issue-64-x' | Should -Be ''
+        (git branch --show-current) | Should -Be 'feature-z'   # nothing was touched
+    }
+
+    It 'returns ONLY the work path - no leaked git/branch output (Invoke-IssueStart reads $r.workPath)' {
+        $wp = New-IssueWorkspace -repo $script:Repo4 -issueNum 65 -branchName 'issue-65-fix'
+        @($wp).Count | Should -Be 1
+    }
+}
+
+Describe 'New-IssueWorktree honours a base ref it is given' {
     BeforeEach {
         $script:Origin2 = Join-Path $TestDrive ('O' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         $script:Clone2  = "$($script:Origin2)-clone"
@@ -186,10 +272,12 @@ Describe 'New-IssueWorktree bases a NEW branch on the remote default (#294)' {
     }
     AfterEach { Pop-Location }
 
-    It 'does NOT carry the current branch commits into the issue worktree' {
-        $wt = New-IssueWorktree 'o/r' 42 'issue-42-fix' (Resolve-IssueBaseRef)
+    # NOTE: this asserts New-IssueWorktree's OWN contract only. It honoured a base ref
+    # before #294 too, so none of these would have caught the bug - the wiring that
+    # chooses the base is tested in the New-IssueWorkspace block above.
+    It 'cuts the branch from the given base, not from the current HEAD' {
+        $wt = New-IssueWorktree 'o/r' 42 'issue-42-fix' 'origin/main'
         $wt | Should -Not -BeNullOrEmpty
-        # The load-bearing assertion: the foreign commit must not be an ancestor.
         Push-Location $wt
         (Test-Path (Join-Path $wt 'foreign.txt')) | Should -BeFalse
         $ahead = git rev-list --count origin/main..HEAD
