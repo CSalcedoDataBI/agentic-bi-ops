@@ -34,6 +34,31 @@ Describe 'Get-PendingBoardIssues fails closed on the board read (#316, part of #
         Mock Invoke-GhRaw { [pscustomobject]@{ Output = '{"data":{"user":{"projectV2":{"items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"fieldValues":{"nodes":[]},"content":{"__typename":"Issue","number":9,"state":"CLOSED","title":"done","repository":{"nameWithOwner":"o/r"},"labels":{"nodes":[]}}}]}}}}}'; ExitCode = 0; StdErr = '' } }
         @(Get-PendingBoardIssues 'owner' 13).Count | Should -Be 0
     }
+    It 'passes the page-2 cursor as a -f variable, never spliced into the query as after: "..." (#329)' {
+        # A board >100 items needs a 2nd page. Interpolating after: "$cursor" put embedded quotes into
+        # a native gh.exe arg, which PowerShell drops, so gh saw the base64 cursor unquoted and its
+        # `==` broke the query. Both pages use CLOSED issues so the blocked_by REST path never runs.
+        # Page chosen by CALL COUNT, not arg content, so a regression that still paginates
+        # terminates and fails on the assertions rather than looping forever.
+        $script:pgCalls = @(); $script:pgN = 0
+        Mock Invoke-GhRaw {
+            $script:pgCalls += ,@($GhArgs); $script:pgN++
+            $closed = '{"fieldValues":{"nodes":[]},"content":{"__typename":"Issue","number":9,"state":"CLOSED","title":"done","repository":{"nameWithOwner":"o/r"},"labels":{"nodes":[]}}}'
+            if ($script:pgN -ge 2) {
+                [pscustomobject]@{ Output = "{`"data`":{`"user`":{`"projectV2`":{`"items`":{`"pageInfo`":{`"hasNextPage`":false,`"endCursor`":null},`"nodes`":[$closed]}}}}}"; ExitCode = 0; StdErr = '' }
+            } else {
+                [pscustomobject]@{ Output = "{`"data`":{`"user`":{`"projectV2`":{`"items`":{`"pageInfo`":{`"hasNextPage`":true,`"endCursor`":`"CUR==`"},`"nodes`":[$closed]}}}}}"; ExitCode = 0; StdErr = '' }
+            }
+        }
+        $null = Get-PendingBoardIssues 'owner' 13
+        $script:pgCalls.Count | Should -Be 2
+        (@($script:pgCalls[1]) -contains 'cursor=CUR==') | Should -BeTrue
+        foreach ($c in $script:pgCalls) {
+            $qArg = @($c) | Where-Object { $_ -like 'query=*' }
+            $qArg | Should -Not -Match 'after:\s*"'
+            $qArg | Should -Match 'after:\$cursor'
+        }
+    }
 }
 
 Describe 'Select-CliForIssue (capability routing with availability fallback)' {
