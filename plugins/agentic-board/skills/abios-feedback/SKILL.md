@@ -25,6 +25,11 @@ These are absolute:
 3. **Do NOT git add / commit / write files in the current project** for this. Capture goes to the
    tool's repo only (an issue), never the cwd repo tree.
 4. **Sanitize first** (next section). The guard in the tool's repo is the backstop, not the cwd.
+5. **Write the issue in ENGLISH — title AND body — even when the conversation is in Spanish.**
+   The language follows the **target repo, not the chat**: this repo is English-only, and the target
+   is always this repo (rule 1), so the answer here is always English. Keep talking to the user in
+   their language; only the issue text is English. Do **not** generalise this rule — `/scan` and
+   `/board plan` target the user's OWN repo and may legitimately be Spanish there.
 
 ## Step 1 — Abstract / sanitize
 Describe ONLY the public tool — which skill/script/recipe is wrong and the correct behavior. Strip:
@@ -53,8 +58,18 @@ cd "$env:ABIOS_HOME"   # set ABIOS_HOME once to your local agentic-board clone p
 If `ABIOS_HOME` is unset, ask the user for the clone path; do **not** guess or write into the cwd.
 Also append a dated, sanitized note to `inbox/IMPROVEMENTS.md` in that clone (optional log).
 
-## Safety backstop (you do not rely on discipline alone)
-The tool's repo has a guard (`scripts/guard-no-private.ps1`, wired pre-commit + pre-push) that
-**blocks** any commit/push whose added lines contain a secret pattern or a term from the local
-`.abios/private-denylist.txt`. If it blocks you, it caught a leak — do not `--no-verify` unless you
-have confirmed a genuine false positive. See [[gh-account]] for identity; projects-admin for board recipes.
+## Safety backstops (you do not rely on discipline alone)
+Two, because both of these rules have been broken by an agent who meant well:
+
+- **Private content** — a guard (`scripts/guard-no-private.ps1`, wired pre-commit + pre-push)
+  **blocks** any commit/push whose added lines contain a secret pattern or a term from the local
+  `.abios/private-denylist.txt`. If it blocks you, it caught a leak — do not `--no-verify` unless you
+  have confirmed a genuine false positive. Note it is inert in a fresh clone until
+  `scripts/install-guard.ps1` has been run: hooks need `core.hooksPath`, and the denylist is
+  gitignored so it never arrives with the clone.
+- **Language** — `.github/workflows/issue-language.yml` scores every opened/edited issue and applies
+  a `needs-english` label when it reads as Spanish (rule 5). It cannot block — GitHub has no
+  pre-create hook for issues — so it is a net, not a gate: getting rule 5 right up front is still
+  your job. The label clears itself once the text is fixed. `lang-ok` opts an issue out.
+
+See [[gh-account]] for identity; projects-admin for board recipes.
