@@ -12,6 +12,18 @@
   is still returned as empty — that half of the contract is pinned by tests too.
 
 ### Fixed
+- **A failed backup no longer writes a plausible empty file** (#312, part of #303). `Backup-Board.ps1`
+  and `Export-BoardSnapshot.ps1` ran `gh` unchecked, so a 401 produced three empty JSON files and
+  printed `Backup OK:` — a failure only ever discovered on restore day. Both now go through
+  `Invoke-Gh`, which is what makes a failed read fail. The snapshot is written via `-RawJson`, so it
+  is not re-serialised (no reshaping, no silent `-Depth` truncation), and without a BOM, so the same
+  backup no longer differs between Windows PowerShell 5.1 and pwsh 7. Each written file is read back
+  and parsed before the run reports success. If only the live clone fails, the run still fails but
+  now *names* the JSON snapshot it did leave on disk, instead of dying silently over three valid
+  files the caller believes do not exist. `Export-BoardSnapshot` no longer publishes a report when it
+  could not read the board — including the case where `gh` exits 0 with valid JSON of the wrong
+  shape, where `@($resp.items)` on a missing property would otherwise invent a phantom item and
+  render `0 of 1 tracked items done.` above an empty table.
 - **work: an issue branch starts from the remote default branch, not the current HEAD** (#294).
   `-Start -Branch` cut the branch from whatever HEAD happened to be, so starting an issue from a
   feature branch dragged its unmerged commits into the issue's PR — a 1-line fix opened as 56

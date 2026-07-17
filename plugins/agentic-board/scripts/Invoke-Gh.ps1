@@ -101,11 +101,23 @@ function Invoke-Gh {
         [Parameter(Mandatory)][string[]]$GhArgs,
         [string]$What = 'la operacion gh',
         [switch]$Json,
+        [switch]$RawJson,
         [switch]$Graphql,
         [string]$StdIn,
         [int]   $Retries = 0,
         [int]   $RetryDelayMs = 500
     )
+
+    # -RawJson: validate the body as JSON but hand back the TEXT rather than a parsed object.
+    # For callers that persist what gh sent (Backup-Board writes the snapshot to disk) -
+    # round-tripping through ConvertFrom/ConvertTo-Json would silently reshape a backup, and
+    # -Depth would quietly truncate it.
+    #
+    # NOT byte-for-byte gh output, and it must not be sold as such: `& gh` hands stdout back
+    # already split into lines with the terminators stripped, so CRLF, the trailing newline
+    # and any surrounding whitespace are gone before this function ever sees the body. What
+    # -RawJson guarantees is narrower and is the part that matters: unreshaped and untruncated.
+    if ($RawJson) { $Json = $true }
 
     # -Graphql IMPLIES -Json. Checking errors[] means parsing the body, and the parse only
     # happens under -Json - so `-Graphql` alone used to return before the check ever ran,
@@ -143,5 +155,6 @@ function Invoke-Gh {
     if ($Graphql -and $parsed.PSObject.Properties.Name -contains 'errors' -and @($parsed.errors).Count -gt 0) {
         throw "No pude $What - graphql devolvio errores: $(@($parsed.errors)[0].message)"
     }
+    if ($RawJson) { return $body }
     return $parsed
 }
