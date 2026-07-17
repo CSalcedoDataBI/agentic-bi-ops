@@ -311,6 +311,11 @@ $ErrorActionPreference = "Stop"
 
 # The single resolver for the internal state dir (new name + migration + fallback).
 . (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
+# gh must fail closed on the durable-comment upsert (#303/#316): a failed read of the existing
+# comments would post a DUPLICATE, and a silent write failure would print "OK saved" for a handoff
+# that never reached the issue. Resume/PR reads fail closed so a 401 does not fall back to a stale
+# mirror unnoticed.
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
 
 if ($Save -and $Resume) { throw "Pass either -Save or -Resume, not both." }
 if (-not ($Save -or $Resume)) { throw "Pass an action: -Save (snapshot) or -Resume (rehydrate)." }
@@ -424,13 +429,18 @@ if ($Resume) {
     $body = ""; $source = ""
     if ($Issue -gt 0) {
         try {
-            $comments = gh api --paginate "repos/$Repo/issues/$Issue/comments?per_page=100" 2>$null | ConvertFrom-Json
+            $comments = Invoke-Gh -GhArgs @('api','--paginate',"repos/$Repo/issues/$Issue/comments?per_page=100") `
+                                  -What "leer el handoff de $Repo#$Issue" -Json
             $marker = @($comments | Where-Object { $_.body -like "*$script:HandoffMarker*" }) | Select-Object -Last 1
             if ($marker) {
                 $body = Get-HandoffBodyFromComment $marker.body
                 if ($body) { $source = "issue comment on $Repo#$Issue" }
             }
-        } catch { $body = "" }
+        } catch {
+            # Do NOT let a 401 silently fall back to a possibly-older local mirror as if the remote
+            # had no handoff - say so, then fall back (#316).
+            Write-Host "  WARN could not read $Repo#$Issue ($($_.Exception.Message)) - falling back to the local mirror, which may be older." -ForegroundColor DarkYellow
+        }
     }
     # Fallback: the local mirror (offline / no linked issue).
     if (-not $body -and (Test-Path $handoffPath)) {
@@ -513,9 +523,14 @@ if ($Resume) {
 # -- Resolve the open PR for this branch (repo-consistent form) -----------------
 $pr = $null
 try {
-    $prJson = gh pr list --repo $Repo --head $branch --state open --json number 2>$null | ConvertFrom-Json
+    # -Json throws on a real failure so a false-empty read does not write `pr: null` into the
+    # handoff frontmatter when an open PR actually exists (a genuinely PR-less branch returns []).
+    $prJson = Invoke-Gh -GhArgs @('pr','list','--repo',$Repo,'--head',$branch,'--state','open','--json','number') `
+                        -What "buscar el PR abierto de $branch" -Json
     if ($prJson -and $prJson.Count) { $pr = [int]$prJson[0].number }
-} catch { $pr = $null }
+} catch {
+    Write-Host "  WARN could not resolve the open PR for $branch ($($_.Exception.Message)) - the handoff will omit it." -ForegroundColor DarkYellow
+}
 
 # -- Resolve the board number (best-effort, cosmetic) --------------------------
 if ($ProjectNum -le 0) {
@@ -625,22 +640,37 @@ _Last saved $($fm.saved)._
 "@
     # --paginate so the marker is found even on issues with >100 comments (else a
     # missed marker would post a DUPLICATE instead of editing the existing one).
+    # Read the existing comments to find the marker. A FAILED read must NOT read as "no marker
+    # found" - that posts a DUPLICATE instead of editing. On a read failure, skip the post entirely
+    # (the local HANDOFF.md is already written) rather than risk the duplicate (#316).
     $existingId = $null
+    $canUpsert  = $true
     try {
-        $comments = gh api --paginate "repos/$Repo/issues/$Issue/comments?per_page=100" 2>$null | ConvertFrom-Json
+        $comments = Invoke-Gh -GhArgs @('api','--paginate',"repos/$Repo/issues/$Issue/comments?per_page=100") `
+                              -What "leer los comentarios de $Repo#$Issue" -Json
         $existingId = (@($comments | Where-Object { $_.body -like "*$script:HandoffMarker*" }) | Select-Object -Last 1).id
-    } catch { $existingId = $null }
-
-    try {
-        if ($existingId) {
-            $commentBody | gh api --method PATCH "repos/$Repo/issues/comments/$existingId" -F body=@- 2>$null | Out-Null
-            Write-Host "  OK  Handoff comment updated on $Repo#$Issue (durable source of truth)" -ForegroundColor Green
-        } else {
-            $commentBody | gh issue comment $Issue --repo $Repo --body-file - 2>$null | Out-Null
-            Write-Host "  OK  Handoff comment posted on $Repo#$Issue (durable source of truth)" -ForegroundColor Green
-        }
     } catch {
-        Write-Host "  WARN could not upsert the issue comment - the local HANDOFF.md is still written." -ForegroundColor DarkYellow
+        $canUpsert = $false
+        Write-Host "  WARN could not read existing comments ($($_.Exception.Message)) - NOT posting to avoid a duplicate. Local HANDOFF.md is saved." -ForegroundColor DarkYellow
+    }
+
+    if ($canUpsert) {
+        try {
+            if ($existingId) {
+                # -StdIn feeds the body over gh's `-F body=@-` stdin; plain Invoke-Gh throws on a
+                # non-zero exit so the catch actually fires (a bare native failure never threw -> the
+                # old code printed "OK updated" for a PATCH that silently failed) (#316).
+                $null = Invoke-Gh -GhArgs @('api','--method','PATCH',"repos/$Repo/issues/comments/$existingId",'-F','body=@-') `
+                                  -StdIn $commentBody -What "actualizar el comentario de handoff en $Repo#$Issue"
+                Write-Host "  OK  Handoff comment updated on $Repo#$Issue (durable source of truth)" -ForegroundColor Green
+            } else {
+                $null = Invoke-Gh -GhArgs @('issue','comment',"$Issue",'--repo',$Repo,'--body-file','-') `
+                                  -StdIn $commentBody -What "postear el comentario de handoff en $Repo#$Issue"
+                Write-Host "  OK  Handoff comment posted on $Repo#$Issue (durable source of truth)" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "  WARN could not upsert the issue comment ($($_.Exception.Message)) - the local HANDOFF.md is still written." -ForegroundColor DarkYellow
+        }
     }
     Write-Host ""
     Write-Host "Resume later with:  Board-Handoff.ps1 -Resume  (reads $Repo#$Issue - even on another machine)" -ForegroundColor Cyan

@@ -80,6 +80,11 @@ $ErrorActionPreference = "Stop"
 # again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
 . (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
 
+# gh must fail closed on the board read that feeds the CHANGELOG write (#303/#316): -Graphql throws
+# on an exit-0 errors[] body too, so a read failure is named accurately instead of hitting the
+# generic "revisa cuenta / scope" fallback the null-id guard prints.
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 if (-not $env:GH_TOKEN) {
     $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
 }
@@ -154,7 +159,8 @@ query(`$owner:String!, `$num:Int!) {
   }
 }
 "@
-    $data = gh api graphql -f query=$q -F "owner=$Owner" -F "num=$ProjectNum" | ConvertFrom-Json
+    $data = Invoke-Gh -GhArgs @('api','graphql','-f',"query=$q",'-F',"owner=$Owner",'-F',"num=$ProjectNum") `
+                      -What "leer los items del board #$ProjectNum de $Owner" -Graphql
     $pv = $data.data.user.projectV2
     if (-not $pv.id) {
         throw "No pude resolver el board #$ProjectNum de $Owner (revisa cuenta / scope 'project')."
