@@ -21,6 +21,7 @@ Every catalog is a JSON array of entries with these keys (all required):
 | `owner` | string | Who publishes it. Surfaced at list/install time — the attribution ("who owns each tool"). |
 | `repo` | string | GitHub `owner/name`. |
 | `kind` | `"skill-clone"` \| `"plugin"` | How it installs (see below). |
+| `detect` | string \| null | *(plugin only)* the id to match against `claude plugin list` — usually the **marketplace** name, since one marketplace publishes several plugins. Falls back to `name` when absent. Omit / `null` for `skill-clone` (detected by `name`). |
 | `path` | string \| null | Subpath to the skill folder for `skill-clone`; `null` for `plugin`. |
 | `license` | string | SPDX id or short label — copied next to the installed skill (mandatory for CC BY-SA). |
 | `homepage` | string | URL to the tool's home. |
@@ -44,6 +45,10 @@ Edit the JSON directly (curated preset — changes go through a PR). Never inven
 exists and read its license first (`gh repo view <owner/name>`, `gh api repos/<owner/name>/contents/LICENSE`).
 User-owned BI repos are added as `skill-clone` entries in `bi.json` once named and verified.
 
-> Transitional note: `presets/recommended-skills.json` is the legacy flat catalog still read by
-> `Get-SkillGaps.ps1`. `quality.json` is its successor in the unified schema; the reader switches
-> to profile-based catalogs in #332, which then removes the legacy file.
+## How the reader uses this
+
+`Get-SkillGaps.ps1 -Profile <name>` reads `presets/toolkits/<name>.json` and reports installed
+vs gaps. Detection is by kind: `skill-clone` entries match `name` against the installed skill
+inventory; `plugin` entries match `detect` (marketplace/plugin id from `claude plugin list`).
+`skills-bootstrap` then installs only the gaps — cloning `skill-clone` folders and emitting the
+`install` command for `plugin` entries.

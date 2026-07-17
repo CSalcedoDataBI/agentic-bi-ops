@@ -28,9 +28,11 @@ When they answer (number or name), invoke the matching skill and follow it:
   (enabled-vs-disabled, 3×). Filing is SANITIZED and behind a human gate — the tool's own board
   for its skills, the project's board for the project's own skills, local-only for third-party.
   Reuses `gh-account`, the `abios-feedback` discipline, and the `guard-no-private.ps1` backstop.
-- **bootstrap** → the `skills-bootstrap` skill. `Get-SkillGaps.ps1` finds missing recommended
-  skills (never duplicating an installed one); `Install-SkillFromRepo.ps1` clean-clones each gap
-  into `~/.claude/skills` preserving the source LICENSE.
+- **bootstrap [profile]** → the `skills-bootstrap` skill. `Get-SkillGaps.ps1 -Profile <p>` reads
+  `presets/toolkits/<p>.json` and finds what is missing (never duplicating an installed one) —
+  `quality` (default: skill-authoring toolkit) or `bi` (Microsoft Fabric / Power BI ecosystem).
+  Gaps install by kind: `skill-clone` via `Install-SkillFromRepo.ps1` (clean clone, LICENSE
+  preserved); `plugin` by surfacing its own `install` command (e.g. `microsoft/skills-for-fabric`).
 
 Identity: any operation that files an issue must first set `$env:GH_TOKEN` via the `gh-account`
 skill (default CSalcedoDataBI). Read-only report/audit needs no token.

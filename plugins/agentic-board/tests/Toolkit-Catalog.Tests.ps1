@@ -5,7 +5,6 @@ BeforeAll {
     $script:ToolkitsDir = Join-Path $PSScriptRoot '..' 'presets' 'toolkits' | Resolve-Path
     $script:QualityPath = Join-Path $script:ToolkitsDir 'quality.json'
     $script:BiPath      = Join-Path $script:ToolkitsDir 'bi.json'
-    $script:LegacyPath  = Join-Path $PSScriptRoot '..' 'presets' 'recommended-skills.json' | Resolve-Path
 
     $script:RequiredKeys = @('name','owner','repo','kind','path','license','homepage','profiles','install','purpose')
 
@@ -68,6 +67,7 @@ Describe 'Entry schema' -ForEach @(
             if ($e.kind -eq 'plugin') {
                 [string]::IsNullOrWhiteSpace([string]$e.install) | Should -BeFalse -Because "$($e.name) is a plugin — needs an install command"
                 $e.path | Should -BeNullOrEmpty -Because "$($e.name) is a plugin — path must be null"
+                [string]::IsNullOrWhiteSpace([string]$e.detect) | Should -BeFalse -Because "$($e.name) is a plugin — needs a detect id (marketplace/plugin) for gap detection"
             } else {
                 [string]::IsNullOrWhiteSpace([string]$e.path) | Should -BeFalse -Because "$($e.name) is skill-clone — needs a path"
             }
@@ -94,14 +94,23 @@ Describe 'bi.json content' {
     }
 }
 
-Describe 'quality.json parity with legacy catalog' {
-    It 'has the same skill names as recommended-skills.json (no drift during transition)' {
-        $new    = @(Get-Catalog $script:QualityPath).name | Sort-Object
-        $legacy = @(Get-Catalog $script:LegacyPath).name  | Sort-Object
-        $new | Should -Be $legacy
+Describe 'quality.json content' {
+    It 'carries the four best-practice skills' {
+        $names = @(Get-Catalog $script:QualityPath).name | Sort-Object
+        $names | Should -Be (@('second-opinion','skill-creator','skill-improver','writing-skills'))
     }
 
-    It 'tags every quality entry with the quality profile' {
-        foreach ($e in @(Get-Catalog $script:QualityPath)) { $e.profiles | Should -Contain 'quality' }
+    It 'every quality entry is skill-clone tagged with the quality profile' {
+        foreach ($e in @(Get-Catalog $script:QualityPath)) {
+            $e.kind     | Should -Be 'skill-clone'
+            $e.profiles | Should -Contain 'quality'
+        }
+    }
+}
+
+Describe 'legacy catalog removed' {
+    It 'presets/recommended-skills.json no longer exists (migrated to toolkits/)' {
+        $legacy = Join-Path $PSScriptRoot '..' 'presets' 'recommended-skills.json'
+        Test-Path $legacy | Should -BeFalse
     }
 }
