@@ -1,5 +1,5 @@
 ---
-description: Manage the Agent Skills lifecycle — organize/catalog, audit for failures, or bootstrap best-practice skills. Part of the skills-ops module.
+description: Manage the Agent Skills lifecycle — organize/catalog, audit for failures, bootstrap best-practice toolkits by profile (quality or bi = Microsoft Fabric / Power BI), or check installed-tool freshness. Part of the skills-ops module.
 ---
 You are running the agentic-board /skills command.
 
@@ -13,8 +13,9 @@ for the user to pick (they can answer with just the number):
                 reorganizar un repo/monorepo a .claude/skills/<proyecto>/<skill>/ sin mezclar
 2. audit      → detectar skills que fallan (descripción, triggers, solapes) + eval de triggering,
                 y abrir un issue SANEADO en el repo dueño de la skill (jamás en tu proyecto privado)
-3. bootstrap  → instalar las skills de buenas prácticas que te falten (skill-creator, writing-skills,
-                skill-improver, second-opinion) sin duplicar lo que ya tienes
+3. bootstrap [perfil] → instalar el toolkit de un perfil sin duplicar lo que ya tienes:
+                `quality` (skill-creator, writing-skills, skill-improver, second-opinion) o
+                `bi` (ecosistema Microsoft Fabric / Power BI, ej. microsoft/skills-for-fabric)
 4. freshness  → revisar si las herramientas instaladas (skill-clone) siguen al día con su upstream
                 (SHA local vs último commit) — SOLO reporta, no reinstala nada
 ```
