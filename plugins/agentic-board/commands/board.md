@@ -29,7 +29,7 @@ for the user to pick (they can answer with just the number):
 
 ── otros módulos (comandos aparte) ─────────────────────────────
 /scan       → escanear ESTE proyecto por trabajo sin trackear (TODOs, checklists, planes) → issues + plan
-/skills     → ciclo de vida de Agent Skills (organize / audit / bootstrap)
+/skills     → ciclo de vida de Agent Skills (organize / audit / bootstrap [bi] / freshness)
 /knowledge  → registro de referencias externas por dominio (add / harvest / wiki)
 /abios-feedback → ¿bug o mejora para ESTA herramienta? la captura como issue SANITIZADO en el repo del tool
 ```
