@@ -65,3 +65,36 @@ Describe 'Get-HandoffSessionContext' {
         $c | Should -Match 'issue #9'
     }
 }
+
+Describe 'Get-CompactSessionContext' {
+    It 'returns empty for a null marker' {
+        Get-CompactSessionContext $null | Should -BeExactly ''
+    }
+    It 'returns empty when the run is not active (strict no-op off-run)' {
+        $m = [pscustomobject]@{ epic = 348; board = 13; repo = 'o/r'; status = 'closed' }
+        Get-CompactSessionContext $m | Should -BeExactly ''
+    }
+    It 'returns empty when there is no epic' {
+        $m = [pscustomobject]@{ board = 13; repo = 'o/r'; status = 'active' }
+        Get-CompactSessionContext $m | Should -BeExactly ''
+    }
+    It 'names the epic and points at the [abios-run-ledger] comment' {
+        $m = [pscustomobject]@{ epic = 348; board = 13; repo = 'o/r'; status = 'active'; queue = @(349, 350) }
+        $c = Get-CompactSessionContext $m
+        $c | Should -Match 'epic #348'
+        $c | Should -Match 'board #13'
+        $c | Should -Match 'abios-run-ledger'
+        $c | Should -Match 'gh issue view 348 --comments'
+        $c | Should -Match '#349, #350'
+    }
+    It 'omits the board clause when the board is unknown' {
+        $m = [pscustomobject]@{ epic = 5; board = 0; repo = 'o/r'; status = 'active' }
+        $c = Get-CompactSessionContext $m
+        $c | Should -Match 'epic #5'
+        $c | Should -Not -Match 'board #0'
+    }
+    It 'tells the agent to re-read live status from the board' {
+        $m = [pscustomobject]@{ epic = 1; board = 2; repo = 'o/r'; status = 'active' }
+        Get-CompactSessionContext $m | Should -Match 'status from the board'
+    }
+}

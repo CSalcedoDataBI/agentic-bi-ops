@@ -9,6 +9,26 @@
             "command": "pwsh -NoProfile -File \"${CLAUDE_PLUGIN_ROOT}/scripts/Welcome-SessionStartHook.ps1\""
           }
         ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File \"${CLAUDE_PLUGIN_ROOT}/scripts/Handoff-SessionStartHook.ps1\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File \"${CLAUDE_PLUGIN_ROOT}/scripts/Compact-PreCompactHook.ps1\""
+          }
+        ]
       }
     ]
   }
