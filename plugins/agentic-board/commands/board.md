@@ -1,5 +1,5 @@
 ---
-description: Administer/automate a GitHub Projects board (work/init/add/move/field/bulk/fill/automate/handoff/doctor). Defaults to the CSalcedoDataBI account.
+description: Administer/automate a GitHub Projects board — verbs work/plan/fill/init/add/move/field/bulk/automate/templates/labels/update/changelog/handoff/doctor. Defaults to the CSalcedoDataBI account.
 ---
 You are running the agentic-board /board command.
 
@@ -27,18 +27,27 @@ for the user to pick (they can answer with just the number):
 16. handoff         → guardar/retomar contexto entre sesiones (save/resume) para continuar días después
 17. doctor          → auditar ramas y worktrees locales (mergeadas, estancadas, fantasma) y limpiarlos
 
-── otros módulos (comandos aparte) ─────────────────────────────
+── otros comandos (se tipean) ──────────────────────────────────
 /scan       → escanear ESTE proyecto por trabajo sin trackear (TODOs, checklists, planes) → issues + plan
 /skills     → ciclo de vida de Agent Skills (organize / audit / bootstrap [bi] / freshness)
 /knowledge  → registro de referencias externas por dominio (add / harvest / wiki)
-/abios-feedback → ¿bug o mejora para ESTA herramienta? la captura como issue SANITIZADO en el repo del tool
+
+── canal de feedback (NO se tipea — se dispara solo) ───────────
+abios-feedback → ¿bug o mejora para ESTA herramienta? DILO en lenguaje natural
+                 (p.ej. "esto es una mejora para agentic-board") y la skill lo captura
+                 como issue SANITIZADO en el repo del tool. No es un comando: no se tipea.
 ```
 
-If the user picks one of the **otros módulos** (or types its name), do NOT run a board
-sub-action — tell them it is a separate command and to invoke it directly (`/scan`, `/skills`,
-`/knowledge`, `/abios-feedback`); this menu lists them only so the whole tool is discoverable
-from one entry point. `abios-feedback` matters: users assume the plugin has no feedback channel —
-it does, and it sanitizes private data before filing to the tool's own public board.
+If the user picks one of the **otros comandos**, do NOT run a board sub-action — tell them it is a
+separate command and to invoke it directly (`/scan`, `/skills`, `/knowledge`); this menu lists them
+only so the whole tool is discoverable from one entry point.
+
+`abios-feedback` is DIFFERENT: it is an internal skill, NOT a typeable command — it is never typed
+with a slash. It fires on its own when the user describes a bug/improvement for THIS tool (e.g.
+"esto es una mejora para agentic-board"). It matters because users assume the plugin has no feedback
+channel — it does, and it sanitizes private data before filing to the tool's own public board. If a
+user asks to "run" it, invoke the `abios-feedback` skill for them; never tell them to type a slash
+command that does not exist.
 
 When they answer with a board option (number or name), execute that sub-action following the
 instructions below.

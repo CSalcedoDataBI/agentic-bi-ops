@@ -77,6 +77,40 @@ New behavior needs a test. Side-effecting scripts expose a dot-source guard (e.g
 - Keep the `gh` remote a bare URL; auth flows through the token env var, never a PAT baked into the
   URL.
 
+## Command surface
+
+The tool exposes **two kinds of entry point**, and they must never be confused — that confusion is
+what let a menu tell users to type `/abios-feedback`, a command that does not exist.
+
+- **Typed command** — a `plugins/agentic-board/commands/<noun>.md` file. It appears in the `/`
+  palette as `/agentic-board:<noun>` (plugin commands are always namespaced; there is no bare
+  `/<noun>` fallback). The user types it. Today: `board`, `skills`, `knowledge`, `scan`.
+- **Internal skill** — a `plugins/agentic-board/skills/<name>/SKILL.md` with
+  `user-invocable: false`. It is **hidden from the palette and never typed**; the model invokes it
+  from its `description` when the work matches (account resolution, board admin, `abios-feedback`,
+  `tmdl-review`, …). A user "runs" it by saying what they want in natural language, not `/<name>`.
+
+Rules for any new (or renamed) piece:
+
+1. **Pick the right kind.** A door the *user* opens → a command. A capability the *model*
+   orchestrates in the background → an internal skill (`user-invocable: false`). Don't add a
+   command for something only the model should trigger, and don't hide a real user entry point in a
+   `user-invocable: false` skill.
+2. **Noun-verb.** The command file is the **noun**; its **verbs are arguments** (`/board work`,
+   `/skills bootstrap bi`). The command dispatches on `$ARGUMENTS`. Add `argument-hint` when it
+   takes positional args.
+3. **`description` is a contract, not a tagline.** It is both the palette text *and* the generated
+   README catalog (see [Docs](#docs)). Keep it factual and **list the verbs** so it never
+   understates what the command does.
+4. **No args → a menu**, and that menu lists **only real, current verbs**.
+5. **Menus never lie.** Anything a menu presents as a typeable `/x` **must be a real command file**.
+   An internal skill is referred to by what the user would say, never dressed up as `/x`. (This is
+   the invariant `CommandSurface.Tests.ps1` enforces.)
+6. **Keep the surface in sync.** When you add or rename a verb, update in the same PR: the command's
+   own menu, its routing/dispatch section, its `description`, the `/board` "otros módulos"
+   cross-reference, and regenerate the README (`Update-Docs.ps1`). The docs-freshness gate and
+   `CommandSurface.Tests.ps1` fail the PR otherwise.
+
 ## Docs
 
 Two parts of `README.md` are **generated, not hand-written**, so they can't drift: the command
