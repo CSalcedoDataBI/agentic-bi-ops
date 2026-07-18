@@ -198,6 +198,19 @@ Notes:
   host, started}` in `.agentic-board/sessions.json` next to the MAIN clone (shared across
   worktrees, gitignored). The pending list shows live local sessions; entries with dead PIDs are
   pruned automatically on read.
+- **Compaction-survival (long single-session queues)**: when you work a queue of issues tied to an
+  **epic** in ONE session, keep a durable run-ledger so the run survives auto-compaction. Three
+  touch-points (see [references/compact-survival.md](references/compact-survival.md)):
+  - When you begin the queue: `Board-RunLedger.ps1 -Start -Epic <n> [-Board <b>] [-Queue <n,...>]`
+  - After each issue's PR merges: `Board-RunLedger.ps1 -Update -Epic <n> -Issue <i> -Note "<decision/gotcha>" -Next "<next step>"`
+  - When the queue is done: `Board-RunLedger.ps1 -Close -Epic <n>`
+
+  The ledger lives as an `[abios-run-ledger]` comment on the epic (durable) plus a local
+  `.agentic-board/active-run.json` marker (a lockfile-sized breadcrumb). If the context
+  auto-compacts mid-run, the `SessionStart(compact)` hook re-injects a pointer to that ledger so
+  the session re-grounds and resumes the queue unattended. Opt-in per run and a **strict no-op**
+  otherwise — no marker means the hook stays silent. Keep entries lightweight (a decision, a
+  gotcha, the next step); the board remains the source of truth for per-issue **status**.
 - **Worktree mode**: when the working copy is busy (dirty tree or another `issue-*` branch),
   `-Branch` creates/reuses an isolated worktree `../<repo>--issue-<n>` instead of switching —
   the agent must continue the work in the printed path and `git worktree remove` it after the

@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- **Compaction-survival for long single-session `/board work` runs** (#348). A queue of issues
+  worked in ONE session eventually auto-compacts, and Claude Code's generic summary drops the
+  thread. A new `Board-RunLedger.ps1` (`-Start`/`-Update`/`-Close`) keeps a durable run-ledger as
+  an `[abios-run-ledger]` comment on the epic plus a lockfile-sized local `.agentic-board/active-run.json`
+  marker (#349). The `SessionStart` hook now handles `source: "compact"` — reading only the local
+  marker (offline), it re-injects a pointer to the epic ledger so the session re-grounds and resumes
+  the queue unattended; a strict no-op outside an active run (#350). A `PreCompact` hook snapshots the
+  transcript into `.agentic-board/compact-snapshots/` as a safety net, never blocking (#351). Works
+  around three Claude Code limits (no programmatic `/compact`, no auto-compact instructions, no cheap
+  compaction model — [anthropics/claude-code#14160](https://github.com/anthropics/claude-code/issues/14160));
+  see `skills/projects-admin/references/compact-survival.md` (#352, #353).
+
 ## [0.22.0] - 2026-07-17
 ### Added
 - **release L1: CI tags + a GitHub Release when `plugin.json`'s version changes on `main`** (#322).
