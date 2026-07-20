@@ -27,6 +27,7 @@ for the user to pick (they can answer with just the number):
 16. handoff         → guardar/retomar contexto entre sesiones (save/resume) para continuar días después
 17. doctor          → auditar ramas y worktrees locales (mergeadas, estancadas, fantasma) y limpiarlos
 18. cerrar-ciclo    → clasificar la RAMA ACTUAL y enrutarla (commitear/PR/gate/merge/limpiar) — cierra la sesión individual
+19. triage          → llenar Type/Area/Estimate por evidencia + PROPONER Priority (con confirmación) en los pendientes
 
 ── otros comandos (se tipean) ──────────────────────────────────
 /scan       → escanear ESTE proyecto por trabajo sin trackear (TODOs, checklists, planes) → issues + plan
@@ -110,6 +111,11 @@ matching recipe from the projects-admin references:
        `scripts/Board-Breakdown.ps1 -Parent <issueNum> -Tasks "child A", "child B"` — creates
        native sub-issues (Sub-issues progress fills itself) — then start one child. Use a
        checkbox task list in the parent body instead when the pieces are too small for issues.
+     - **Triage it now** (#306). You have just read the full issue context, so this is the moment its
+       evidence fields are cheapest to fill: infer Type / Area / Estimate from the content and write
+       them with `/board triage -Issue <n> -Type <t> -Area <a> -Estimate <n>`, and PROPOSE a Priority
+       (`-Priority P2 -Rationale '...'`) for the user to confirm. Do not leave them blank until Done —
+       a field filled after the work is over can no longer inform a decision.
   5. **Finish with a PR + review gate — MANDATORY.** When the work is done:
      a. Run `scripts/New-BoardPR.ps1 -Issue <issueNum>` — the cross-account push+PR step:
         it resolves the RIGHT account from the repo OWNER (CSalcedoDataBI → personal PAT,
@@ -303,6 +309,21 @@ matching recipe from the projects-admin references:
   - **PR closed unmerged** → decide: reopen/rescue or discard.
   It operates on the current branch/session only — the repo-wide sweep is `/board doctor`.
   `Board-Merge` now also NOTES when its `--delete-branch` left the local branch behind and points here.
+- **triage** — fill an item's triage fields from EVIDENCE and PROPOSE its Priority, via
+  `scripts/Board-Triage.ps1` (#306). Not a bulk default — a uniformly-filled board looks prioritised
+  without being so; the point is grounded values, not absence of blanks.
+  - **`-Pending`** lists the pending items and which of Type/Area/Estimate/Priority are blank — the
+    work-list to triage (the board's `Size` equivalent is **Estimate**; there is no Size field).
+  - **Type / Area / Estimate are evidence fields.** YOU infer them from the issue's own content — the
+    kind of failure (Type), the files/surface it touches (Area), the change size its Scope implies
+    (Estimate) — and write them directly: `Board-Triage.ps1 -Issue <n> -Type <t> -Area <a> -Estimate <n>`.
+  - **Priority is a business judgement NOT in the repo.** PROPOSE P0–P3 with a one-line rationale per
+    issue and let the user confirm in a batch: `-Priority P2 -Rationale '...'` PRINTS the proposal and
+    writes nothing; only `-ConfirmPriority` writes it. The script REFUSES `-Priority` with no
+    `-Rationale`. Never write Priority silently — a well-argued autonomous guess is still your opinion
+    wearing the owner's name.
+  - Do this when you START an issue (step 4 below) and when you CREATE issues (`/board plan`), so no
+    item lands with an empty Type/Area/Estimate; use `-Pending` to backfill the existing backlog.
 - Board URL reminder: every response about a board operation — plan,
 result, or error — must end with the board URL so the user can open it in one click:
 `https://github.com/users/<owner>/projects/<num>` (or `/orgs/<org>/projects/<num>` for org boards).
