@@ -13,6 +13,16 @@
   around three Claude Code limits (no programmatic `/compact`, no auto-compact instructions, no cheap
   compaction model — [anthropics/claude-code#14160](https://github.com/anthropics/claude-code/issues/14160));
   see `skills/projects-admin/references/compact-survival.md` (#352, #353).
+- **`/board triage` — fill triage fields from evidence, propose Priority under confirmation** (#306).
+  Pending items — the only part anyone plans from — sat blank on Type / Area / Estimate / Priority,
+  while what little was filled landed in Done, after it could inform anything. `Board-Triage.ps1` closes
+  that WITHOUT a bulk default (a uniformly-filled board looks prioritised without being so): `-Pending`
+  lists the pending work-list and its blanks; `-Issue <n> -Type/-Area/-Estimate` writes the evidence
+  fields the agent infers from the issue's content; and `-Priority Pn -Rationale '...'` only PROPOSES
+  (prints) the priority — it writes solely under `-ConfirmPriority`, and refuses a `-Priority` with no
+  rationale, because a business priority is a judgement not in the repo and must never be written
+  silently. `/board work` now triages on start and `/board` documents it as sub-action 19. New pure
+  `Get-TriageGaps` / `Test-PriorityRequest` / `Format-PriorityProposal` helpers, unit-tested.
 - **`/board cerrar-ciclo` — a close-the-loop disposition router for the current branch** (#302).
   The careful post-merge teardown (`Invoke-SessionCleanup`) was reachable ONLY through the fleet path
   (`-Sessions -Watch -AutoClean`), so an interactive single session never cleaned up — merged local
