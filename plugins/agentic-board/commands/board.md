@@ -28,6 +28,8 @@ for the user to pick (they can answer with just the number):
 17. doctor          → auditar ramas y worktrees locales (mergeadas, estancadas, fantasma) y limpiarlos
 18. cerrar-ciclo    → clasificar la RAMA ACTUAL y enrutarla (commitear/PR/gate/merge/limpiar) — cierra la sesión individual
 19. triage          → llenar Type/Area/Estimate por evidencia + PROPONER Priority (con confirmación) en los pendientes
+20. complete        → verificar que el board quedó full (0 pendientes) — PASS/FAIL, útil para CI o cierre
+21. bi-checklist    → mostrar el checklist de release para artefactos BI (modelos/reportes)
 
 ── otros comandos (se tipean) ──────────────────────────────────
 /scan       → escanear ESTE proyecto por trabajo sin trackear (TODOs, checklists, planes) → issues + plan
@@ -330,6 +332,20 @@ matching recipe from the projects-admin references:
     wearing the owner's name.
   - Do this when you START an issue (step 4 below) and when you CREATE issues (`/board plan`), so no
     item lands with an empty Type/Area/Estimate; use `-Pending` to backfill the existing backlog.
+- **complete** — verify the board is fully worked (0 PENDING items) by running
+  `scripts/Assert-BoardComplete.ps1 -ProjectNum <n> -Owner <o>` (account/board resolved like the other
+  sub-actions). "Pending" is the SAME definition `work` lists from (empty Status or a Status meaning
+  Backlog, incl. legacy `Todo`); In Progress / In Review / Done / Blocked are NOT pending. Exit 0 =
+  board is clear (prints `PASS`); exit 1 = it lists the pending items (`FAIL`). Fails closed on a gh
+  error (an unreadable board never reads as "complete"). Use it after a `/board work` sweep to confirm
+  the queue is empty, or wire it into CI to assert a milestone board reached zero-pending.
+- **bi-checklist** — show the release definition-of-done for a **BI artifact** (a semantic model /
+  report / PBIP), by printing `references/bi-release-checklist.md` (M4.1). It is
+  a checklist, not a runner: each item is tagged **[tool]** (an agentic-board command enforces it — the
+  BPA + TMDL-breaking review gate, `/board changelog`, `/board triage`, `/knowledge`), **[external]** (a
+  Fabric/PBI capability the tool references but does not rebuild — deployment pipelines, refresh), or
+  **[manual]** (a human judgement — report renders, rollback). Display the file so the user can follow
+  it when releasing a model/report; there is nothing to execute.
 - Board URL reminder: every response about a board operation — plan,
 result, or error — must end with the board URL so the user can open it in one click:
 `https://github.com/users/<owner>/projects/<num>` (or `/orgs/<org>/projects/<num>` for org boards).

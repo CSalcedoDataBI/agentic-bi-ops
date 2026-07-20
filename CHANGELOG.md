@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- **`/board complete` and `/board bi-checklist` sub-actions** (#371). Two capabilities from 0.23.x had
+  no typeable verb — contra the Command Surface Contract (#354): the board-full check lived as a bare
+  script and the BI release checklist as a doc with no way to surface it. `/board complete` runs
+  `Assert-BoardComplete.ps1` (exit 0 when 0 pending, exit 1 lists the offenders — CI-friendly), and
+  `/board bi-checklist` prints `references/bi-release-checklist.md` (the [tool]/[external]/[manual]
+  definition-of-done for releasing a BI model/report). Command-surface wiring only — no logic change to
+  the underlying script or doc; menu entries #20/#21 + projects-admin index rows.
+
 ## [0.23.1] - 2026-07-20
 ### Fixed
 - **The review gate stops re-requesting + WAITING for Copilot when the account has no quota** (#367).
