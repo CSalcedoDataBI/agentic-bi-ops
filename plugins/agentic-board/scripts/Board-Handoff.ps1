@@ -64,6 +64,12 @@
     `/knowledge add` suggestions, deduped against knowledge/registry.json. The anti-rot
     hook for the knowledge registry (never auto-adds — the user confirms each).
 
+.PARAMETER Local
+    Accept a machine-local, gitignored HANDOFF.md ON PURPOSE when no issue is linked.
+    Without it, a -Save that resolves no issue REFUSES rather than silently degrading to a
+    local-only file (which is not portable and gets no MEMORY.md pointer). Use -Issue <n> to
+    link it instead, which is portable across machines and surfaces in the next session.
+
 .PARAMETER DryRun
     Print the handoff and the intended comment action without writing or posting.
 
@@ -86,6 +92,9 @@ param(
     [string]  $TokenVar = "GITHUB_TOKEN_PERSONAL",
     [switch]  $NoMemo,
     [switch]  $NoKnowledge,
+    # Accept a machine-local, gitignored HANDOFF.md ON PURPOSE when no issue is linked (#304).
+    # Without it, a -Save that resolves no issue REFUSES rather than degrading silently.
+    [switch]  $Local,
     [switch]  $DryRun
 )
 
@@ -297,6 +306,22 @@ function Remove-MemoryIndexLine([string]$body, [string]$marker) {
     return (($kept -join "`n").TrimEnd() + "`n")
 }
 
+# Decide how a -Save resolves its durability target (#304). A handoff is only portable + memo-backed
+# when an ISSUE carries it (the [abios-handoff] comment resume reads from any machine, plus the
+# MEMORY.md pointer). With no issue, the old code silently wrote a gitignored local-only HANDOFF.md
+# AND skipped the memo — a "saved OK" that was neither portable nor discoverable. This makes the
+# decision explicit and testable:
+#   'linked'  -> an issue is set: durable comment + memo.
+#   'local'   -> no issue, but -Local was passed: a deliberate machine-local handoff.
+#   'refuse'  -> no issue AND no -Local: do NOT write; the caller must link an issue or opt in.
+# Pure.
+function Get-HandoffSaveMode {
+    param([int]$Issue, [switch]$Local)
+    if ($Issue -gt 0) { return 'linked' }
+    if ($Local)       { return 'local' }
+    return 'refuse'
+}
+
 # ==============================================================================
 # Main entry. Dot-source guard: the test harness sets ABIOS_HANDOFF_DOTSOURCE to
 # load the helpers above without running any of the side-effecting code below.
@@ -352,6 +377,9 @@ if ($sp -and (Test-Path $sp)) {
 # -- Resolve the linked issue --------------------------------------------------
 if ($Issue -le 0 -and $session) { $Issue = [int]$session.issue }
 if ($Issue -le 0)               { $Issue = Get-HandoffBranchIssue $branch }
+
+# How this save will be carried: linked (issue), local (deliberate -Local), or refuse (#304).
+$saveMode = Get-HandoffSaveMode -Issue $Issue -Local:$Local
 
 $repoRoot = (git rev-parse --show-toplevel 2>$null)
 if (-not $repoRoot) { throw "Not inside a git working tree." }
@@ -580,10 +608,16 @@ if ($DryRun) {
     Write-Host ""
     Write-Host $markdown
     Write-Host ""
-    if ($Issue -gt 0) {
+    if ($saveMode -eq 'linked') {
         Write-Host "DRY-RUN - would upsert the [abios-handoff] comment on $Repo#$Issue." -ForegroundColor Yellow
+    } elseif ($saveMode -eq 'local') {
+        Write-Host "DRY-RUN - -Local: would write a machine-local HANDOFF.md ONLY. Not portable (it is gitignored)" -ForegroundColor Yellow
+        Write-Host "          and NO MEMORY.md pointer is written, so the next session will not surface it." -ForegroundColor Yellow
     } else {
-        Write-Host "DRY-RUN - no linked issue -> local HANDOFF.md only (consider committing it for portability)." -ForegroundColor Yellow
+        Write-Host "DRY-RUN - REFUSING: no linked issue (no -Issue, no active session, not on an issue-<n> branch)." -ForegroundColor Red
+        Write-Host "          A real save would write NOTHING. Link it with -Issue <n> (portable [abios-handoff]" -ForegroundColor DarkYellow
+        Write-Host "          comment + MEMORY.md pointer), or accept a machine-local gitignored HANDOFF.md on" -ForegroundColor DarkYellow
+        Write-Host "          purpose with -Local (no portability, no memo)." -ForegroundColor DarkYellow
     }
     if (-not $NoKnowledge) {
         try {
@@ -600,6 +634,20 @@ if ($DryRun) {
         } catch { }
     }
     return
+}
+
+# -- Refuse a silent local-only degrade (#304) ---------------------------------
+# No issue resolved AND no explicit -Local: do NOT write. The old code degraded here to a
+# gitignored HANDOFF.md and skipped the memo, then said so only AFTER writing — a "saved OK"
+# that was neither portable nor discoverable. Fail loud, before touching disk, with the choice.
+if ($saveMode -eq 'refuse') {
+    Write-Host "  REFUSING to save: no linked issue resolved (no -Issue, no active session, not on an issue-<n> branch)." -ForegroundColor Red
+    Write-Host "  A handoff is only portable + auto-surfaced when an ISSUE carries it: the durable [abios-handoff]" -ForegroundColor DarkYellow
+    Write-Host "  comment that -Resume reads from any machine, plus a MEMORY.md pointer so your NEXT session finds" -ForegroundColor DarkYellow
+    Write-Host "  it on its own. A local HANDOFF.md is gitignored and has NEITHER. Choose one:" -ForegroundColor DarkYellow
+    Write-Host "    - link it:            Board-Handoff.ps1 -Save -Issue <n> ...   (the next pending is shown by /board work)" -ForegroundColor Cyan
+    Write-Host "    - local on purpose:   add -Local   (accepts the gitignored, non-portable, no-memo handoff)" -ForegroundColor Cyan
+    exit 1
 }
 
 # -- Rotate the previous handoff into .handoffs/ -------------------------------
@@ -675,10 +723,12 @@ _Last saved $($fm.saved)._
     Write-Host ""
     Write-Host "Resume later with:  Board-Handoff.ps1 -Resume  (reads $Repo#$Issue - even on another machine)" -ForegroundColor Cyan
 } else {
+    # Reached only under -Local now (a no-issue save without -Local is refused before any write).
     Write-Host ""
-    Write-Host "  No linked issue - wrote a LOCAL HANDOFF.md only. It is gitignored, so to use it on" -ForegroundColor DarkYellow
-    Write-Host "  another machine either copy it out of the repo, or force-commit it with" -ForegroundColor DarkYellow
-    Write-Host "  'git add -f HANDOFF.md' (there is no board issue to carry it for you)." -ForegroundColor DarkYellow
+    Write-Host "  -Local: wrote a machine-local HANDOFF.md only. It is gitignored and NOT portable -" -ForegroundColor DarkYellow
+    Write-Host "  to use it on another machine copy it out, or force-commit it with 'git add -f HANDOFF.md'." -ForegroundColor DarkYellow
+    Write-Host "  No MEMORY.md pointer was written (that needs a linked issue), so your next session will NOT" -ForegroundColor DarkYellow
+    Write-Host "  surface it on its own - link an issue with -Issue <n> if you want that." -ForegroundColor DarkYellow
 }
 
 # -- Auto-memory pointer: make the NEXT session surface this handoff -----------

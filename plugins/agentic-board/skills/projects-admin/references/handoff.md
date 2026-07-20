@@ -55,8 +55,12 @@ have as the persistence layer.
   on the issue **and** writes a local mirror `HANDOFF.md` at repo root (gitignored). `resume` reads
   the latest `[abios-handoff]` comment (works from a clean checkout on machine B), regenerating the
   local mirror.
-- **No board link** (ad-hoc work): fall back to a local `HANDOFF.md` only; `save` suggests committing
-  it (or `--commit`) so it travels, since there is no issue to hold it.
+- **No board link** (ad-hoc work): a local `HANDOFF.md` is not portable (gitignored) and gets no
+  MEMORY.md pointer, so `save` no longer degrades to it silently (#304). With no issue resolved it
+  **refuses** and prints the choice: link it with `-Issue <n>` (durable comment + memo, resumable on
+  another machine), or accept the machine-local file on purpose with `-Local`. The agent OFFERS this
+  — it does not pass `-Local` on the user's behalf. `-DryRun` reports which of the three it would do
+  (linked / local / refuse) without writing.
 - Previous snapshots rotate to `.handoffs/<yyyyMMddTHHmmssZ>-handoff.md` (gitignored local history) —
   a **colon-free** basic-format ISO-8601 UTC timestamp, since `:` is invalid in Windows filenames and
   this is a PowerShell feature. The issue comment keeps only the latest; the edit history of the

@@ -233,3 +233,21 @@ Describe 'Add-GitignoreEntries (idempotent)' {
         $out | Should -Match '/.handoffs/'
     }
 }
+
+Describe 'Get-HandoffSaveMode (#304)' {
+    It 'is "linked" when an issue is set (portable comment + memo)' {
+        Get-HandoffSaveMode -Issue 42 | Should -Be 'linked'
+    }
+    It 'a set issue wins even if -Local is also passed' {
+        Get-HandoffSaveMode -Issue 42 -Local | Should -Be 'linked'
+    }
+    It 'is "local" when no issue but -Local opts in deliberately' {
+        Get-HandoffSaveMode -Issue 0 -Local | Should -Be 'local'
+    }
+    It 'is "refuse" when no issue and no -Local (no silent local degrade)' {
+        Get-HandoffSaveMode -Issue 0 | Should -Be 'refuse'
+    }
+    It 'treats a negative/unset issue as no issue' {
+        Get-HandoffSaveMode -Issue -1 | Should -Be 'refuse'
+    }
+}
