@@ -7,7 +7,14 @@ user-invocable: false
 # knowledge-registry
 
 Capture and read the per-project knowledge references registry. The source of truth is
-`knowledge/registry.json`; `knowledge/KNOWLEDGE.md` is a generated table grouped by domain.
+`knowledge/registry.json` (or `knowledge/registry.yaml`); `knowledge/KNOWLEDGE.md` is a generated
+table grouped by domain.
+
+**Allow-list repos (#298):** if the repo's pre-commit hook allow-lists code extensions and blocks
+`.json` (often on purpose — OAuth `credentials.json` is `.json`), initialise the registry as YAML with
+`-Format yaml` — `.yaml` is normally allow-listed. Once `registry.yaml` exists every `/knowledge`
+command detects and keeps it; the format is otherwise identical and the generated `KNOWLEDGE.md` is
+unaffected.
 
 ## When NOT to use
 - Facts the agent should recall across sessions → that is `MEMORY.md` (auto-memory).
@@ -15,11 +22,13 @@ Capture and read the per-project knowledge references registry. The source of tr
 - Harvesting references already scattered in the repo → use `knowledge-harvest`.
 
 ## Add a reference
-Run the engine (never hand-edit the JSON):
+Run the engine (never hand-edit the registry file):
 ```
 pwsh -File ${CLAUDE_PLUGIN_ROOT}/scripts/Add-KnowledgeRef.ps1 -Root . -Ref <url|path> -Domain <Domain> -Title "<title>" -Note "<one line>"
+# allow-list repo (.json blocked): add -Format yaml to init knowledge/registry.yaml instead
 ```
 - The domain must be declared in the registry. If it is new and intended, pass `-NewDomain`.
+- `-Format yaml` only matters when CREATING the registry; an existing `.json`/`.yaml` is kept as-is.
 - Local refs must exist on disk — the engine rejects invented paths.
 - Omit `-Type` to let it infer (url / repo / md / folder / notebooklm / video); pass `-Type` to override.
 

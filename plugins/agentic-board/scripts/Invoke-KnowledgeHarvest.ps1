@@ -11,9 +11,10 @@ $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path -LiteralPath $Root).Path
 
 $seen = [System.Collections.Generic.HashSet[string]]::new()
-$regPath = Join-Path $Root 'knowledge' 'registry.json'
+. (Join-Path $PSScriptRoot 'KnowledgeRegistryIo.ps1')
+$regPath = Resolve-KnowledgeRegistryPath -Root $Root
 if (Test-Path -LiteralPath $regPath) {
-    foreach ($r in @((Get-Content -LiteralPath $regPath -Raw | ConvertFrom-Json).references)) { [void]$seen.Add([string]$r.ref) }
+    foreach ($r in @((Read-KnowledgeRegistry -Path $regPath).references)) { [void]$seen.Add([string]$r.ref) }
 }
 $candidates = [System.Collections.Generic.List[object]]::new()
 function Add-Candidate { param($type,$title,$ref)

@@ -53,6 +53,16 @@
   believing it cleaned up. New pure `Get-CloseLoopDisposition` helper, unit-tested across all states.
 
 ### Fixed
+- **The knowledge registry can live as YAML, so allow-list repos can use `/knowledge`** (#298). A repo
+  whose pre-commit hook allow-lists code extensions blocks `knowledge/registry.json` — often on purpose,
+  since OAuth `credentials.json` is `.json`, so the barrier that guards secrets also shut the registry
+  out of exactly the sensitive-data repos that most want a reference catalog. `Add-KnowledgeRef.ps1
+  -Format yaml` now initialises `registry.yaml` instead (`.yaml` is normally allow-listed); every
+  `/knowledge` command auto-detects and keeps whichever file exists. A shared `KnowledgeRegistryIo.ps1`
+  reads/writes both formats — the YAML is real block style, and every string scalar is serialised
+  through the built-in JSON cmdlets (a JSON string token is also a valid YAML double-quoted scalar), so
+  URLs with `:`/`#` and notes with quotes round-trip losslessly with no YAML dependency and no
+  hand-rolled escaping. JSON stays the default; unit-tested both directions.
 - **`handoff -Save` no longer degrades to a silent local-only file when no issue is linked** (#304).
   With no issue resolved (no `-Issue`, no active session, not on an `issue-<n>` branch) `-Save` used to
   write a gitignored `HANDOFF.md` — not portable, and with no MEMORY.md pointer — then say so only

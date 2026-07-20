@@ -12,9 +12,10 @@ $ErrorActionPreference = 'Stop'
 $DefaultDomains = @('PowerBI','Fabric','DAX','TMDL','Power-Query','Vega','Claude-Code','Research')
 function Test-IsUrl { param([string]$s) return ($s -match '^(https?)://') }
 
-$regPath = Join-Path $Root 'knowledge' 'registry.json'
+. (Join-Path $PSScriptRoot 'KnowledgeRegistryIo.ps1')
+$regPath = Resolve-KnowledgeRegistryPath -Root $Root
 if (Test-Path -LiteralPath $regPath) {
-    $reg = Get-Content -LiteralPath $regPath -Raw | ConvertFrom-Json
+    $reg = Read-KnowledgeRegistry -Path $regPath
 } else {
     $reg = [pscustomobject]@{ version=1; project=(Split-Path $Root -Leaf); domains=$DefaultDomains; references=@() }
 }
