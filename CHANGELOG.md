@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.1] - 2026-07-20
 ### Fixed
 - **The review gate stops re-requesting + WAITING for Copilot when the account has no quota** (#367).
   It used to request a Copilot review and wait up to `-TimeoutMinutes` on EVERY PR, even on an account
