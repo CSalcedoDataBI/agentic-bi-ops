@@ -134,11 +134,13 @@ matching recipe from the projects-admin references:
         it, `Board-Fill` keeps mapping open PRs to In Progress, so this step is a no-op — skip it.
      c. Run `scripts/Board-ReviewGate.ps1 -Repo <owner/name> -PR <n>` — it requests a Copilot
         code review when available, measures PR size (warns over 600 lines / 20 files and
-        suggests `Board-Breakdown.ps1` — small PRs review better), runs the **TMDL diff review**
-        when the PR touches `*.tmdl` (a PBIP semantic model — warn-only report of BREAKING /
-        WARNING / INFO schema changes, does not change the verdict), waits for CI checks, waits
-        for the review, and prints decision + feedback + unresolved threads. Exit 0 = gate
-        passed; exit 1 = blocked.
+        suggests `Board-Breakdown.ps1` — small PRs review better), and when the PR touches
+        `*.tmdl` (a PBIP semantic model) runs the two **model-quality gates that BLOCK the merge**
+        (M3.3, #16): the **TMDL diff review** (`-FailOnBreaking` — a BREAKING schema change blocks)
+        and the **Best Practice Analyzer** (`Bpa-GateReview.ps1 -FailOn error` — an error-severity
+        BPA violation blocks). Both skip safely when there is no model / no BPA rules / no Tabular
+        Editor, so a non-BI repo is unaffected. It then waits for CI checks, waits for the review,
+        and prints decision + feedback + unresolved threads. Exit 0 = gate passed; exit 1 = blocked.
         Address the printed feedback with new commits, push, and RE-RUN the gate until it
         passes. If the `second-opinion` skill is available, use it as an extra reviewer.
         If no reviewer is available at all, an explicit self-review of `gh pr diff <n>` is
