@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.2] - 2026-07-20
 ### Added
 - **`/board complete` and `/board bi-checklist` sub-actions** (#371). Two capabilities from 0.23.x had
   no typeable verb — contra the Command Surface Contract (#354): the board-full check lived as a bare
