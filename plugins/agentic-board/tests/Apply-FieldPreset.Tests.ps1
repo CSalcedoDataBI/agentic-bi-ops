@@ -23,3 +23,22 @@ Describe 'Apply-FieldPreset fails closed when the field-list read fails (#313)' 
         Should -Invoke gh -ParameterFilter { $args -contains 'field-create' } -Times 0 -Exactly
     }
 }
+
+Describe 'Apply-FieldPreset invocation ergonomics (#297)' {
+
+    It 'accepts -ProjectNum as an alias of -Number (suite consistency)' {
+        (Get-Command $script:Script).Parameters['Number'].Aliases | Should -Contain 'ProjectNum'
+    }
+
+    It 'accepts -Preset as an alias of -Lang (docs call the value a "preset")' {
+        (Get-Command $script:Script).Parameters['Lang'].Aliases | Should -Contain 'Preset'
+    }
+
+    It 'the missing-preset error names the RESOLVED file path, not the raw -Lang value' {
+        # A nonexistent -PresetPath is checked BEFORE any gh call, so no mock is needed. The
+        # message must point at the file (so "en" never looks like an unknown preset name). #297
+        $missing = Join-Path $TestDrive 'does-not-exist.json'
+        { & $script:Script -Number 13 -Owner 'X' -PresetPath $missing } |
+            Should -Throw -ExpectedMessage "*Preset file not found: $missing*"
+    }
+}

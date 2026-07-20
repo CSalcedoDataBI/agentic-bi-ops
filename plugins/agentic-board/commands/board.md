@@ -189,9 +189,11 @@ matching recipe from the projects-admin references:
   name/layout) need one click in settings — do not claim they were set.
 - **add** — add an issue/PR to the board (references/issue-ops.md)
 - **move** — set an item's Status (references/board-ops.md single-select recipe)
-- **field** — create fields / apply a field preset (`apply en|es`) / set Status/Priority/Type values /
-  **bulk-fill any custom field across EVERY item by rule** (`scripts/Set-BoardField.ps1` — single-select
-  by title-prefix map, or text by `{title}` template — idempotent, retries 502s)
+- **field** — two DISTINCT scripts, do not confuse them:
+  - **apply a field preset** (`apply en|es`) → `scripts/Apply-FieldPreset.ps1 -ProjectNum <n> -Owner <o> -Lang en`
+    (creates the preset's fields + canonical colors; `-Lang`/`-Preset` = `en|es`, NOT `-ApplyPreset`).
+  - **bulk-fill ONE custom field across EVERY item by rule** → `scripts/Set-BoardField.ps1` (single-select
+    by title-prefix map, or text by `{title}` template — idempotent, retries 502s).
   (references/field-presets.md + board-ops.md). Visibility-per-view and group-by are UI-only — say so.
   - **`apply <lang>` standardizes by DEFAULT.** A board born from GitHub's default template
     (`Todo / In Progress / Done`) is migrated onto the canonical preset with no flag: the legacy
