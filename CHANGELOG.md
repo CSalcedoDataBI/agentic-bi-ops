@@ -13,6 +13,15 @@
   around three Claude Code limits (no programmatic `/compact`, no auto-compact instructions, no cheap
   compaction model — [anthropics/claude-code#14160](https://github.com/anthropics/claude-code/issues/14160));
   see `skills/projects-admin/references/compact-survival.md` (#352, #353).
+- **Review gate now BLOCKS a merge on semantic-model quality failures** (#16, M3.3). When a PR touches
+  a `*.tmdl` model, `Board-ReviewGate.ps1` runs two model-quality gates and stops the merge on either,
+  the same way a failing CI check does: the TMDL diff review moves from warn-only to blocking
+  (`Tmdl-DiffReview.ps1 -FailOnBreaking` — a BREAKING schema change blocks), and a new
+  `Bpa-GateReview.ps1` runs Tabular Editor's Best Practice Analyzer (`-FailOn error` — an error-severity
+  violation blocks). Both degrade safely: no model, no committed BPA rules file, or no Tabular Editor
+  is a WARN + skip, never a block — a merge is only ever stopped by an actual finding, so a non-BI repo
+  is unaffected. `Bpa-GateReview.ps1` parses either CLI's GitHub-annotation output (`te` TE3 or
+  `TabularEditor.exe` TE2); pure `ConvertFrom-BpaAnnotations` / `Get-BpaVerdict` helpers, unit-tested.
 - **`/board triage` — fill triage fields from evidence, propose Priority under confirmation** (#306).
   Pending items — the only part anyone plans from — sat blank on Type / Area / Estimate / Priority,
   while what little was filled landed in Done, after it could inform anything. `Board-Triage.ps1` closes

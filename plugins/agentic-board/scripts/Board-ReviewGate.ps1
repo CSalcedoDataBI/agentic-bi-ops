@@ -9,16 +9,23 @@
       1. Requests a GitHub Copilot code review (best-effort: if the account
          has no Copilot code review, it warns and continues - the agent must
          then do an explicit self-review of `gh pr diff`).
-      2. If the PR touches any *.tmdl (a PBIP semantic model), runs the TMDL
-         diff review (Tmdl-DiffReview.ps1) and prints a breaking-change report.
-         Warn-only: it never changes the gate verdict (M3.3 adds hard blocking).
+      2. If the PR touches any *.tmdl (a PBIP semantic model), runs the two
+         model-quality gates and BLOCKS on either (M3.3):
+           - TMDL diff review (Tmdl-DiffReview.ps1 -FailOnBreaking): a BREAKING
+             schema change blocks the merge.
+           - Best Practice Analyzer (Bpa-GateReview.ps1 -FailOn error): an
+             error-severity BPA violation blocks the merge.
+         Both degrade safely: no model, no BPA rules file, or no Tabular Editor
+         is a WARN + skip, never a block - a merge is only ever stopped by an
+         actual finding. A non-BI repo never triggers either.
       3. Waits for CI checks on the PR (gh pr checks --watch). "No checks
          configured" counts as pass, with a note.
       4. Waits (up to -TimeoutMinutes) for the requested review to arrive,
          then reports: review decision, every review with author/state/body,
          and unresolved review-thread count.
       5. Verdict via exit code:
-           0 -> gate PASSED (checks ok, no CHANGES_REQUESTED, no unresolved threads)
+           0 -> gate PASSED (checks ok, no CHANGES_REQUESTED, no unresolved
+                threads, no TMDL-breaking / BPA-error findings)
            1 -> gate BLOCKED (address the printed feedback, push, re-run)
 
     -InstallRuleset (once per repo, optional): installs a repository ruleset
@@ -176,21 +183,36 @@ if ($totalLines -gt $MaxLines -or $size.changedFiles -gt $MaxFiles) {
     Write-Host "       (advertencia, no bloqueo - los umbrales se ajustan con -MaxLines/-MaxFiles)" -ForegroundColor DarkGray
 }
 
-# ── 1.7. TMDL diff review (M2.2): breaking schema changes in PBIP models ──────
-# Warn-only: this step never changes the gate verdict. It surfaces breaking
-# semantic-model changes so the reviewer acknowledges them before merging.
+# ── 1.7 + 1.8. Semantic-model quality gates (M3.3): breaking schema changes AND BPA ──
+# These are the model-quality blocks the gate was built toward. Both act ONLY when the PR touches a
+# TMDL model, so a non-BI repo is unaffected; both feed $blockers below (a merge is stopped the same
+# way a failing CI check stops it). Each degrades safely - a missing runner/tool is a WARN + skip,
+# never a block, so a merge is only ever stopped by an actual finding.
 # plain: --jq emits filtered text (not JSON). A genuinely no-.tmdl PR returns empty at exit 0 (fine),
-# but a READ FAILURE must throw instead of silently skipping the TMDL breaking-change review (#316).
+# but a READ FAILURE must throw instead of silently skipping the model reviews (#316).
+$tmdlBlocked = $false
+$bpaBlocked  = $false
 $tmdlChanged = Invoke-Gh -GhArgs @('api',"repos/$Repo/pulls/$PR/files",'--paginate','--jq','.[] | select(.filename | endswith(".tmdl")) | .filename') `
                          -What "leer los archivos del PR #$PR"
 if ($tmdlChanged) {
     Write-Host ""
-    Write-Host "  Cambios en modelo TMDL detectados - corriendo review de esquema..." -ForegroundColor Cyan
+    Write-Host "  Cambios en modelo TMDL detectados - corriendo reviews de esquema + BPA..." -ForegroundColor Cyan
+    # 1.7 TMDL breaking-change diff - now BLOCKING (M3.3): -FailOnBreaking exits 1 on a BREAKING change.
     $tmdlScript = Join-Path $PSScriptRoot "Tmdl-DiffReview.ps1"
     if (Test-Path $tmdlScript) {
-        & $tmdlScript -Repo $Repo -PR $PR
+        & $tmdlScript -Repo $Repo -PR $PR -FailOnBreaking
+        if ($LASTEXITCODE -ne 0) { $tmdlBlocked = $true }
     } else {
         Write-Host "  WARN Tmdl-DiffReview.ps1 no encontrado junto al gate - salteando review TMDL." -ForegroundColor DarkYellow
+    }
+    # 1.8 Best Practice Analyzer - BLOCKING on error-severity violations (#16). Skips safely when the
+    # repo has no BPA rules or Tabular Editor is absent (those are never a block).
+    $bpaScript = Join-Path $PSScriptRoot "Bpa-GateReview.ps1"
+    if (Test-Path $bpaScript) {
+        & $bpaScript -Repo $Repo -PR $PR -FailOn error
+        if ($LASTEXITCODE -ne 0) { $bpaBlocked = $true }
+    } else {
+        Write-Host "  WARN Bpa-GateReview.ps1 no encontrado junto al gate - salteando BPA." -ForegroundColor DarkYellow
     }
 }
 
@@ -274,6 +296,8 @@ $blockers = @()
 if (-not $checksOk)                        { $blockers += "checks de CI fallando" }
 if ($decision -eq "CHANGES_REQUESTED")     { $blockers += "review pide cambios (CHANGES_REQUESTED)" }
 if ($unresolved -gt 0)                     { $blockers += "$unresolved hilo(s) de review sin resolver" }
+if ($tmdlBlocked)                          { $blockers += "cambios TMDL BREAKING en el modelo (M3.3)" }
+if ($bpaBlocked)                           { $blockers += "violaciones BPA de severidad error (M3.3)" }
 
 if ($blockers.Count -eq 0) {
     Write-Host "GATE PASSED - seguro mergear (gh pr merge $PR --repo $Repo --squash --delete-branch)." -ForegroundColor Green

@@ -59,7 +59,9 @@ A delete + add of the same kind under the same parent, with identical signature
 ## Flags
 
 - `-FailOnBreaking` — exit 1 when any BREAKING change is found (default: warn only,
-  exit 0). M3.3's hard merge-block will use this.
+  exit 0). The M3.3 hard merge-block uses this: `Board-ReviewGate.ps1` runs the TMDL review
+  with `-FailOnBreaking` (alongside `Bpa-GateReview.ps1 -FailOn error`) and blocks the merge
+  when either finds a problem in a PR that touches the model (#16).
 - `-Json` — emit the findings object as JSON instead of the colored report.
 
 ## Limits (v1, honest)
