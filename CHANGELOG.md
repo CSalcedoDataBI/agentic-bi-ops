@@ -15,6 +15,13 @@
   see `skills/projects-admin/references/compact-survival.md` (#352, #353).
 
 ### Fixed
+- **New boards are born on the canonical vocabulary, closing the `Todo`+`Backlog` dead-end** (#299).
+  `gh project create` seeds GitHub's default `Status` (`Todo / In Progress / Done`); a board that keeps
+  `Todo` can later be duplicated into an unmergeable `Todo`+`Backlog` pair by a plain apply. `Resolve-Board.ps1`
+  now applies the preset at creation (`-Lang`, opt out with `-SkipPreset`) while the board is empty, so the
+  `Todo`→`Backlog` rename is free and the legacy option never exists. The stale `field-presets.md` guidance
+  that sent a `Todo`+`Backlog` board "to the UI" now points at `Apply-FieldPreset.ps1 -MergeConflicts` (shipped
+  in #300) and documents why the option must never be re-sent by name (it orphans every item's Status).
 - **`/board field apply` was undocumentable-as-typed and easy to misfire** (#297). The `/board`
   `field` bullet named only `Set-BoardField.ps1` (a bulk-fill script) next to "apply a field
   preset", so the preset applier `Apply-FieldPreset.ps1` got reached for by the wrong name; the doc
