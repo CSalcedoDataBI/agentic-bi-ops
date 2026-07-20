@@ -252,6 +252,10 @@ matching recipe from the projects-admin references:
   CHANGELOG.md; `-Version`/`-Date`/`-Since` override the defaults (version read from plugin.json).
   NOTE: the dedup keys on `(#n)` citations, which this tool always emits — pre-existing prose
   entries without a number are not recognized, so review the first generated block before `-Write`.
+  For releasing a **BI artifact** (a model/report, not this plugin), the changelog is one step of the
+  full release definition-of-done — see `references/bi-release-checklist.md` (M4.1): what the review
+  gate enforces (BPA + TMDL-breaking), what stays external to Fabric (deployment, refresh), and what a
+  human confirms (renders, rollback).
 - **labels** — apply the label taxonomy preset by running `scripts/Apply-LabelPreset.ps1`
   (repo derived from origin, or `-Repo owner/name`). Idempotent `gh label create --force` from
   `presets/labels.json`: `bug`/`docs`/`refactor`/`chore` feed Board-Fill Type detection,

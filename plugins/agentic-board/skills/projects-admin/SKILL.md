@@ -349,6 +349,7 @@ branch already proven merged by its PR (#273/PR #275). The proof is the PR, not 
 | Post a board status update | `Post-BoardStatusUpdate.ps1 -ProjectNum <n>` | `createProjectV2StatusUpdate`; body auto-generated from live counts + next pending, or `-Body`/`-Status` override |
 | Turn a plan into epic + sub-issues | `Board-Plan.ps1 -Title "plan: X" -Tasks ...` | ensures plan labels, creates epic, reuses Board-Breakdown (native sub-issues), Resolve-Board (no duplicates), registers all on the board; doc links must be full blob URLs on pushed refs |
 | **Audit stale / unmerged / ghost branches and worktrees** | **this file — `/board doctor` section** | **`Board-Doctor.ps1`** (read-only; `-Fix` confirms per branch) |
+| Release a **BI artifact** (model/report) — the definition of done | `references/bi-release-checklist.md` | the M4.1 spec: what the gate enforces (BPA + TMDL-breaking), what stays external to Fabric (deploy/refresh), what a human confirms |
 
 ---
 
