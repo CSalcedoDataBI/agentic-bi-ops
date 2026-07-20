@@ -13,6 +13,17 @@
   around three Claude Code limits (no programmatic `/compact`, no auto-compact instructions, no cheap
   compaction model — [anthropics/claude-code#14160](https://github.com/anthropics/claude-code/issues/14160));
   see `skills/projects-admin/references/compact-survival.md` (#352, #353).
+- **`/board cerrar-ciclo` — a close-the-loop disposition router for the current branch** (#302).
+  The careful post-merge teardown (`Invoke-SessionCleanup`) was reachable ONLY through the fleet path
+  (`-Sessions -Watch -AutoClean`), so an interactive single session never cleaned up — merged local
+  branches piled up until `/board doctor` was run by hand. `Board-Work.ps1 -CloseLoop` classifies the
+  CURRENT branch (uncommitted / commits-no-PR / PR-open / PR-merged / PR-closed / merged-advanced) and
+  routes it: it PROPOSES the next command for every state and performs exactly one action — tearing
+  down a proven-merged local branch in place (switch to default, `git branch -D`, prune the session
+  entry; confirm or `-Force`, preview with `-DryRun`), never on a dirty tree, never a merge (that keeps
+  the review gate). `Board-Merge.ps1` now also NOTES when its `--delete-branch` left the local branch
+  behind (checked out here or in another worktree) and points at `cerrar-ciclo`, instead of silently
+  believing it cleaned up. New pure `Get-CloseLoopDisposition` helper, unit-tested across all states.
 
 ### Fixed
 - **`handoff -Save` no longer degrades to a silent local-only file when no issue is linked** (#304).

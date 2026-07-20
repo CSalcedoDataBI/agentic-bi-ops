@@ -2159,3 +2159,50 @@ Describe 'Resolve-StatusOptionId (every Status WRITE is vocabulary-aware, PR #27
         Resolve-StatusOptionId $null 'Backlog'              | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Get-CloseLoopDisposition (cerrar-ciclo router #302)' {
+    It 'on the default branch -> nothing to close' {
+        (Get-CloseLoopDisposition -OnDefault $true).State | Should -Be 'on-default'
+        (Get-CloseLoopDisposition -OnDefault $true).CanCleanup | Should -BeFalse
+    }
+    It 'uncommitted work is decided BEFORE any PR state (never lose it to cleanup)' {
+        $merged = [pscustomobject]@{ number = 9; state = 'MERGED'; merged = $true }
+        $d = Get-CloseLoopDisposition -OnDefault $false -Dirty 'dirty' -Pr $merged
+        $d.State | Should -Be 'dirty'
+        $d.CanCleanup | Should -BeFalse
+    }
+    It 'an unreadable working tree (unknown) fails closed as dirty' {
+        (Get-CloseLoopDisposition -OnDefault $false -Dirty 'unknown').State | Should -Be 'dirty'
+    }
+    It 'a proven-merged branch (tip == PR head) is the only CanCleanup state' {
+        $pr = [pscustomobject]@{ number = 42; state = 'MERGED'; merged = $true }
+        $d = Get-CloseLoopDisposition -OnDefault $false -Dirty 'clean' -Pr $pr
+        $d.State | Should -Be 'merged'
+        $d.CanCleanup | Should -BeTrue
+        $d.Summary | Should -Match '#42'
+    }
+    It 'a MERGED PR whose head is NOT our tip is merged-advanced, never deletable' {
+        $pr = [pscustomobject]@{ number = 42; state = 'MERGED'; merged = $false }
+        $d = Get-CloseLoopDisposition -OnDefault $false -Dirty 'clean' -Pr $pr
+        $d.State | Should -Be 'merged-advanced'
+        $d.CanCleanup | Should -BeFalse
+    }
+    It 'an OPEN PR routes to the review gate' {
+        $pr = [pscustomobject]@{ number = 7; state = 'OPEN'; merged = $false }
+        $d = Get-CloseLoopDisposition -OnDefault $false -Dirty 'clean' -Pr $pr
+        $d.State | Should -Be 'in-review'
+        $d.Hint  | Should -Match 'Board-ReviewGate.*7'
+    }
+    It 'a CLOSED-unmerged PR routes to a rescue/discard decision' {
+        $pr = [pscustomobject]@{ number = 7; state = 'CLOSED'; merged = $false }
+        (Get-CloseLoopDisposition -OnDefault $false -Dirty 'clean' -Pr $pr).State | Should -Be 'closed-unmerged'
+    }
+    It 'commits but no PR routes to opening one' {
+        $d = Get-CloseLoopDisposition -OnDefault $false -Dirty 'clean' -CommitsAhead 3 -Pr $null
+        $d.State | Should -Be 'no-pr'
+        $d.Hint  | Should -Match 'New-BoardPR'
+    }
+    It 'a fresh work branch with no commits and no PR has nothing to close' {
+        (Get-CloseLoopDisposition -OnDefault $false -Dirty 'clean' -CommitsAhead 0 -Pr $null).State | Should -Be 'empty'
+    }
+}

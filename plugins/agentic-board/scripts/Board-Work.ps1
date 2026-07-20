@@ -154,6 +154,8 @@ param(
     [int]   $Relaunch   = 0,
     [int]   $Lock       = 0,
     [int]   $Unlock     = 0,
+    # cerrar-ciclo: classify the CURRENT branch and route it to the right disposition (#302).
+    [switch]$CloseLoop,
     [switch]$Reap,
     [switch]$KillAll,
     [switch]$Force,
@@ -182,6 +184,8 @@ $ErrorActionPreference = "Stop"
 # not read as an empty board or a write that silently no-op'd. Pure at load; dot-sourced before
 # the guard so unit tests get the seam. Session-monitor reads deliberately stay best-effort.
 . (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+# owner/name resolver from origin (dot-safe regex) - cerrar-ciclo (#302) resolves the current repo.
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
 
 # NOTE: the GH_TOKEN check lives in the main-entry guard below (after every function
 # is defined) so the pure helpers can be dot-sourced for unit tests without a token
@@ -1887,6 +1891,58 @@ function Get-SessionCompletion {
     return [pscustomobject]@{ done = $false; reason = 'en progreso'; merged = $false }
 }
 
+# Classify the CURRENT branch's disposition for cerrar-ciclo (#302), and route it. PURE: every
+# fact is an argument. cerrar-ciclo is deliberately NOT "merge" - merging has the review gate, and
+# the phrase is ambiguous ("ship it" vs "stop for today") - so this only ever PROPOSES the next
+# step and performs exactly ONE action: the single-session teardown of a proven-merged local branch
+# that the fleet path (-Sessions -Watch -AutoClean) never reaches for an interactive session.
+#   $OnDefault    - the current branch IS the repo default (nothing to close).
+#   $Dirty        - 'clean' | 'dirty' | 'unknown'  (unknown = fail closed = treat as dirty).
+#   $CommitsAhead - commits on this branch not on its base (0 = nothing committed yet).
+#   $Pr           - $null, or { number; state 'OPEN'|'MERGED'|'CLOSED'; merged [bool] }.
+# Returns { State; Summary; Hint; CanCleanup }. CanCleanup is $true ONLY for a proven-merged branch
+# (PR MERGED and this branch is its tip) that is safe to tear down. Order matters: an uncommitted
+# working tree is decided BEFORE any PR state (you must not lose that work to a cleanup).
+function Get-CloseLoopDisposition {
+    param([bool]$OnDefault, [string]$Dirty = 'clean', [int]$CommitsAhead = 0, $Pr = $null)
+    if ($OnDefault) {
+        return [pscustomobject]@{ State = 'on-default'; CanCleanup = $false
+            Summary = "On the default branch - nothing to close. Start work with /board work."; Hint = $null }
+    }
+    if ($Dirty -ne 'clean') {
+        return [pscustomobject]@{ State = 'dirty'; CanCleanup = $false
+            Summary = "Uncommitted changes present - decide first: commit them, or save a handoff so nothing is lost."
+            Hint = "Board-Handoff.ps1 -Save -Issue <n> -NextStep '...'" }
+    }
+    if ($Pr -and $Pr.merged) {
+        return [pscustomobject]@{ State = 'merged'; CanCleanup = $true
+            Summary = "PR #$($Pr.number) MERGED and this branch is its tip - safe to tear down the local branch."
+            Hint = $null }
+    }
+    if ($Pr -and $Pr.state -eq 'MERGED') {
+        return [pscustomobject]@{ State = 'merged-advanced'; CanCleanup = $false
+            Summary = "PR #$($Pr.number) MERGED but this branch moved past its merge commit - NOT deleting (unmerged commits here)."
+            Hint = $null }
+    }
+    if ($Pr -and $Pr.state -eq 'OPEN') {
+        return [pscustomobject]@{ State = 'in-review'; CanCleanup = $false
+            Summary = "PR #$($Pr.number) is OPEN - run the review gate; merge if it passes, save a handoff if it does not."
+            Hint = "Board-ReviewGate.ps1 -Repo <owner/name> -PR $($Pr.number)" }
+    }
+    if ($Pr -and $Pr.state -eq 'CLOSED') {
+        return [pscustomobject]@{ State = 'closed-unmerged'; CanCleanup = $false
+            Summary = "PR #$($Pr.number) was CLOSED without merging - decide: reopen/rescue the work, or discard the branch."
+            Hint = "gh pr reopen $($Pr.number)   # or delete the branch if abandoned" }
+    }
+    if ($CommitsAhead -gt 0) {
+        return [pscustomobject]@{ State = 'no-pr'; CanCleanup = $false
+            Summary = "$CommitsAhead commit(s) on this branch but no PR yet - open one to send it to review."
+            Hint = "New-BoardPR.ps1 -Issue <n>" }
+    }
+    return [pscustomobject]@{ State = 'empty'; CanCleanup = $false
+        Summary = "On a work branch with no commits and no PR - nothing to close yet."; Hint = $null }
+}
+
 # Live completion of one registered session: PR state of its head branch + issue state +
 # whether the host PID is alive. Best-effort (never throws) so a transient gh failure just
 # reads as "still in progress". Wrapped so the watch loop is testable via an injected probe.
@@ -2399,6 +2455,98 @@ mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!) {
     $verb = if ($locking) { 'bloqueado (otra sesion lo trabaja)' } else { 'desbloqueado (liberado)' }
     Write-Host ("OK  #{0} {1} - [abios-claim] {2} posteado." -f $n, $verb, $note) -ForegroundColor Green
     Write-Host "Board: $lockUrl" -ForegroundColor Cyan
+    exit 0
+}
+
+# ==============================================================================
+# CLOSE-LOOP MODE: -CloseLoop  -> classify the CURRENT branch and route it to the
+# right disposition (#302). It PROPOSES the next step for every state and performs
+# exactly ONE action: tearing down a proven-merged local branch in place - the
+# single-session equivalent of the fleet's -AutoClean, which an interactive session
+# never reaches. It never merges (that has the review gate) and never touches a
+# dirty tree. Operates on the current branch only; the repo-wide sweep is /board doctor.
+# ==============================================================================
+if ($CloseLoop) {
+    $repo = $Repo
+    if (-not $repo) { try { $repo = Get-RepoFromOrigin } catch { $repo = '' } }
+    $curBranch = (git branch --show-current 2>$null)
+    if (-not $curBranch) { throw "HEAD detached - cerrar-ciclo opera sobre la rama actual." }
+
+    $baseRef      = Resolve-IssueBaseRef $repo
+    $defaultShort = if ($baseRef -match '/') { ($baseRef -split '/', 2)[1] } else { $baseRef }
+    $onDefault    = [bool]($defaultShort -and $curBranch -eq $defaultShort)
+
+    # Dirty state fails closed: an unreadable working tree is treated as dirty, never as clean,
+    # so cleanup can never run over work it could not vouch for.
+    $porcelain = git status --porcelain 2>$null
+    $dirty = if ($LASTEXITCODE -ne 0) { 'unknown' } elseif ($porcelain) { 'dirty' } else { 'clean' }
+
+    $ahead = 0
+    if ($baseRef) {
+        $c = git rev-list --count "$baseRef..HEAD" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $c) { $ahead = [int]$c }
+    }
+
+    # The PR whose head IS our tip (a reused branch name can carry several); a MERGED verdict
+    # requires the tip match, via the same Get-SessionCompletion predicate the teardown uses.
+    $pr = $null
+    if ($repo) {
+        try {
+            $tip = (git rev-parse --verify HEAD 2>$null)
+            $prs = @(gh pr list --repo $repo --head $curBranch --state all --json number,state,headRefOid --limit 20 2>$null | ConvertFrom-Json)
+            $mine = $prs | Where-Object { $tip -and $_.headRefOid -eq $tip } | Select-Object -First 1
+            $pick = if ($mine) { $mine } elseif ($prs.Count -gt 0) { $prs[0] } else { $null }
+            if ($pick) {
+                $verdict = Get-SessionCompletion -PrState $pick.state -PrHeadOid ([string]$pick.headRefOid) -BranchTip ([string]$tip)
+                $pr = [pscustomobject]@{ number = $pick.number; state = $pick.state; merged = [bool]$verdict.merged }
+            }
+        } catch { }
+    }
+
+    $disp = Get-CloseLoopDisposition -OnDefault $onDefault -Dirty $dirty -CommitsAhead $ahead -Pr $pr
+
+    Write-Host ("=== cerrar-ciclo  ({0})  rama {1} ===" -f $(if ($repo) { $repo } else { '(repo desconocido)' }), $curBranch) -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host ("  Estado: {0}" -f $disp.State) -ForegroundColor Yellow
+    Write-Host ("  {0}" -f $disp.Summary)
+    if ($disp.Hint) {
+        Write-Host ("  -> {0}" -f ($disp.Hint -replace '<owner/name>', $repo)) -ForegroundColor Cyan
+    }
+
+    if ($disp.CanCleanup) {
+        # The GAP (#302): a proven-merged local branch, torn down in place. Squash-merge means
+        # `git branch -d` would refuse (it reads as unmerged), so a PROVEN merge licenses `-D`.
+        # Switch off the branch first (you cannot delete the one you are on), never on a dirty tree.
+        if ($DryRun) {
+            Write-Host ""
+            Write-Host ("  DRY-RUN: cambiaria a '{0}', borraria la rama '{1}' (-D, merge probado) y purgaria su entrada de sesion." -f $defaultShort, $curBranch) -ForegroundColor Yellow
+            exit 0
+        }
+        $go = [bool]$Force
+        if (-not $go) {
+            $ans = Read-Host ("Rama '{0}' (PR #{1} MERGED). Cambiar a '{2}' y borrarla? (s/n)" -f $curBranch, $pr.number, $defaultShort)
+            $go = ($ans -match '^(s|si|y|yes)$')
+        }
+        if (-not $go) { Write-Host "  Cancelado - la rama se conserva." -ForegroundColor DarkGray; exit 0 }
+
+        if (-not $defaultShort) { throw "No pude resolver la rama por defecto para cambiarme antes de borrar." }
+        git checkout $defaultShort 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "No pude cambiar a '$defaultShort' (working tree ocupado?) - no borro la rama." }
+        git pull --ff-only --quiet 2>&1 | Out-Null
+        git branch -D $curBranch 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host ("  WARN no pude borrar '{0}' (checkouteada en otro worktree?) - conservada." -f $curBranch) -ForegroundColor DarkYellow
+        } else {
+            Write-Host ("  OK  rama '{0}' borrada; ahora en '{1}'." -f $curBranch, $defaultShort) -ForegroundColor Green
+        }
+        # Prune the session registry entry (by branch, else by the issue-<n> in the name).
+        $entry    = @(Read-SessionRegistryRaw | Where-Object { $_.branch -eq $curBranch }) | Select-Object -First 1
+        $issueNum = if ($entry) { [int]$entry.issue } elseif ($curBranch -match '^issue-(\d+)') { [int]$Matches[1] } else { 0 }
+        if ($issueNum -gt 0) {
+            Remove-SessionRegistryEntry -IssueNum $issueNum
+            Write-Host ("  OK  entrada de sesion del issue #{0} purgada." -f $issueNum) -ForegroundColor DarkGray
+        }
+    }
     exit 0
 }
 
