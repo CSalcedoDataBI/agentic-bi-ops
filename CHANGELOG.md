@@ -13,6 +13,14 @@
   around three Claude Code limits (no programmatic `/compact`, no auto-compact instructions, no cheap
   compaction model — [anthropics/claude-code#14160](https://github.com/anthropics/claude-code/issues/14160));
   see `skills/projects-admin/references/compact-survival.md` (#352, #353).
+- **Release checklist spec for BI artifacts** (#17, M4.1). A new
+  `references/bi-release-checklist.md` defines "ready to release" for a semantic model / report / PBIP:
+  every item is marked **[tool]** (an agentic-board command enforces it — the BPA + TMDL-breaking gate,
+  `/board changelog`, `/board triage`, `/knowledge`), **[external]** (a Fabric/PBI capability the tool
+  references but does not rebuild — deployment pipelines, refresh validation), or **[manual]** (a human
+  judgement the tool surfaces but never fakes — report renders, rollback path). Ships the shared
+  definition-of-done plus a copy-paste checklist; wired from the roadmap, `/board changelog`, and the
+  projects-admin reference index.
 - **Review gate now BLOCKS a merge on semantic-model quality failures** (#16, M3.3). When a PR touches
   a `*.tmdl` model, `Board-ReviewGate.ps1` runs two model-quality gates and stops the merge on either,
   the same way a failing CI check does: the TMDL diff review moves from warn-only to blocking
