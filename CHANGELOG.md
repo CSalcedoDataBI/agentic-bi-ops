@@ -15,6 +15,13 @@
   see `skills/projects-admin/references/compact-survival.md` (#352, #353).
 
 ### Fixed
+- **`handoff -Save` no longer degrades to a silent local-only file when no issue is linked** (#304).
+  With no issue resolved (no `-Issue`, no active session, not on an `issue-<n>` branch) `-Save` used to
+  write a gitignored `HANDOFF.md` — not portable, and with no MEMORY.md pointer — then say so only
+  AFTER writing. It now **refuses before writing** and prints the choice: link it with `-Issue <n>`
+  (durable `[abios-handoff]` comment + memo, resumable on another machine) or accept a machine-local
+  handoff on purpose with the new `-Local` switch. `-DryRun` reports which of linked/local/refuse it
+  would do. New pure `Get-HandoffSaveMode` helper, unit-tested.
 - **The CHANGELOG auto-fold now composes with a hand-written `[Unreleased]` block** (#324). `New-Release.ps1`
   folds by delegating to `Board-Changelog.ps1 -Write`, which used to insert the generated block ABOVE any
   `## [Unreleased]` — stranding the maintainer's curated entries under an orphan `[Unreleased]` below the very
