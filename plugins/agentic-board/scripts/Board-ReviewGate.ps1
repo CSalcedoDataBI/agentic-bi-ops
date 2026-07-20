@@ -8,7 +8,11 @@
 
       1. Requests a GitHub Copilot code review (best-effort: if the account
          has no Copilot code review, it warns and continues - the agent must
-         then do an explicit self-review of `gh pr diff`).
+         then do an explicit self-review of `gh pr diff`). It REMEMBERS, per
+         account, when Copilot answered "no quota / unavailable": the next PR
+         skips the request AND the wait and routes straight to self-review,
+         until a cooldown (-CopilotCooldownDays) expires or -EnableCopilot is
+         passed. So a quota-blocked account is not re-asked on every PR (#367).
       2. If the PR touches any *.tmdl (a PBIP semantic model), runs the two
          model-quality gates and BLOCKS on either (M3.3):
            - TMDL diff review (Tmdl-DiffReview.ps1 -FailOnBreaking): a BREAKING
@@ -51,12 +55,22 @@
 .PARAMETER MaxFiles
     Small-PR guard: warn when changed files exceed this. Default 20.
 
+.PARAMETER CopilotCooldownDays
+    How long to remember "this account has no Copilot" before trying again. Default 7. When the
+    gate sees Copilot answer "no quota / unavailable", it marks the owner for this many days; every
+    PR in that window skips the Copilot request + wait and goes straight to self-review (#367).
+
+.PARAMETER EnableCopilot
+    Forget the Copilot-unavailable marker for this repo's owner and request Copilot again this run
+    (use when Copilot access is back before the cooldown expires).
+
 .PARAMETER TokenVar
     Windows USER env var holding the PAT. Defaults to GITHUB_TOKEN_PERSONAL.
 
 .EXAMPLE
     .\Board-ReviewGate.ps1 -Repo CSalcedoDataBI/agentic-board -PR 50
     .\Board-ReviewGate.ps1 -Repo CSalcedoDataBI/agentic-board -InstallRuleset
+    .\Board-ReviewGate.ps1 -Repo CSalcedoDataBI/agentic-board -PR 50 -EnableCopilot
 #>
 [CmdletBinding()]
 param(
@@ -66,6 +80,10 @@ param(
     [int]   $TimeoutMinutes = 6,
     [int]   $MaxLines = 600,
     [int]   $MaxFiles = 20,
+    # Days to remember "this account has no Copilot" before the gate tries it again (#367).
+    [int]   $CopilotCooldownDays = 7,
+    # Forget the Copilot-unavailable marker for this repo's owner and try Copilot again now.
+    [switch]$EnableCopilot,
     [string]$TokenVar = "GITHUB_TOKEN_PERSONAL"
 )
 
@@ -75,6 +93,8 @@ $ErrorActionPreference = "Stop"
 # a false-empty review read reads as "0 unresolved -> GATE PASSED" and authorizes a merge. The
 # CI/review POLLING reads stay best-effort (a transient failure must keep polling, not throw).
 . (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+# Per-account memory of Copilot (un)availability so the gate stops re-requesting + waiting (#367).
+. (Join-Path $PSScriptRoot 'CopilotAvailability.ps1')
 
 if (-not $env:GH_TOKEN) {
     $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, "User")
@@ -133,6 +153,8 @@ Write-Host ""
 # Copilot WAS added. Instead we trust the POST response body (its requested_reviewers
 # is authoritative and immediate) and fall back to a short GET retry.
 $copilotRequested = $false
+$copilotSkipped   = $false
+$copilotOwner     = ($Repo -split '/')[0]
 
 function Test-CopilotPending {
     # GET the current requested reviewers; the Copilot bot shows up under .users as
@@ -141,31 +163,50 @@ function Test-CopilotPending {
     return [bool](@($rr.users) | Where-Object { $_.login -match '(?i)copilot' })
 }
 
-try {
-    $postResp = gh api "repos/$Repo/pulls/$PR/requested_reviewers" -X POST `
-        -f "reviewers[]=copilot-pull-request-reviewer[bot]" 2>$null | ConvertFrom-Json
-    # A failed POST (Copilot not enabled) yields an error object with no requested_reviewers.
-    if ($postResp -and (@($postResp.requested_reviewers) | Where-Object { $_.login -match '(?i)copilot' })) {
-        $copilotRequested = $true
-    }
-} catch { }
-
-if (-not $copilotRequested) {
-    # Eventual consistency: the reviewer may take a moment to surface (also covers a
-    # re-run where the bot was already requested and the POST returned no fresh body).
-    # Don't sleep after the final attempt - there is no re-check after it.
-    foreach ($attempt in 1..3) {
-        if (Test-CopilotPending) { $copilotRequested = $true; break }
-        if ($attempt -lt 3) { Start-Sleep -Seconds 2 }
-    }
+# -EnableCopilot: forget the "unavailable" marker for this owner and try Copilot again this run (#367).
+if ($EnableCopilot -and (Clear-CopilotUnavailable $copilotOwner)) {
+    Write-Host "  Copilot re-habilitado para $copilotOwner (marcador borrado)." -ForegroundColor DarkGray
 }
 
-if ($copilotRequested) {
-    Write-Host "  OK  Review de Copilot solicitado (reviewer pendiente confirmado)" -ForegroundColor Green
-} else {
-    Write-Host "  WARN Copilot code review no disponible en esta cuenta/repo." -ForegroundColor DarkYellow
-    Write-Host "       Fallback obligatorio: self-review explicito de 'gh pr diff $PR' antes de mergear," -ForegroundColor DarkYellow
-    Write-Host "       y si la skill second-opinion esta disponible, usala como segundo revisor." -ForegroundColor DarkYellow
+# If we already know this ACCOUNT has no Copilot, skip the request AND the wait entirely and route to
+# self-review — do not re-ask a reviewer that answered "no quota" days ago (#367). Self-healing: an
+# expired cooldown falls through to a real request below.
+$copilotSkip = Test-CopilotShouldSkip -Owner $copilotOwner -Now (Get-Date)
+if ($copilotSkip.Skip) {
+    $copilotSkipped = $true
+    $untilTxt = if ($copilotSkip.Until) { " hasta $($copilotSkip.Until)" } else { "" }
+    Write-Host "  Copilot marcado como NO disponible para $copilotOwner$untilTxt - salto la solicitud y la espera (#367)." -ForegroundColor DarkYellow
+    Write-Host "       Fallback obligatorio: self-review explicito de 'gh pr diff $PR' antes de mergear" -ForegroundColor DarkYellow
+    Write-Host "       (usa -EnableCopilot para reintentar ahora, o la skill second-opinion como revisor)." -ForegroundColor DarkYellow
+}
+
+if (-not $copilotSkipped) {
+    try {
+        $postResp = gh api "repos/$Repo/pulls/$PR/requested_reviewers" -X POST `
+            -f "reviewers[]=copilot-pull-request-reviewer[bot]" 2>$null | ConvertFrom-Json
+        # A failed POST (Copilot not enabled) yields an error object with no requested_reviewers.
+        if ($postResp -and (@($postResp.requested_reviewers) | Where-Object { $_.login -match '(?i)copilot' })) {
+            $copilotRequested = $true
+        }
+    } catch { }
+
+    if (-not $copilotRequested) {
+        # Eventual consistency: the reviewer may take a moment to surface (also covers a
+        # re-run where the bot was already requested and the POST returned no fresh body).
+        # Don't sleep after the final attempt - there is no re-check after it.
+        foreach ($attempt in 1..3) {
+            if (Test-CopilotPending) { $copilotRequested = $true; break }
+            if ($attempt -lt 3) { Start-Sleep -Seconds 2 }
+        }
+    }
+
+    if ($copilotRequested) {
+        Write-Host "  OK  Review de Copilot solicitado (reviewer pendiente confirmado)" -ForegroundColor Green
+    } else {
+        Write-Host "  WARN Copilot code review no disponible en esta cuenta/repo." -ForegroundColor DarkYellow
+        Write-Host "       Fallback obligatorio: self-review explicito de 'gh pr diff $PR' antes de mergear," -ForegroundColor DarkYellow
+        Write-Host "       y si la skill second-opinion esta disponible, usala como segundo revisor." -ForegroundColor DarkYellow
+    }
 }
 
 # ── 1.5. Small-PR guard (GitHub PR BP: small, focused pull requests) ──────────
@@ -273,6 +314,16 @@ if ($copilotRequested) {
 $reviews    = @($prState.reviews.nodes)
 $unresolved = @($prState.reviewThreads.nodes | Where-Object { $_.isResolved -eq $false }).Count
 $decision   = $prState.reviewDecision
+
+# If Copilot answered that it could NOT review (no quota), remember it per account so the NEXT PR skips
+# the request + the wait entirely (#367). Only when we actually requested it this run — a skipped run
+# has nothing new to learn. Best-effort: a marker write failure never affects the gate verdict.
+if ($copilotRequested -and (Test-CopilotUnavailableReview $reviews)) {
+    $cooldownDays = [Math]::Max(1, $CopilotCooldownDays)
+    if (Set-CopilotUnavailable -Owner $copilotOwner -Until (Get-Date).AddDays($cooldownDays) -Reason 'Copilot answered: unable to review (quota/limit)') {
+        Write-Host ("  Copilot sin disponibilidad detectada - marcado NO disponible para {0} por {1} dia(s); no lo volvere a solicitar/esperar hasta entonces (#367)." -f $copilotOwner, $cooldownDays) -ForegroundColor DarkYellow
+    }
+}
 
 Write-Host ""
 Write-Host "----- RESULTADO DEL REVIEW -----" -ForegroundColor Cyan
