@@ -1,7 +1,11 @@
 <#  Add-KnowledgeRef.ps1 — add one reference to the project knowledge registry.
-    Inits knowledge/registry.json (seeded taxonomy) if absent. Enforces the domain guard
+    Inits the registry (seeded taxonomy) if absent. Enforces the domain guard
     (declared or -NewDomain) and, for local refs, that the path exists (never invent
-    references). Appends the record and regenerates KNOWLEDGE.md. #>
+    references). Appends the record and regenerates KNOWLEDGE.md.
+
+    The registry is JSON by default, but `-Format yaml` writes `registry.yaml` instead — for a repo
+    whose pre-commit allow-list blocks `.json` (on purpose: OAuth `credentials.json` is `.json`) but
+    passes `.yaml` (#298). An existing `registry.yaml` is detected and kept automatically. #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Ref,
@@ -12,16 +16,20 @@ param(
     [switch]$NewDomain,
     [string]$Root = (Get-Location).Path,
     [string]$Date = (Get-Date -Format 'yyyy-MM-dd'),
+    # Format for a NEW registry: json (default) or yaml (allow-list-friendly). Ignored when a registry
+    # already exists - that file's own extension is kept.
+    [ValidateSet('json','yaml','')][string]$Format = '',
     [switch]$Json
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'KnowledgeRegistryIo.ps1')
 $DefaultDomains = @('PowerBI','Fabric','DAX','TMDL','Power-Query','Vega','Claude-Code','Research')
 function Test-IsUrl { param([string]$s) return ($s -match '^(https?)://') }
 
 $dir = Join-Path $Root 'knowledge'
-$regPath = Join-Path $dir 'registry.json'
+$regPath = Resolve-KnowledgeRegistryPath -Root $Root -Format $Format
 if (Test-Path -LiteralPath $regPath) {
-    $reg = Get-Content -LiteralPath $regPath -Raw | ConvertFrom-Json
+    $reg = Read-KnowledgeRegistry -Path $regPath
 } else {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     $reg = [pscustomobject]@{ version=1; project=(Split-Path $Root -Leaf); domains=$DefaultDomains; references=@() }
@@ -65,7 +73,7 @@ $id = 'kn_{0:000}' -f ($max + 1)
 $record = [pscustomobject]@{ id=$id; domain=$Domain; type=$Type; title=$Title; ref=$Ref; note=$Note; added=$Date }
 $reg.references = @($reg.references) + $record
 
-$reg | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $regPath -Encoding utf8
+Write-KnowledgeRegistry -Registry $reg -Path $regPath
 & (Join-Path $PSScriptRoot 'Write-KnowledgeTable.ps1') -Root $Root | Out-Null
 
 if ($Json) { $record | ConvertTo-Json -Depth 8 } else { $record }

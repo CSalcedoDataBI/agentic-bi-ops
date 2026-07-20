@@ -4,9 +4,10 @@
 param([string]$Root = (Get-Location).Path)
 $ErrorActionPreference = 'Stop'
 
-$regPath = Join-Path $Root 'knowledge' 'registry.json'
+. (Join-Path $PSScriptRoot 'KnowledgeRegistryIo.ps1')
+$regPath = Resolve-KnowledgeRegistryPath -Root $Root
 if (-not (Test-Path -LiteralPath $regPath)) { throw "No registry at $regPath" }
-$reg = Get-Content -LiteralPath $regPath -Raw | ConvertFrom-Json
+$reg = Read-KnowledgeRegistry -Path $regPath
 $refs = @($reg.references)
 
 function Format-Ref { param([string]$s) if ($s -match '^(https?)://') { "[$s]($s)" } else { "``$s``" } }
