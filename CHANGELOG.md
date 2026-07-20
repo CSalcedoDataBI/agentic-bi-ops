@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- **The review gate stops re-requesting + WAITING for Copilot when the account has no quota** (#367).
+  It used to request a Copilot review and wait up to `-TimeoutMinutes` on EVERY PR, even on an account
+  with no Copilot (which just answers "unable to review … reached their quota limit") — repeated every
+  PR, every session, with no memory. Now, the first time Copilot answers unavailable, the gate records
+  it PER ACCOUNT in a `$HOME`-level marker (`CopilotAvailability.ps1`); every later PR — this session
+  and future ones — SKIPS the request and the wait and routes straight to the mandatory self-review,
+  until a cooldown (`-CopilotCooldownDays`, default 7) expires or `-EnableCopilot` clears it.
+  Self-healing (an expired cooldown retries once) and never a gate failure — a skipped Copilot routes
+  to self-review exactly like the existing "no Copilot" fallback. Pure `Test-CopilotUnavailableReview`
+  / `Get-CopilotSkipDecision` helpers, unit-tested; marker I/O keyed by owner.
+
 ## [0.23.0] - 2026-07-20
 ### Added
 - **Compaction-survival for long single-session `/board work` runs** (#348). A queue of issues
