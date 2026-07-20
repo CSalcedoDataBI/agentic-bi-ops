@@ -46,8 +46,19 @@ in it is left alone rather than guessed. Idempotent: on an already-canonical boa
 Verified on a scratch board created from GitHub's default template: `Todo`→`Backlog` renamed, the item
 sitting on `Todo` read `Backlog` afterwards, and Status ended with exactly the 5 canonical options.
 
-**Conflict:** if the board has BOTH `Todo` and `Backlog`, the rename is **skipped and reported** —
-GitHub rejects two options with the same name. Move the items and delete the spare option in the UI.
+**Conflict:** if the board has BOTH `Todo` and `Backlog` (what a pre-#300 plain apply left behind),
+the rename is **skipped and reported** — GitHub rejects two options with the same name. This no longer
+needs the UI: run `Apply-FieldPreset.ps1 -MergeConflicts` (preview with `-DryRun`). It moves every item
+off the legacy option onto the canonical one **by id**, verifies the move, and only then deletes the
+legacy option. Because it deletes an option it stays opt-in on its own flag — a plain apply reports the
+conflict and points you here rather than destroying anything unasked.
+
+> **Never resolve this by re-sending `singleSelectOptions` by NAME.** `updateProjectV2Field` with names
+> and no ids makes GitHub recreate every option with fresh ids, orphaning all item assignments — every
+> item loses its Status at once, silently, and the next apply still reports success. `-MergeConflicts`
+> avoids it by moving items first (by id) and re-sending the survivors by id; that ordering is the whole
+> point. A board created through `Resolve-Board.ps1` never reaches this state — it is born on the
+> canonical vocabulary (#299), so the conflict only exists on boards made before that.
 
 Everything below `Status`/`Priority`/`Size` is out of the vocabulary's scope — the ES preset's `Estado`
 is a different FIELD, so `-Migrate` does not touch ES boards.
@@ -73,7 +84,8 @@ language per board for consistency.
 |------|--------------|------|
 | Create fields + option values | ✅ | `field-create` (this file) |
 | Apply a whole preset idempotently | ✅ | `Apply-FieldPreset.ps1` |
-| Rename a single-select field's **options** (e.g. `Todo`→`Backlog`) | ✅ | `Apply-FieldPreset.ps1 -Migrate` — `updateProjectV2Field` with the option's existing id; item assignments survive |
+| Rename a single-select field's **options** (e.g. `Todo`→`Backlog`) | ✅ | `Apply-FieldPreset.ps1` (default) — `updateProjectV2Field` with the option's existing id; item assignments survive |
+| **Merge** a `Todo`+`Backlog` duplicate (move items, delete the spare) | ✅ | `Apply-FieldPreset.ps1 -MergeConflicts` — moves items by id, verifies, then deletes the legacy option (opt-in; it deletes an option) |
 | **Rename the built-in `Status` FIELD itself** | ❌ | UI only — the ES preset adds `Estado` as a NEW field instead of renaming `Status` |
 | **Which fields are VISIBLE in a view** (show/hide, order) | ❌ | view config is UI/GraphQL-only; do it once in the UI |
 | **Group-by / layout (Board vs Table)** | ❌ | UI only |

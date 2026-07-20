@@ -32,3 +32,35 @@ Describe 'Resolve-Board fails closed when the board-list read fails (#313)' {
         Should -Invoke gh -ParameterFilter { $args -contains 'create' } -Times 0 -Exactly
     }
 }
+
+Describe 'Resolve-Board applies the canonical preset to a NEWLY created board (#299)' {
+    # A board created here is born with GitHub's template Status (`Todo`). Applying the preset at
+    # birth renames `Todo`->`Backlog` while the board is empty, so it never carries the legacy option
+    # that a later plain apply could duplicate into the Todo+Backlog dead-end #299 describes. The
+    # `field-list` read is Apply-FieldPreset's fingerprint: only the preset apply issues it, so its
+    # presence/absence is what proves the preset ran (or was skipped). gh is mocked at the seam so no
+    # token/network is touched; the real presets/fields.en.json is loaded from disk.
+    BeforeEach {
+        Mock gh {
+            $global:LASTEXITCODE = 0
+            $joined = $args -join ' '
+            if     ($joined -match 'project\s+create') { '{"number":42}' }
+            elseif ($joined -match 'project\s+list')   { '{"projects":[]}' }   # none -> create path
+            elseif ($joined -match 'field-list')       { '{"fields":[]}' }     # empty board -> no renames
+            elseif ($joined -match 'graphql')          { '{"data":{}}' }
+            else                                       { '' }                  # link / edit / field-create
+        }
+    }
+
+    It 'creates the board AND applies the preset (field-list is the fingerprint)' {
+        (& $script:Script -Owner 'X' -Repo 'X/new' -Title 'Nope') | Should -Be 42
+        Should -Invoke gh -ParameterFilter { $args -contains 'create' }     -Times 1 -Exactly
+        Should -Invoke gh -ParameterFilter { $args -contains 'field-list' } -Times 1 -Exactly
+    }
+
+    It '-SkipPreset creates the board but does NOT apply the preset' {
+        (& $script:Script -Owner 'X' -Repo 'X/new' -Title 'Nope' -SkipPreset) | Should -Be 42
+        Should -Invoke gh -ParameterFilter { $args -contains 'create' }     -Times 1 -Exactly
+        Should -Invoke gh -ParameterFilter { $args -contains 'field-list' } -Times 0 -Exactly
+    }
+}
