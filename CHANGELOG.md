@@ -15,6 +15,15 @@
   see `skills/projects-admin/references/compact-survival.md` (#352, #353).
 
 ### Fixed
+- **The CHANGELOG auto-fold now composes with a hand-written `[Unreleased]` block** (#324). `New-Release.ps1`
+  folds by delegating to `Board-Changelog.ps1 -Write`, which used to insert the generated block ABOVE any
+  `## [Unreleased]` — stranding the maintainer's curated entries under an orphan `[Unreleased]` below the very
+  version they belonged to. It now RENAMES `[Unreleased]` to `## [<version>] - <date>` and merges the
+  board-derived entries into its sections (preserving hand-written sections like `### Security`, appending
+  board lines after the curated ones, never duplicating an already-cited issue). A release that ships only
+  curated prose (no newly-Done issues) still gets its `[Unreleased]` renamed. The fully board-generated path
+  (no `[Unreleased]`) is unchanged. New pure `Update-ChangelogText`/`Merge-UnreleasedBody` helpers, unit-tested
+  both directions.
 - **New boards are born on the canonical vocabulary, closing the `Todo`+`Backlog` dead-end** (#299).
   `gh project create` seeds GitHub's default `Status` (`Todo / In Progress / Done`); a board that keeps
   `Todo` can later be duplicated into an unmergeable `Todo`+`Backlog` pair by a plain apply. `Resolve-Board.ps1`

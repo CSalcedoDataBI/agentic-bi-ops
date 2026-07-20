@@ -76,6 +76,85 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ── Pure CHANGELOG-write helpers (#324) ───────────────────────────────────────
+# The fold must COMPOSE with a hand-written `## [Unreleased]` block (standard Keep-a-Changelog
+# practice). The old -Write inserted the generated block right under `# Changelog`, ABOVE any
+# `[Unreleased]`, which stranded the maintainer's curated entries under an orphan [Unreleased]
+# BELOW the very version they belonged to. When an [Unreleased] exists we now RENAME it to the
+# dated version header and merge the board-derived entries INTO its sections instead.
+
+# Merge board-derived section lines into an existing [Unreleased] body, rebuilt under a dated
+# version header. Preserves the maintainer's sections + order and any section the board has no
+# opinion about (e.g. a hand-written `### Security`); board lines are appended AFTER the
+# hand-written ones per section (no dedup needed — the generator already excludes any issue
+# already cited in the file). Pure.
+function Merge-UnreleasedBody {
+    param([string]$Body, $Sections, [string]$Version, [string]$Date)
+    $map = [ordered]@{}          # section name -> lines ('' collects any preamble before the first ###)
+    $cur = ''
+    foreach ($line in ($Body -split "`r?`n")) {
+        $h = [regex]::Match($line, '^###[ \t]+(.+?)[ \t]*$')
+        if ($h.Success) { $cur = $h.Groups[1].Value; if (-not $map.Contains($cur)) { $map[$cur] = @() } }
+        else            { if (-not $map.Contains($cur)) { $map[$cur] = @() }; $map[$cur] += $line }
+    }
+    foreach ($sec in $Sections.Keys) {
+        $blines = @($Sections[$sec])
+        if ($blines.Count -eq 0) { continue }
+        if (-not $map.Contains($sec)) { $map[$sec] = @() }
+        $map[$sec] += ($blines | Sort-Object)
+    }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("## [$Version] - $Date")
+    if ($map.Contains('') -and ((@($map['']) -join '').Trim())) {
+        foreach ($l in $map['']) { if ($l.Trim()) { [void]$sb.AppendLine($l) } }
+    }
+    foreach ($sec in $map.Keys) {
+        if ($sec -eq '') { continue }
+        $lines = @($map[$sec])
+        $s = 0; $e = $lines.Count - 1                       # trim leading/trailing blank lines per section
+        while ($s -le $e -and -not $lines[$s].Trim()) { $s++ }
+        while ($e -ge $s -and -not $lines[$e].Trim()) { $e-- }
+        if ($s -gt $e) { continue }
+        [void]$sb.AppendLine("### $sec")
+        foreach ($l in $lines[$s..$e]) { [void]$sb.AppendLine($l) }
+    }
+    return $sb.ToString().TrimEnd()
+}
+
+# Decide how the generated block lands in the existing CHANGELOG text. Returns
+# { Changed; Text; Message }. Three cases:
+#   1. an [Unreleased] section exists -> rename it to [Version] and merge board entries in;
+#   2. no [Unreleased] but the block has entries -> insert under the `# Changelog` header (old path);
+#   3. no [Unreleased] and nothing new -> no-op (Changed=$false).
+# Pure -> unit-testable via the dot-source guard below.
+function Update-ChangelogText {
+    param([string]$Original, [string]$Block, $Sections, [string]$Version, [string]$Date)
+    $unrel = [regex]::Match($Original, '(?ms)^##[ \t]*\[Unreleased\][ \t]*\r?\n(.*?)(?=^##[ \t]*\[|\z)')
+    if ($unrel.Success) {
+        $merged = Merge-UnreleasedBody -Body $unrel.Groups[1].Value -Sections $Sections -Version $Version -Date $Date
+        $tail   = $Original.Substring($unrel.Index + $unrel.Length) -replace '^(\s*\r?\n)+', ''
+        $newText = $Original.Substring(0, $unrel.Index) + $merged + "`n`n" + $tail
+        $n = 0; foreach ($k in $Sections.Keys) { $n += @($Sections[$k]).Count }
+        return [pscustomobject]@{ Changed = $true; Text = $newText
+            Message = ("[Unreleased] renombrado a [{0}] - {1}; {2} entrada(s) del board fusionada(s)." -f $Version, $Date, $n) }
+    }
+    if ($Block -match '(?m)^###') {
+        if ($Original -match '(?s)^(#\s+Changelog\s*\r?\n)(\r?\n)?(.*)$') {
+            $newText = $Matches[1] + "`n" + $Block + "`n`n" + $Matches[3]
+        } else {
+            $newText = $Block + "`n`n" + $Original
+        }
+        return [pscustomobject]@{ Changed = $true; Text = $newText
+            Message = ("bloque [{0}] insertado bajo el encabezado." -f $Version) }
+    }
+    return [pscustomobject]@{ Changed = $false; Text = $Original
+        Message = "nada que escribir (sin [Unreleased] y sin issues nuevos)." }
+}
+
+# Dot-source guard: with $env:ABIOS_CHANGELOG_DOTSOURCE set, return after defining the pure
+# helpers WITHOUT reading gh/the board — lets the tests exercise Update-ChangelogText directly.
+if ($env:ABIOS_CHANGELOG_DOTSOURCE) { return }
+
 # The single resolver for owner/name from this clone's origin (#281). Do NOT inline the regex
 # again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
 . (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
@@ -229,27 +308,26 @@ Write-Host ("  Since: {0}  |  incluidos: {1}  |  omitidos: {2} otro-repo, {3} ya
     ($(if ($Since) { $Since } else { "(todo)" })), $included, $skippedRepo, $skippedCited, $skippedOld) -ForegroundColor DarkGray
 Write-Host ""
 
-if (-not $any) {
+if ($any) {
+    Write-Host $block
+    Write-Host ""
+} else {
+    # No new board entries. In print-only mode there is nothing to do; but under -Write a
+    # hand-written [Unreleased] must still be RENAMED to this version (a release can ship with
+    # only curated prose and no newly-Done issues), so do NOT exit before the write below.
     Write-Host "  Sin issues Done nuevos para changelog (nada desde $Since que no este ya citado)." -ForegroundColor Green
-    exit 0
+    if (-not $Write) { exit 0 }
 }
-
-Write-Host $block
-Write-Host ""
 
 # ── Optionally write into the CHANGELOG ───────────────────────────────────────
 if ($Write) {
     if (-not (Test-Path $ChangelogPath)) { throw "No existe $ChangelogPath - no puedo insertar." }
-    $orig = Get-Content $ChangelogPath -Raw
-    # Insert right after the top "# Changelog" header (and its trailing blank line).
-    if ($orig -match '(?s)^(#\s+Changelog\s*\r?\n)(\r?\n)?(.*)$') {
-        $header = $Matches[1]
-        $rest   = $Matches[3]
-        $newText = $header + "`n" + $block + "`n`n" + $rest
+    $orig   = Get-Content $ChangelogPath -Raw
+    $result = Update-ChangelogText -Original $orig -Block $block -Sections $sections -Version $Version -Date $Date
+    if ($result.Changed) {
+        Set-Content -Path $ChangelogPath -Value $result.Text -NoNewline
+        Write-Host "OK  $($result.Message) (revisa y commitea)." -ForegroundColor Green
     } else {
-        # No recognizable header - just prepend.
-        $newText = $block + "`n`n" + $orig
+        Write-Host "  $($result.Message)" -ForegroundColor DarkGray
     }
-    Set-Content -Path $ChangelogPath -Value $newText -NoNewline
-    Write-Host "OK  bloque insertado en $ChangelogPath (revisa y commitea)." -ForegroundColor Green
 }
