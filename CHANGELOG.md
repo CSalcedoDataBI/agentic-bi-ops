@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.0] - 2026-07-20
 ### Added
 - **Compaction-survival for long single-session `/board work` runs** (#348). A queue of issues
   worked in ONE session eventually auto-compacts, and Claude Code's generic summary drops the
@@ -13,6 +13,12 @@
   around three Claude Code limits (no programmatic `/compact`, no auto-compact instructions, no cheap
   compaction model — [anthropics/claude-code#14160](https://github.com/anthropics/claude-code/issues/14160));
   see `skills/projects-admin/references/compact-survival.md` (#352, #353).
+- **`Assert-BoardComplete.ps1` — a pass/fail check that the board is fully worked.** Exits 0 when the
+  board has zero PENDING items (using the exact `Test-Pending` definition `/board work` lists from: no
+  Status, or a Status that means Backlog — incl. legacy `Todo`), exit 1 (listing the offenders)
+  otherwise. Run it after a `/board work` sweep, or in CI, to assert a milestone board reached
+  zero-pending. Pure `Test-BoardItemPending` / `Get-BoardCompletion` helpers, unit-tested; fails closed
+  on a gh error so an unreadable board never reads as "complete".
 - **Release checklist spec for BI artifacts** (#17, M4.1). A new
   `references/bi-release-checklist.md` defines "ready to release" for a semantic model / report / PBIP:
   every item is marked **[tool]** (an agentic-board command enforces it — the BPA + TMDL-breaking gate,
@@ -51,7 +57,6 @@
   the review gate). `Board-Merge.ps1` now also NOTES when its `--delete-branch` left the local branch
   behind (checked out here or in another worktree) and points at `cerrar-ciclo`, instead of silently
   believing it cleaned up. New pure `Get-CloseLoopDisposition` helper, unit-tested across all states.
-
 ### Fixed
 - **The knowledge registry can live as YAML, so allow-list repos can use `/knowledge`** (#298). A repo
   whose pre-commit hook allow-lists code extensions blocks `knowledge/registry.json` — often on purpose,
