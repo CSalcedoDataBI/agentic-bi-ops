@@ -14,6 +14,15 @@
   compaction model — [anthropics/claude-code#14160](https://github.com/anthropics/claude-code/issues/14160));
   see `skills/projects-admin/references/compact-survival.md` (#352, #353).
 
+### Fixed
+- **`/board field apply` was undocumentable-as-typed and easy to misfire** (#297). The `/board`
+  `field` bullet named only `Set-BoardField.ps1` (a bulk-fill script) next to "apply a field
+  preset", so the preset applier `Apply-FieldPreset.ps1` got reached for by the wrong name; the doc
+  now names both scripts distinctly. `Apply-FieldPreset.ps1` also accepts `-ProjectNum` (alias of
+  `-Number`, matching the rest of the suite) and `-Preset` (alias of `-Lang`), and its
+  missing-preset error now reads `Preset file not found: <resolved path>` instead of the misleading
+  `Preset not found: en`.
+
 ## [0.22.0] - 2026-07-17
 ### Added
 - **release L1: CI tags + a GitHub Release when `plugin.json`'s version changes on `main`** (#322).

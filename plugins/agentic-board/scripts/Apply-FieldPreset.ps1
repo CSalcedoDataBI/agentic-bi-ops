@@ -44,6 +44,7 @@
     Usage:
       $env:GH_TOKEN = <token>
       ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -Lang en             # estandariza (default)
+      ./Apply-FieldPreset.ps1 -ProjectNum 13 -Owner CSalcedoDataBI -Preset en       # mismos: -ProjectNum=-Number, -Preset=-Lang
       ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -DryRun              # previsualiza el plan
       ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -Yes                 # CI / ya aprobado
       ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -MergeConflicts      # + resuelve duplicados viejos
@@ -51,9 +52,13 @@
       ./Apply-FieldPreset.ps1 -Number 13 -Owner CSalcedoDataBI -PresetPath custom.json  #>
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory)][int]$Number,
+  # -ProjectNum is accepted as an alias so this script is invoked like the rest of the suite
+  # (Board-Fill/Board-Work/Post-BoardStatusUpdate/Board-Changelog all take -ProjectNum). #297
+  [Parameter(Mandatory)][Alias('ProjectNum')][int]$Number,
   [Parameter(Mandatory)][string]$Owner,
-  [ValidateSet('en','es')][string]$Lang = 'en',
+  # -Preset is accepted as an alias of -Lang: the docs and the "Preset not found" message call
+  # the value (en/es) a "preset", so `-Preset en` is the intuitive spelling. #297
+  [ValidateSet('en','es')][Alias('Preset')][string]$Lang = 'en',
   [string]$PresetPath,
   # Deprecated: standardizing is now the DEFAULT. Accepted so existing calls/docs keep working.
   [switch]$Migrate,
@@ -88,7 +93,9 @@ if ($MergeConflicts -and $NoMigrate) { Write-Error "-MergeConflicts y -NoMigrate
 . (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
 
 if (-not $PresetPath) { $PresetPath = Join-Path $PSScriptRoot "..\presets\fields.$Lang.json" }
-if (-not (Test-Path $PresetPath)) { Write-Error "Preset not found: $PresetPath"; exit 1 }
+# Show the RESOLVED file path, not the raw -Lang/-Preset value: "Preset not found: en" reads as
+# if the preset name were wrong, when the language is fine and only the file is missing. #297
+if (-not (Test-Path $PresetPath)) { Write-Error "Preset file not found: $PresetPath (use -Lang en|es, or -PresetPath for a custom file)"; exit 1 }
 
 # read as UTF-8 explicitly so accented names (ES preset: Área, revisión…) survive on Windows PowerShell 5.1
 $preset   = Get-Content $PresetPath -Raw -Encoding UTF8 | ConvertFrom-Json
