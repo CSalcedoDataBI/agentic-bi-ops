@@ -26,6 +26,7 @@ for the user to pick (they can answer with just the number):
 15. changelog       → generar un bloque de CHANGELOG (Added/Changed/Fixed) desde los issues Done
 16. handoff         → guardar/retomar contexto entre sesiones (save/resume) para continuar días después
 17. doctor          → auditar ramas y worktrees locales (mergeadas, estancadas, fantasma) y limpiarlos
+18. cerrar-ciclo    → clasificar la RAMA ACTUAL y enrutarla (commitear/PR/gate/merge/limpiar) — cierra la sesión individual
 
 ── otros comandos (se tipean) ──────────────────────────────────
 /scan       → escanear ESTE proyecto por trabajo sin trackear (TODOs, checklists, planes) → issues + plan
@@ -287,7 +288,22 @@ matching recipe from the projects-admin references:
     offered for the proven-merged pile only; unmerged branches are walked separately, default No,
     with no bulk option. A dirty (or unreadable) worktree is always kept, whatever the class.
   - Do NOT reach for `git branch --merged main` here or suggest it as a cross-check: this repo
-    squash-merges, so it reports ~4 of 57 merged branches as unmerged. The PR is the only proof. every response about a board operation — plan,
+    squash-merges, so it reports ~4 of 57 merged branches as unmerged. The PR is the only proof.
+- **cerrar-ciclo** (close-the-loop) — classify the CURRENT branch and route it to its next
+  disposition by running `scripts/Board-Work.ps1 -CloseLoop` (repo from origin, or `-Repo`). It is
+  NOT "merge": merging has the review gate, and "cerrar ciclo" is ambiguous ("ship it" vs "stop for
+  today"), so it only ever PROPOSES the next command and performs exactly ONE action — the
+  single-session teardown of a proven-merged local branch (the gap the fleet's `-Sessions -Watch
+  -AutoClean` never reaches for an interactive session). States it detects on the current branch:
+  - **uncommitted changes** → stop; commit or `handoff -Save` (decided BEFORE any PR state, so work is never lost);
+  - **commits, no PR** → `New-BoardPR`; **PR open** → `Board-ReviewGate` (merge if it passes, `handoff -Save` if not);
+  - **PR merged, branch alive** → the gap: switches to the default branch, `git branch -D` the merged branch
+    (squash-merge means `-d` refuses; a proven merge licenses `-D`), and prunes the session-registry entry —
+    with confirmation (`-Force` to skip, `-DryRun` to preview). Never on a dirty tree;
+  - **PR closed unmerged** → decide: reopen/rescue or discard.
+  It operates on the current branch/session only — the repo-wide sweep is `/board doctor`.
+  `Board-Merge` now also NOTES when its `--delete-branch` left the local branch behind and points here.
+- Board URL reminder: every response about a board operation — plan,
 result, or error — must end with the board URL so the user can open it in one click:
 `https://github.com/users/<owner>/projects/<num>` (or `/orgs/<org>/projects/<num>` for org boards).
 
