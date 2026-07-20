@@ -1,5 +1,5 @@
 ---
-description: Administer/automate a GitHub Projects board — verbs work/plan/fill/init/add/move/field/bulk/automate/templates/labels/update/changelog/handoff/doctor. Defaults to the CSalcedoDataBI account.
+description: Administer/automate a GitHub Projects board — verbs work/plan/fill/init/add/move/field/bulk/automate/templates/labels/update/changelog/handoff/doctor/cerrar-ciclo/triage/complete/bi-checklist. Defaults to the CSalcedoDataBI account.
 ---
 You are running the agentic-board /board command.
 
