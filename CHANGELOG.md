@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.24.0] - 2026-07-21
 ### Added
 - **`diagram-authoring` skill — Mermaid over ASCII in plugin artifacts** (#375, #376–#379). When the
   agent puts a diagram into a plugin-produced markdown artifact (`/board plan` docs, epic/issue bodies,
