@@ -6,7 +6,17 @@
 | Title | Type | Ref | Note |
 |-------|------|-----|------|
 | awesome-claude-code — curated Claude Code ecosystem | repo | [https://github.com/hesreallyhim/awesome-claude-code](https://github.com/hesreallyhim/awesome-claude-code) | 49.7K stars. Coleccion curada de skills, subagentes, status lines, plugins y tooling de Claude Code. Fuente para descubrir patrones y herramientas del ecosistema. |
+| Graphify (Graphify-Labs/graphify) — multi-modal knowledge graph | repo | [https://github.com/Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) | MIT, ~93K stars. Multi-modal knowledge-graph skill (code + docs + PDFs + SQL schemas); peer of CodeGraph, its graph.html is an auto-generated architecture visual. Sanitization: code parse is local but doc/PDF extraction uses an LLM backend and graph.json/html may embed secrets — never commit them, trusted backend only in private repos. |
 | wshobson/agents — multi-harness agentic plugin marketplace | repo | [https://github.com/wshobson/agents](https://github.com/wshobson/agents) | 37.8K stars, MIT. Marketplace de plugins/subagentes multi-harness (Claude Code, Codex, Cursor, Copilot, Gemini). Peer directo de agentic-board; referente de como estructurar subagentes y coordinacion. |
+
+## Diagrams
+
+| Title | Type | Ref | Note |
+|-------|------|-----|------|
+| D2 (Terrastruct) | repo | [https://github.com/terrastruct/d2](https://github.com/terrastruct/d2) | Cleaner architecture diagrams than Mermaid for dense graphs; needs external render (not inline on GitHub) — escalation target via Kroki. |
+| Graphviz (DOT) | url | [https://graphviz.org/](https://graphviz.org/) | DOT language for large/dense dependency graphs; render via Kroki or the graphviz CLI. Escalation target when Mermaid gets illegible. |
+| Kroki — universal diagram render | url | [https://kroki.io/](https://kroki.io/) | Renders Mermaid/D2/Graphviz/PlantUML to SVG/PNG via a URL — the render path when a diagram is not inline-native and must be embedded as an image. |
+| Mermaid — diagram-as-code | repo | [https://github.com/mermaid-js/mermaid](https://github.com/mermaid-js/mermaid) | Diagram-as-code. GitHub and Claude render fenced mermaid blocks natively — the plugin default, zero build step. |
 
 ## Multi-Agent-Orchestration
 

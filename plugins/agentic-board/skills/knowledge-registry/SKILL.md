@@ -10,6 +10,9 @@ Capture and read the per-project knowledge references registry. The source of tr
 `knowledge/registry.json` (or `knowledge/registry.yaml`); `knowledge/KNOWLEDGE.md` is a generated
 table grouped by domain.
 
+> **Diagrams in a note or wiki page**: never hand-draw ASCII art — use the `diagram-authoring`
+> skill (Mermaid by default). See `skills/diagram-authoring/SKILL.md`.
+
 **Allow-list repos (#298):** if the repo's pre-commit hook allow-lists code extensions and blocks
 `.json` (often on purpose — OAuth `credentials.json` is `.json`), initialise the registry as YAML with
 `-Format yaml` — `.yaml` is normally allow-listed. Once `registry.yaml` exists every `/knowledge`

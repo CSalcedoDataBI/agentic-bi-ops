@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- **`diagram-authoring` skill — Mermaid over ASCII in plugin artifacts** (#375, #376–#379). When the
+  agent puts a diagram into a plugin-produced markdown artifact (`/board plan` docs, epic/issue bodies,
+  handoffs, status updates, `KNOWLEDGE.md`, README, blog), it now emits a Mermaid fenced block instead
+  of hand-drawn ASCII art — GitHub and Claude render it natively, zero build step. A new INTERNAL
+  support skill (`user-invocable: false`, never a typed command per the Command Surface Contract) is
+  the single source of truth: core rule, diagram-type→syntax decision table, an anti-invention rule,
+  a pre-save validation checklist, and an escalation path to D2/Graphviz rendered via Kroki when a
+  graph is too dense for Mermaid (#376). `projects-admin` and `knowledge-registry` carry a one-line
+  DRY pointer to it (#377). A new **Diagrams** knowledge domain catalogues Mermaid/D2/Graphviz/Kroki,
+  and **Graphify** (multi-modal knowledge-graph peer of CodeGraph) is catalogued in `Claude-Code`
+  with a sanitization note — referenced, not built (#378). Pester coverage for the skill contract and
+  the registry entries (#379).
+
 ## [0.23.2] - 2026-07-20
 ### Added
 - **`/board complete` and `/board bi-checklist` sub-actions** (#371). Two capabilities from 0.23.x had
