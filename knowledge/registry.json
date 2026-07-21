@@ -10,7 +10,8 @@
     "Vega",
     "Claude-Code",
     "Research",
-    "Multi-Agent-Orchestration"
+    "Multi-Agent-Orchestration",
+    "Diagrams"
   ],
   "references": [
     {
@@ -57,6 +58,51 @@
       "ref": "https://github.com/microsoft/autogen",
       "note": "59.6K stars, CC-BY-4.0. Framework de Microsoft para AI agentica multi-agente (conversaciones entre agentes, group chat). Referente de arquitectura de coordinacion.",
       "added": "2026-07-10"
+    },
+    {
+      "id": "kn_006",
+      "domain": "Diagrams",
+      "type": "repo",
+      "title": "Mermaid — diagram-as-code",
+      "ref": "https://github.com/mermaid-js/mermaid",
+      "note": "Diagram-as-code. GitHub and Claude render fenced mermaid blocks natively — the plugin default, zero build step.",
+      "added": "2026-07-21"
+    },
+    {
+      "id": "kn_007",
+      "domain": "Diagrams",
+      "type": "repo",
+      "title": "D2 (Terrastruct)",
+      "ref": "https://github.com/terrastruct/d2",
+      "note": "Cleaner architecture diagrams than Mermaid for dense graphs; needs external render (not inline on GitHub) — escalation target via Kroki.",
+      "added": "2026-07-21"
+    },
+    {
+      "id": "kn_008",
+      "domain": "Diagrams",
+      "type": "url",
+      "title": "Graphviz (DOT)",
+      "ref": "https://graphviz.org/",
+      "note": "DOT language for large/dense dependency graphs; render via Kroki or the graphviz CLI. Escalation target when Mermaid gets illegible.",
+      "added": "2026-07-21"
+    },
+    {
+      "id": "kn_009",
+      "domain": "Diagrams",
+      "type": "url",
+      "title": "Kroki — universal diagram render",
+      "ref": "https://kroki.io/",
+      "note": "Renders Mermaid/D2/Graphviz/PlantUML to SVG/PNG via a URL — the render path when a diagram is not inline-native and must be embedded as an image.",
+      "added": "2026-07-21"
+    },
+    {
+      "id": "kn_010",
+      "domain": "Claude-Code",
+      "type": "repo",
+      "title": "Graphify (Graphify-Labs/graphify) — multi-modal knowledge graph",
+      "ref": "https://github.com/Graphify-Labs/graphify",
+      "note": "MIT, ~93K stars. Multi-modal knowledge-graph skill (code + docs + PDFs + SQL schemas); peer of CodeGraph, its graph.html is an auto-generated architecture visual. Sanitization: code parse is local but doc/PDF extraction uses an LLM backend and graph.json/html may embed secrets — never commit them, trusted backend only in private repos.",
+      "added": "2026-07-21"
     }
   ]
 }

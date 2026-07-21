@@ -8,6 +8,10 @@ user-invocable: false
 
 This skill covers the full lifecycle of a GitHub Projects v2 board and its items: creation, field setup, issue management, bulk operations, CI automation, and gap detection/fill via `/board fill`.
 
+> **Diagrams in any artifact** (plan/epic/issue body, handoff, status update): never hand-draw
+> ASCII art — use the `diagram-authoring` skill (Mermaid by default, escalate to D2/Graphviz via
+> Kroki). See `skills/diagram-authoring/SKILL.md`.
+
 ---
 
 ## Step 0 — Identity (always first)
