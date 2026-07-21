@@ -72,7 +72,7 @@ Vega field rules). If you are unsure a relationship exists, leave it out or ask.
 ```mermaid
 flowchart TD
   A[About to write a diagram into a plugin artifact] --> B{Destination}
-  B -->|GitHub md / Claude artifact| C[Emit ```mermaid fenced block]
+  B -->|GitHub md / Claude artifact| C["Emit a mermaid fenced block"]
   B -->|Graph too dense for Mermaid| D[D2 / Graphviz]
   D --> E[Render via Kroki] --> F[Embed image]
 ```
