@@ -77,3 +77,18 @@ Describe 'Command surface — menu entries resolve to real commands' {
         }
     }
 }
+
+Describe 'Command surface — /tools referenced-tools catalog (#384)' {
+    It 'exposes /tools as a real typed command' {
+        $script:RealCommands | Should -Contain 'tools' -Because 'the unified referenced-tools catalog is invoked as /agentic-board:tools (commands/tools.md)'
+    }
+
+    It 'ships tools-catalog as an internal (user-invocable:false) skill' {
+        $script:InternalSkills | Should -Contain 'tools-catalog' -Because 'the catalog logic is an internal skill the /tools command routes to — never typed directly'
+    }
+
+    It 'lists /tools in the /board discoverability menu' {
+        $board = Get-Content -LiteralPath (Join-Path $script:CommandsDir 'board.md') -Raw
+        $board | Should -Match '(?m)^\s*/tools\b' -Because 'the whole tool must be discoverable from the /board entry point, alongside /scan /skills /knowledge'
+    }
+}

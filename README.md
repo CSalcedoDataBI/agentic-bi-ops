@@ -107,6 +107,7 @@ one door, not a wall of commands.
 | `/knowledge` | Manage the project knowledge references registry by domain (add/harvest/list/gen/wiki). Versioned in knowledge/registry.json + generated KNOWLEDGE.md. |
 | `/scan` | Scan the CURRENT project for untracked work (code TODOs, doc checklists/pending, plans/specs) and turn the chosen items into issues + a board plan. Targets the current repo, not the tool's. |
 | `/skills` | Manage the Agent Skills lifecycle — organize/catalog, audit for failures, bootstrap best-practice toolkits by profile (quality or bi = Microsoft Fabric / Power BI), or check installed-tool freshness. Part of the skills-ops module. |
+| `/tools` | Browse, research and install the project's referenced external tools from one unified catalog — it merges the knowledge registry (references) with the installable toolkit presets. Install one tool or all missing at once, kind-aware (skill-clone preserves LICENSE; a plugin surfaces its own install command, never cherry-picked). |
 <!-- END:commands -->
 
 Two rules keep it discoverable, so nothing has to be memorized:

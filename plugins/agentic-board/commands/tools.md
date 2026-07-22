@@ -1,0 +1,42 @@
+---
+description: Browse, research and install the project's referenced external tools from one unified catalog — it merges the knowledge registry (references) with the installable toolkit presets. Install one tool or all missing at once, kind-aware (skill-clone preserves LICENSE; a plugin surfaces its own install command, never cherry-picked).
+---
+You are running the agentic-board /tools command.
+
+**If $ARGUMENTS is empty or only whitespace, do NOT run anything yet.** Show this menu and wait
+for the user to pick (they can answer with just the number):
+
+```
+¿Qué quieres hacer con las herramientas referenciadas?
+
+1. browse            → listar TODAS las herramientas referenciadas (registry + presets),
+                       agrupadas por dominio, con su URL y si ya está instalada
+2. research <id>     → mostrar la referencia exacta de una herramienta (URL + nota) antes de instalar
+3. install <id>      → instalar UNA por id: skill-clone conserva su LICENSE; un plugin
+                       (ej. microsoft/skills-for-fabric) muestra su propio comando de install — no se cherry-pickea
+4. install --all     → instalar de una pasada todo lo instalable que falte (dry-run + UNA
+                       confirmación); las entradas plugin se listan aparte (se muestran, no se instalan a ciegas)
+```
+
+When they answer (number or name), invoke the **tools-catalog** skill and follow it. It composes the
+catalog from two sources — the knowledge registry (`knowledge/registry.json`, the *references*) and
+the installable toolkit presets (`presets/toolkits/*.json`, the *installers*) — reusing
+`Get-SkillGaps.ps1` so nothing already installed is offered again.
+
+- **browse** → list every referenced tool grouped by domain, each row showing kind, URL and
+  installed-state. Read-only, no token.
+- **research <id>** → surface the exact reference (URL + note) for one tool so the user can read the
+  source before installing.
+- **install <id>** → install one item by kind: `skill-clone` via `Install-SkillFromRepo.ps1` (clean
+  clone, LICENSE preserved); a `plugin` surfaces its own install command (all-or-nothing). Confirm
+  each; never duplicate an already-installed tool.
+- **install --all** → batch-install every missing installable in one pass with a dry-run summary and
+  a single confirmation; plugin-kind entries are listed separately, surfaced not cherry-picked.
+
+Identity: browse and research are read-only and need no token; an install that clones or files
+follows the same account discipline as the rest of the suite (`gh-account`, default CSalcedoDataBI).
+
+This catalog is the intersection of the knowledge-ops (references) and skills-ops (installers)
+modules — use the knowledge and skills commands to manage each source directly.
+
+Arguments: $ARGUMENTS

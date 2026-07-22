@@ -35,6 +35,7 @@ for the user to pick (they can answer with just the number):
 /scan       → escanear ESTE proyecto por trabajo sin trackear (TODOs, checklists, planes) → issues + plan
 /skills     → ciclo de vida de Agent Skills (organize / audit / bootstrap [bi] / freshness)
 /knowledge  → registro de referencias externas por dominio (add / harvest / wiki)
+/tools      → catálogo unificado de herramientas externas: navegar, investigar e instalar (individual o todas)
 
 ── canal de feedback (NO se tipea — se dispara solo) ───────────
 abios-feedback → ¿bug o mejora para ESTA herramienta? DILO en lenguaje natural
@@ -43,8 +44,8 @@ abios-feedback → ¿bug o mejora para ESTA herramienta? DILO en lenguaje natura
 ```
 
 If the user picks one of the **otros comandos**, do NOT run a board sub-action — tell them it is a
-separate command and to invoke it directly (`/scan`, `/skills`, `/knowledge`); this menu lists them
-only so the whole tool is discoverable from one entry point.
+separate command and to invoke it directly (`/scan`, `/skills`, `/knowledge`, `/tools`); this menu
+lists them only so the whole tool is discoverable from one entry point.
 
 `abios-feedback` is DIFFERENT: it is an internal skill, NOT a typeable command — it is never typed
 with a slash. It fires on its own when the user describes a bug/improvement for THIS tool (e.g.
