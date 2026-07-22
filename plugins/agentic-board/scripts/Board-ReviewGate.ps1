@@ -89,6 +89,31 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ── Pure helper (unit-testable; no gh/network) ────────────────────────────────
+# Foreign-commit detection (#309). GitHub's commits/{sha}/pulls lists every PR that contains a
+# commit, so a commit GitHub associates with a DIFFERENT PR is provably not this issue's work — the
+# #294 contamination shape, which the "PR grande" warning could not tell apart from a legitimately
+# large PR. Given each commit's associated PR numbers, return the commits whose association is
+# another PR. Warn-only: the caller must NOT let this change the verdict (the base resolution is
+# best-effort, and a contaminating commit with no PR of its own is invisible to this signal). Pure.
+function Find-ForeignCommits {
+    param(
+        [int]$SelfPr,
+        $Commits            # array of { Sha; Pulls (int[]) }
+    )
+    $foreign = @()
+    foreach ($c in @($Commits)) {
+        $others = @($c.Pulls | Where-Object { ($_ -as [int]) -gt 0 -and [int]$_ -ne $SelfPr } | ForEach-Object { [int]$_ })
+        if ($others.Count -gt 0) {
+            $foreign += [pscustomobject]@{ Sha = $c.Sha; OtherPrs = @($others | Sort-Object -Unique) }
+        }
+    }
+    return @($foreign)
+}
+
+# Dot-source guard: tests set $env:ABIOS_REVIEWGATE_DOTSOURCE to load the pure helper only.
+if ($env:ABIOS_REVIEWGATE_DOTSOURCE) { return }
+
 # gh must fail closed on the sites that DRIVE the gate verdict and the ruleset write (#303/#316):
 # a false-empty review read reads as "0 unresolved -> GATE PASSED" and authorizes a merge. The
 # CI/review POLLING reads stay best-effort (a transient failure must keep polling, not throw).
@@ -222,6 +247,40 @@ if ($totalLines -gt $MaxLines -or $size.changedFiles -gt $MaxFiles) {
     Write-Host "       Un PR chico se revisa mejor y mete menos bugs. Considera dividir el issue con:" -ForegroundColor DarkYellow
     Write-Host "       Board-Breakdown.ps1 -Parent <issueNum> -Tasks `"parte A`", `"parte B`"" -ForegroundColor DarkYellow
     Write-Host "       (advertencia, no bloqueo - los umbrales se ajustan con -MaxLines/-MaxFiles)" -ForegroundColor DarkGray
+}
+
+# ── 1.6. Foreign-commit guard (#309): warn when the PR carries commits from another PR ─────────
+# Defence-in-depth for #294 — an issue branch should start from the freshly fetched default branch,
+# but when no base can be resolved Board-Work falls back to the current HEAD, and a hand-cut branch
+# bypasses that entirely. This is the backstop for exactly that case: a commit GitHub associates with
+# a DIFFERENT PR is not this issue's work. Warn-only, like the small-PR guard — it never feeds
+# $blockers below.
+$prCommits = Invoke-Gh -GhArgs @('pr','view',"$PR",'--repo',$Repo,'--json','commits') `
+                       -What "leer los commits del PR #$PR" -Json
+$commitInfo = @()
+foreach ($c in @($prCommits.commits)) {
+    $sha = $c.oid
+    if (-not $sha) { continue }
+    # commits/{sha}/pulls: which PRs contain this commit. Best-effort PER COMMIT — a lookup failure
+    # is a skipped signal, never a failed gate (this is only a warning), so it is caught and dropped.
+    $pulls = @()
+    try {
+        $assoc = Invoke-Gh -GhArgs @('api',"repos/$Repo/commits/$sha/pulls",'--jq','[.[].number]') `
+                           -What "leer los PRs del commit $sha"
+        if ($assoc) { $pulls = @(($assoc | ConvertFrom-Json)) }
+    } catch { }
+    $commitInfo += [pscustomobject]@{ Sha = $sha; Pulls = $pulls }
+}
+$foreign = Find-ForeignCommits -SelfPr $PR -Commits $commitInfo
+if (@($foreign).Count -gt 0) {
+    Write-Host ""
+    Write-Host ("  WARN el PR trae {0} commit(s) asociado(s) a OTRO PR - probablemente no son el trabajo de este issue (#309):" -f @($foreign).Count) -ForegroundColor DarkYellow
+    foreach ($f in $foreign) {
+        $short = $f.Sha.Substring(0, [Math]::Min(9, $f.Sha.Length))
+        Write-Host ("       {0}  -> PR(s) {1}" -f $short, ($f.OtherPrs -join ', ')) -ForegroundColor DarkYellow
+    }
+    Write-Host "       Verifica que la rama haya salido de la default branch fresca (Board-Work sale de origin/main)." -ForegroundColor DarkGray
+    Write-Host "       (advertencia, no bloqueo - un commit contaminante sin PR propio es invisible a esta senal)" -ForegroundColor DarkGray
 }
 
 # ── 1.7 + 1.8. Semantic-model quality gates (M3.3): breaking schema changes AND BPA ──
