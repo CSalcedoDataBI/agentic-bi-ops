@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.24.1] - 2026-07-22
+### Fixed
+- **`#303`-class fail-open hardening batch — four tools that answered confidently instead of failing**
+  (#382, #336, #319, #309). Each ships a pure-helper unit test.
+  - **`Board-Triage` no longer writes triage onto the tool's own board from a foreign repo** (#382).
+    `-Number` defaulted to `13` (agentic-board's roadmap), so an unqualified run (only `-Issue`) from
+    any other project silently wrote Type/Area/Estimate onto board #13's item — no error, and #13's
+    title in the header was easy to miss. The board is now resolved from the current repo's `origin`
+    unless `-Number` is passed explicitly, and an unresolvable board refuses instead of falling back.
+  - **`New-BoardPR` no longer phantoms an existing PR and skips creation** (#336). The "is there
+    already an open PR?" read was an unchecked `gh pr list`; a phantom row with a null `number`
+    counted as "PR exists", so `gh pr create` was skipped and the run reported success with a **blank**
+    PR number. The read now fails closed (`Invoke-Gh -Json`) and a PR counts as existing only with a
+    positive-integer number.
+  - **`/board changelog` no longer stamps a stale version from an ignored worktree copy** (#319). The
+    version came from a recursive `plugin.json` search that picked whatever came first — often a stale
+    copy inside an ignored `.claude/worktrees/` tree — so `-Write` could insert a duplicate block for
+    an already-shipped version. The plugin root is now resolved deterministically (the `plugin.json`
+    the script ships beside), never by a recursive sweep, and refuses on genuine ambiguity.
+  - **The review gate warns when a PR carries commits from another PR** (#309). Defence-in-depth for
+    #294: a commit GitHub associates with a different PR is not this issue's work. Warn-only — it never
+    changes the gate verdict (a contaminating commit with no PR of its own stays invisible, documented
+    not papered over).
+
 ## [0.24.0] - 2026-07-21
 ### Added
 - **`diagram-authoring` skill — Mermaid over ASCII in plugin artifacts** (#375, #376–#379). When the
