@@ -103,6 +103,78 @@
       "ref": "https://github.com/Graphify-Labs/graphify",
       "note": "MIT, ~93K stars. Multi-modal knowledge-graph skill (code + docs + PDFs + SQL schemas); peer of CodeGraph, its graph.html is an auto-generated architecture visual. Sanitization: code parse is local but doc/PDF extraction uses an LLM backend and graph.json/html may embed secrets — never commit them, trusted backend only in private repos.",
       "added": "2026-07-21"
+    },
+    {
+      "id": "kn_011",
+      "domain": "PowerBI",
+      "type": "url",
+      "title": "Power BI Agentic overview",
+      "ref": "https://learn.microsoft.com/power-bi/developer/agentic/power-bi-agentic-overview",
+      "note": "Umbrella: curated bundle of agent skills + tools (powerbi-authoring plugin) that turns NL prompts into PBI semantic models and reports. Install seed for the BI toolkit.",
+      "added": "2026-07-22"
+    },
+    {
+      "id": "kn_012",
+      "domain": "PowerBI",
+      "type": "url",
+      "title": "Semantic model authoring skill",
+      "ref": "https://learn.microsoft.com/power-bi/developer/agentic/semantic-model-authoring-skill-overview",
+      "note": "Agent skill: create/edit/deploy PBI semantic models (Import/DirectQuery/Direct Lake), DAX, relationships, refresh, AI-readiness. Routes to Modeling MCP first.",
+      "added": "2026-07-22"
+    },
+    {
+      "id": "kn_013",
+      "domain": "PowerBI",
+      "type": "url",
+      "title": "Power BI report authoring skill",
+      "ref": "https://learn.microsoft.com/power-bi/developer/agentic/power-bi-report-authoring-skill-overview",
+      "note": "Agent skill: create/edit/validate PBIR report definitions (pages, visuals, filters, themes). Writes the files; pairs with Desktop Bridge for reload+screenshot.",
+      "added": "2026-07-22"
+    },
+    {
+      "id": "kn_014",
+      "domain": "PowerBI",
+      "type": "url",
+      "title": "Power BI Report design skill",
+      "ref": "https://learn.microsoft.com/power-bi/developer/agentic/power-bi-report-design-skill-overview",
+      "note": "Agent skill: opinionated design guidance (archetypes, chart choice, color, typography, theme). Emits a YAML design brief; hands off to Report Authoring. Does NOT write PBIR.",
+      "added": "2026-07-22"
+    },
+    {
+      "id": "kn_015",
+      "domain": "PowerBI",
+      "type": "url",
+      "title": "Power BI Report planner and management skills",
+      "ref": "https://learn.microsoft.com/power-bi/developer/agentic/power-bi-planner-fabric-skill-overview",
+      "note": "Planner orchestrates the design -> plan -> author -> publish pipeline; Management gets/publishes/manages reports in Fabric workspaces.",
+      "added": "2026-07-22"
+    },
+    {
+      "id": "kn_016",
+      "domain": "PowerBI",
+      "type": "url",
+      "title": "Power BI MCP servers (local + remote)",
+      "ref": "https://learn.microsoft.com/power-bi/developer/mcp/mcp-servers-overview",
+      "note": "Tool: local Modeling MCP (@microsoft/powerbi-modeling-mcp, edits models in Desktop/Fabric/PBIP, runs DAX) and remote MCP (api.fabric.microsoft.com, query/insights, needs Entra OAuth).",
+      "added": "2026-07-22"
+    },
+    {
+      "id": "kn_017",
+      "domain": "PowerBI",
+      "type": "url",
+      "title": "Power BI Desktop Bridge (preview)",
+      "ref": "https://learn.microsoft.com/power-bi/developer/agentic/power-bi-desktop-bridge-overview",
+      "note": "Tool: local server inside the PBI Desktop process (named pipe, JSON-RPC 2.0, local only) so agents reload models and capture screenshots for visual verification.",
+      "added": "2026-07-22"
+    },
+    {
+      "id": "kn_018",
+      "domain": "PowerBI",
+      "type": "repo",
+      "title": "microsoft/skills-for-fabric - marketplace",
+      "ref": "https://github.com/microsoft/skills-for-fabric",
+      "note": "MIT first-party marketplace of Fabric/PBI agent skills. Source of the powerbi-authoring plugin (bundles all skills above + registers the Modeling MCP). Cross-tool: Copilot CLI, VS Code, Claude Code, Cursor, Codex, Windsurf.",
+      "added": "2026-07-22"
     }
   ]
 }
