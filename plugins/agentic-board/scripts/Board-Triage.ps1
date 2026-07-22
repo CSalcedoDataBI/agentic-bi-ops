@@ -75,6 +75,31 @@ function Test-PriorityRequest {
     return $null
 }
 
+# Decide which board this invocation targets (#382). The bug: -Number DEFAULTED to 13 (the tool's
+# OWN roadmap board), so an unqualified run (only -Issue) from ANY other repo silently wrote triage
+# onto board #13 instead of the current project's — no error, and #13's item title in the header is
+# easy to miss. Rule: an EXPLICIT -Number is honored as-is; WITHOUT one the board is resolved from
+# the current repo's origin, never a hardcoded fallback. Pure — the network resolve happens in the
+# caller when ResolveFromOrigin is $true. #303 class (a foreign write must never be silent).
+function Get-TriageBoardPlan {
+    param(
+        [bool]  $ExplicitNumber,
+        [bool]  $ExplicitOwner,
+        [int]   $DefaultNumber,
+        [string]$DefaultOwner,
+        [string]$OriginRepo          # 'owner/name', or '' when origin is unavailable
+    )
+    if ($ExplicitNumber) {
+        return [pscustomobject]@{ ResolveFromOrigin = $false; Owner = $DefaultOwner; Number = $DefaultNumber; Reason = 'explicit -Number' }
+    }
+    if ("$OriginRepo" -match '^[^/]+/[^/]+$') {
+        $owner = if ($ExplicitOwner) { $DefaultOwner } else { ($OriginRepo -split '/')[0] }
+        return [pscustomobject]@{ ResolveFromOrigin = $true; Owner = $owner; Number = 0; Reason = "origin $OriginRepo" }
+    }
+    # No explicit -Number AND no usable origin -> refuse rather than default to the tool's own board.
+    return [pscustomobject]@{ ResolveFromOrigin = $false; Owner = $DefaultOwner; Number = 0; Reason = 'no-origin' }
+}
+
 # Dot-source guard: tests set $env:ABIOS_TRIAGE_DOTSOURCE to load the pure helpers only.
 if ($env:ABIOS_TRIAGE_DOTSOURCE) { return }
 
@@ -85,6 +110,27 @@ if (-not $env:GH_TOKEN) {
     $env:GH_TOKEN = [System.Environment]::GetEnvironmentVariable($TokenVar, 'User')
 }
 if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (and GH_TOKEN empty)." }
+
+# Resolve the target board from origin unless -Number was passed explicitly (#382) — never default to
+# the tool's own #13 from a foreign repo.
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
+$originRepo = ''
+try { $originRepo = "$(Get-RepoFromOriginUrl (git remote get-url origin 2>$null))" } catch { $originRepo = '' }
+$plan = Get-TriageBoardPlan -ExplicitNumber $PSBoundParameters.ContainsKey('Number') `
+                            -ExplicitOwner  $PSBoundParameters.ContainsKey('Owner') `
+                            -DefaultNumber  $Number -DefaultOwner $Owner -OriginRepo $originRepo
+if ($plan.Reason -eq 'no-origin') {
+    throw "No pude derivar el board: no hay -Number explicito ni un remote 'origin' aqui. Pasa -Number <n> -Owner <o>."
+}
+$Owner = $plan.Owner
+if ($plan.ResolveFromOrigin) {
+    $resolved = & (Join-Path $PSScriptRoot 'Resolve-Board.ps1') -Owner $Owner -Repo $originRepo -CreateIfMissing $false
+    if (-not $resolved) {
+        throw "El repo $originRepo no tiene board enlazado que yo pueda leer. Crealo con /board init, o pasa -Number <n> -Owner <o>."
+    }
+    $Number = [int]$resolved
+    Write-Host ("  Board resuelto desde origin ($originRepo): #{0} de {1}" -f $Number, $Owner) -ForegroundColor DarkGray
+}
 
 $boardUrl = "https://github.com/users/$Owner/projects/$Number"
 

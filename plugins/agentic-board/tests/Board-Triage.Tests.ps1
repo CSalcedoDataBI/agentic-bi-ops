@@ -51,3 +51,27 @@ Describe 'Format-PriorityProposal (visible, correctable)' {
         $line | Should -Match 'blocks the release'
     }
 }
+
+Describe 'Get-TriageBoardPlan — never default to the tool board from a foreign repo (#382)' {
+    It 'honors an explicit -Number as-is (no origin resolution)' {
+        $p = Get-TriageBoardPlan -ExplicitNumber $true -ExplicitOwner $true -DefaultNumber 13 -DefaultOwner 'CSalcedoDataBI' -OriginRepo 'someone/other'
+        $p.ResolveFromOrigin | Should -BeFalse
+        $p.Number            | Should -Be 13
+    }
+    It 'resolves from origin when -Number is absent (the footgun fix)' {
+        $p = Get-TriageBoardPlan -ExplicitNumber $false -ExplicitOwner $false -DefaultNumber 13 -DefaultOwner 'CSalcedoDataBI' -OriginRepo 'acme/reports'
+        $p.ResolveFromOrigin | Should -BeTrue
+        $p.Owner             | Should -Be 'acme'
+        $p.Number            | Should -Be 0
+    }
+    It 'keeps an explicit -Owner even when resolving the board from origin' {
+        $p = Get-TriageBoardPlan -ExplicitNumber $false -ExplicitOwner $true -DefaultNumber 13 -DefaultOwner 'MyOrg' -OriginRepo 'acme/reports'
+        $p.ResolveFromOrigin | Should -BeTrue
+        $p.Owner             | Should -Be 'MyOrg'
+    }
+    It 'refuses (no-origin) with neither an explicit -Number nor a usable origin — never falls back to #13' {
+        $p = Get-TriageBoardPlan -ExplicitNumber $false -ExplicitOwner $false -DefaultNumber 13 -DefaultOwner 'CSalcedoDataBI' -OriginRepo ''
+        $p.ResolveFromOrigin | Should -BeFalse
+        $p.Reason            | Should -Be 'no-origin'
+    }
+}

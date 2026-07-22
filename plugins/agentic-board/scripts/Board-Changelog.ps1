@@ -151,6 +151,24 @@ function Update-ChangelogText {
         Message = "nada que escribir (sin [Unreleased] y sin issues nuevos)." }
 }
 
+# Pick THE plugin.json to read the version from, deterministically (#319). The old code did a
+# RECURSIVE `Get-ChildItem -Recurse -Filter plugin.json | ... -First 1` — a coin toss weighted by
+# directory order that picked a STALE copy inside an ignored `.claude/worktrees/` tree (the very
+# layout `/board work` creates) and stamped the changelog with a version that already shipped, then
+# `-Write` inserted a duplicate block that read as the version going backwards. A silent pick is how
+# the bug works, so given the already-filtered candidate list: none -> $null; exactly one -> it; more
+# than one -> THROW with the list rather than guess. Pure. #303 class (answer confidently or fail,
+# never guess).
+function Select-PluginVersionFile {
+    param([string[]]$Candidates)      # absolute paths, already existence- and ignore-filtered
+    $u = @($Candidates | Where-Object { $_ } | Sort-Object -Unique)
+    if ($u.Count -eq 0) { return $null }
+    if ($u.Count -gt 1) {
+        throw "Version ambigua: varios plugin.json candidatos (resuelve con -Version):`n  $($u -join "`n  ")"
+    }
+    return $u[0]
+}
+
 # Dot-source guard: with $env:ABIOS_CHANGELOG_DOTSOURCE set, return after defining the pure
 # helpers WITHOUT reading gh/the board — lets the tests exercise Update-ChangelogText directly.
 if ($env:ABIOS_CHANGELOG_DOTSOURCE) { return }
@@ -195,10 +213,31 @@ $sinceDt = if ($Since) {
 # ── Defaults for Version / Date ───────────────────────────────────────────────
 if (-not $Date) { $Date = (Get-Date).ToString('yyyy-MM-dd') }
 if (-not $Version) {
-    $pj = Get-ChildItem -Path . -Recurse -Filter plugin.json -ErrorAction SilentlyContinue |
-          Where-Object { $_.FullName -match '\.claude-plugin' } | Select-Object -First 1
-    if ($pj) {
-        $vm = [regex]::Match((Get-Content $pj.FullName -Raw), '"version"\s*:\s*"([^"]+)"')
+    # Resolve the plugin root deterministically, never by a recursive sweep (#319).
+    $candidates = @()
+    # 1. Prefer the plugin.json this script SHIPS beside — it is the one versioning this release.
+    $primary = Join-Path $PSScriptRoot '..' | Join-Path -ChildPath '.claude-plugin' | Join-Path -ChildPath 'plugin.json'
+    if (Test-Path $primary) {
+        $candidates += (Resolve-Path -LiteralPath $primary).Path
+    } else {
+        # 2. Fallback: ask git for the repo root and look ONLY at plugins/*/.claude-plugin/plugin.json,
+        #    excluding any path git ignores (the stale worktree copy that triggered this is ignored).
+        $root = (git rev-parse --show-toplevel 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $root) {
+            $pluginsDir = Join-Path $root 'plugins'
+            if (Test-Path $pluginsDir) {
+                foreach ($dir in (Get-ChildItem -Path $pluginsDir -Directory -ErrorAction SilentlyContinue)) {
+                    $pj = Join-Path $dir.FullName '.claude-plugin' | Join-Path -ChildPath 'plugin.json'
+                    if (-not (Test-Path $pj)) { continue }
+                    git check-ignore -q -- "$pj" 2>$null
+                    if ($LASTEXITCODE -ne 0) { $candidates += (Resolve-Path -LiteralPath $pj).Path }   # exit!=0 => NOT ignored
+                }
+            }
+        }
+    }
+    $pjPath = Select-PluginVersionFile -Candidates $candidates
+    if ($pjPath) {
+        $vm = [regex]::Match((Get-Content $pjPath -Raw), '"version"\s*:\s*"([^"]+)"')
         if ($vm.Success) { $Version = $vm.Groups[1].Value }
     }
     if (-not $Version) { $Version = "0.0.0" }

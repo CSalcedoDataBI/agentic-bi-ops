@@ -121,3 +121,25 @@ Describe 'Update-ChangelogText — nothing to do' {
         $r.Text | Should -Be $orig
     }
 }
+
+Describe 'Select-PluginVersionFile — deterministic plugin.json, never a recursive guess (#319)' {
+    It 'returns nothing when there are no candidates' {
+        Select-PluginVersionFile -Candidates @() | Should -BeNullOrEmpty
+    }
+    It 'returns the single candidate' {
+        Select-PluginVersionFile -Candidates @('C:\a\.claude-plugin\plugin.json') |
+            Should -Be 'C:\a\.claude-plugin\plugin.json'
+    }
+    It 'dedups identical candidates down to one' {
+        Select-PluginVersionFile -Candidates @('C:\a\plugin.json', 'C:\a\plugin.json') |
+            Should -Be 'C:\a\plugin.json'
+    }
+    It 'THROWS on genuine ambiguity rather than guessing (the stale-worktree bug)' {
+        { Select-PluginVersionFile -Candidates @('C:\a\plugin.json', 'C:\b\plugin.json') } |
+            Should -Throw '*ambigua*'
+    }
+    It 'ignores blank/null entries' {
+        Select-PluginVersionFile -Candidates @('', 'C:\a\plugin.json', $null) |
+            Should -Be 'C:\a\plugin.json'
+    }
+}

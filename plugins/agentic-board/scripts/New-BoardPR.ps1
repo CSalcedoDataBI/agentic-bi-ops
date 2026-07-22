@@ -73,6 +73,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ── Pure helper (unit-testable; no gh/network) ────────────────────────────────
+# A PR "already exists" ONLY when the read returned a row with a positive-integer number (#336). The
+# old guard was `@($existing).Count -gt 0`, which counted a phantom element with a null `.number` as
+# "exists" and SKIPPED `gh pr create` — the run then reported success with a blank PR number and no PR
+# was created. Return the first genuine PR row, or $null. Pure.
+function Get-ExistingPr {
+    param($PrList)
+    @($PrList) | Where-Object { $_ -and (($_.number -as [int]) -gt 0) } | Select-Object -First 1
+}
+
+# Dot-source guard: tests set $env:ABIOS_NEWBOARDPR_DOTSOURCE to load the pure helper only.
+if ($env:ABIOS_NEWBOARDPR_DOTSOURCE) { return }
+
+# gh must fail closed on the "is there already an open PR?" read (#336/#303): a swallowed failure
+# used to be indistinguishable from "no PR" and took the silent-skip path above.
+. (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
+
 # -- 1. Repo: -Repo or origin (strip any embedded credential - never reuse it) --
 if (-not $Repo) {
     $url = git remote get-url origin 2>$null
@@ -130,16 +147,19 @@ $prBody = "Closes #$Issue"
 if ($Body) { $prBody = "$prBody`n`n$Body" }
 
 # -- Existing open PR for this branch? (re-run = iterate on it) ------------------
-$existing = @()
-try { $existing = @(gh pr list --repo $Repo --head $Branch --state open --json number,url 2>$null | ConvertFrom-Json) } catch { }
+# Fail closed (Invoke-Gh -Json) then require a positive-integer number: a phantom/null-number row is
+# NOT an existing PR, so the create path runs instead of silently skipping (#336).
+$existing   = @(Invoke-Gh -GhArgs @('pr','list','--repo',$Repo,'--head',$Branch,'--state','open','--json','number,url') `
+                          -What "buscar un PR abierto para la rama $Branch" -Json)
+$existingPr = Get-ExistingPr $existing
 
 Write-Host "=== Cross-account PR  $Repo ===" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Identidad : $login  (via $TokenVar)"
 Write-Host "  Rama      : $Branch -> $Base"
 Write-Host "  Issue     : #$Issue $($iss.title)"
-if (@($existing).Count -gt 0) {
-    Write-Host "  PR        : #$($existing[0].number) ya abierto - solo push (iteracion)" -ForegroundColor Yellow
+if ($existingPr) {
+    Write-Host "  PR        : #$($existingPr.number) ya abierto - solo push (iteracion)" -ForegroundColor Yellow
 } else {
     Write-Host "  PR        : nuevo$(if ($Draft) { ' (draft)' })  titulo: $Title"
 }
@@ -165,9 +185,9 @@ try {
 Write-Host "OK  rama '$Branch' empujada a $Repo como $login" -ForegroundColor Green
 
 # -- 7. PR: reuse the open one, or create ----------------------------------------
-if (@($existing).Count -gt 0) {
-    $prNum = $existing[0].number
-    $prUrl = $existing[0].url
+if ($existingPr) {
+    $prNum = $existingPr.number
+    $prUrl = $existingPr.url
     Write-Host "OK  PR #$prNum ya existia - commits nuevos empujados" -ForegroundColor Green
 } else {
     $ghArgs = @('pr','create','--repo',$Repo,'--head',$Branch,'--base',$Base,'--title',$Title,'--body',$prBody)
