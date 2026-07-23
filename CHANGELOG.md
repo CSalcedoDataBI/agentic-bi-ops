@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- **`/knowledge wiki` now surfaces an actionable error when the wiki is uninitialized** (#402).
+  GitHub creates the wiki git repo lazily — it does not exist until the first page is saved via the web
+  UI, and there is no REST endpoint to bootstrap it. The previous fallback (`git init -b master`) was
+  dead code that always ended with `remote: Repository not found` on push. It is removed; instead the
+  script throws a clear multi-step message directing the user to create the first page at
+  `https://github.com/<repo>/wiki` and then re-run the command.
+
 ## [0.24.1] - 2026-07-22
 ### Fixed
 - **`#303`-class fail-open hardening batch — four tools that answered confidently instead of failing**

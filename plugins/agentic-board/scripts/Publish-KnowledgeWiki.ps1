@@ -127,18 +127,28 @@ if ($DryRun) {
     return
 }
 
-# -- Clone the wiki (or init a fresh one), write pages, commit, push -----------------
+# -- Clone the wiki, write pages, commit, push ----------------------------------------
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("knwiki-" + [guid]::NewGuid().ToString('N'))
 $helper = 'credential.helper=!f(){ echo username=x-access-token; echo password=$ABIOS_WIKI_TOKEN; };f'
 $env:ABIOS_WIKI_TOKEN = $token
 try {
     git -c credential.helper= -c $helper clone --quiet $wikiUrl $tmp 2>$null
     if ($LASTEXITCODE -ne 0) {
-        # Wiki repo not initialized yet (no pages created). Start a fresh one on the wiki's default branch.
-        Write-Host "  (wiki vacio — inicializando)" -ForegroundColor Yellow
-        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-        git -C $tmp init --quiet -b master
-        git -C $tmp remote add origin $wikiUrl
+        # GitHub creates the wiki git repo lazily — it does not exist until the first page
+        # is saved through the web UI. There is no REST endpoint to bootstrap it.
+        throw @"
+ERROR: El repositorio wiki de $Repo aun no esta inicializado.
+
+GitHub crea el wiki git repo de forma lazy: no existe hasta que se guarda
+la primera pagina desde la interfaz web. No hay endpoint REST para crearlo.
+
+Para inicializarlo:
+  1. Abre https://github.com/$Repo/wiki en el navegador
+  2. Haz clic en "Create the first page"
+  3. Escribe cualquier contenido y pulsa "Save Page"
+  4. Vuelve a ejecutar este comando
+
+"@
     }
     foreach ($name in $pages.Keys) {
         $pages[$name] | Set-Content -LiteralPath (Join-Path $tmp "$name.md") -Encoding utf8

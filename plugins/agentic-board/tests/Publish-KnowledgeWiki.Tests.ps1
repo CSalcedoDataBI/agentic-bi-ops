@@ -59,3 +59,50 @@ Describe 'Publish-KnowledgeWiki (empty registry)' {
         Remove-Item $root -Recurse -Force
     }
 }
+
+Describe 'Publish-KnowledgeWiki (uninitialized wiki error)' {
+    BeforeAll {
+        $script:UninitRoot = New-Root
+        Seed-Registry $script:UninitRoot @(
+            [pscustomobject]@{ id='kn_001'; domain='TestDomain'; type='url'; title='Test Ref'; ref='https://example.com'; note='test'; added='2026-07-23' }
+        )
+        # Save any existing git/gh functions so AfterAll can restore them.
+        $script:PriorGit = Get-Item 'Function:git' -ErrorAction SilentlyContinue
+        $script:PriorGh  = Get-Item 'Function:gh'  -ErrorAction SilentlyContinue
+        # Override git/gh as PowerShell functions — they shadow the real executables inside PS.
+        # git mock: exit 128 when called with 'clone' (mimics an uninitialized wiki repo).
+        function global:git {
+            if ('clone' -in $args) { $global:LASTEXITCODE = 128; return }
+            $global:LASTEXITCODE = 0
+        }
+        # gh mock: return minimal fake auth data so the auth/wiki-enabled checks pass.
+        function global:gh {
+            if ($args[0] -eq 'api' -and 'user' -in $args) {
+                Write-Output 'test-user'
+            } elseif ($args[0] -eq 'api') {
+                Write-Output '{"has_wiki":true,"permissions":{"push":true},"name":"test"}'
+            }
+            $global:LASTEXITCODE = 0
+        }
+        # Use a test-scoped env-var name so GITHUB_TOKEN_PERSONAL is never touched.
+        [System.Environment]::SetEnvironmentVariable('ABIOS_TEST_WIKI_TOKEN', 'fake-unit-test-token', 'User')
+    }
+    AfterAll {
+        [System.Environment]::SetEnvironmentVariable('ABIOS_TEST_WIKI_TOKEN', $null, 'User')
+        Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+        Remove-Item 'Function:git' -ErrorAction SilentlyContinue
+        Remove-Item 'Function:gh'  -ErrorAction SilentlyContinue
+        if ($script:PriorGit) { New-Item -Path 'Function:git' -Value $script:PriorGit.ScriptBlock -Force | Out-Null }
+        if ($script:PriorGh)  { New-Item -Path 'Function:gh'  -Value $script:PriorGh.ScriptBlock  -Force | Out-Null }
+        if ($script:UninitRoot -and (Test-Path $script:UninitRoot)) { Remove-Item $script:UninitRoot -Recurse -Force }
+    }
+
+    It 'throws with the actionable step to create the first wiki page via web UI' {
+        { & $script:Engine -Root $script:UninitRoot -Repo 'test-owner/test-wiki-repo' -TokenVar ABIOS_TEST_WIKI_TOKEN } |
+            Should -Throw -ExpectedMessage '*Create the first page*'
+    }
+    It 'error message includes the wiki URL so the user can navigate directly' {
+        { & $script:Engine -Root $script:UninitRoot -Repo 'test-owner/test-wiki-repo' -TokenVar ABIOS_TEST_WIKI_TOKEN } |
+            Should -Throw -ExpectedMessage '*github.com/test-owner/test-wiki-repo/wiki*'
+    }
+}
