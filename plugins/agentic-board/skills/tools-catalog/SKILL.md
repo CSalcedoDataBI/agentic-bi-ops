@@ -35,13 +35,13 @@ method and note so the user reads the reference before deciding. `<id>` matches 
 tool name (case-insensitive). Never installs anything.
 
 ### install <id>  (confirm each; never duplicate)
-Install one item by KIND:
-- `skill-clone` → `scripts/Install-SkillFromRepo.ps1` (clean `--depth 1` clone, copy only the skill
-  folder, **preserve LICENSE**). Skipped with a note when `Get-SkillGaps.ps1` already shows it installed.
-- `plugin` (e.g. `microsoft/skills-for-fabric`) → all-or-nothing: SURFACE its own install command,
-  never cherry-pick a single skill out of it.
-
-The hardened selective-install path is delivered in #387.
+Run `scripts/Install-ToolFromCatalog.ps1 -Id <id>` — it resolves the item and installs by KIND:
+- `skill-clone` → delegates to `Install-SkillFromRepo.ps1` (clean `--depth 1` clone, copy only the
+  skill folder, **preserve LICENSE**). Skipped with a note when it already shows as installed.
+- `plugin` (e.g. `microsoft/skills-for-fabric`) → all-or-nothing: it SURFACES the install command for
+  the user to run, never cherry-picking a single skill out of it.
+- a bare `reference` (not installable) → reports the URL to open instead.
+Confirm before running; `-DryRun` previews. `<id>` matches the row id or the tool name.
 
 ### install --all  (one pass, one confirmation)
 Batch-install every MISSING installable in a single dry-run-then-confirm pass. Plugin-kind entries
