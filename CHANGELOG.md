@@ -271,7 +271,17 @@
 - **plan: board fleet - Phase 2 (coordinator + task reaper)** (#190)
 - **plan: engineering hardening & DX** (#200)
 
-## [Unreleased]
+## [0.25.0] - 2026-07-22
+### Added
+- **abios-feedback: translate the 12 Spanish issues the English-only rule arrived too late for** (#308)
+- **board: expose Assert-BoardComplete as the /board complete sub-action** (#370)
+- **Browse + research view: list ALL referenced tools grouped, each row showing its URL; 'research <id>' surfaces the exact reference before installing** (#386)
+- **Command surface: add /agentic-board:tools command + internal tools-catalog skill (commands/tools.md + user-invocable:false skill per Command Surface Contract; wire menu + CommandSurface.Tests)** (#384)
+- **Install-all (one shot): batch-install every missing installable in a single pass with a dry-run summary + one confirmation; plugin entries listed separately (surfaced, not cherry-picked)** (#388)
+- **Pester coverage + docs regen: tests for the resolver + command contract; regenerate README command catalog via Update-Docs.ps1** (#389)
+- **plan: /agentic-board:tools ÔÇö unified referenced-tools catalog (browse, research, install individual or all)** (#383)
+- **Selective install (individual): install one item by id ÔÇö skill-clone via Install-SkillFromRepo (LICENSE preserved), plugin surfaces its own install command; confirm each, never duplicate** (#387)
+- **Unified catalog resolver: merge knowledge/registry.json refs + presets/toolkits/*.json into one item model (name, domain, kind, url, installable, install-method, installed) reusing Get-SkillGaps for installed-detection** (#385)
 
 ## [0.18.0] - 2026-07-13
 ### Added
