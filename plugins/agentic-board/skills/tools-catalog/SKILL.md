@@ -24,15 +24,15 @@ carrying: `name, domain, kind, url, installable, install-method, installed`.
 ## Sub-actions
 
 ### browse  (read-only, no token)
-List every referenced tool grouped by domain. Each row shows `kind`, `url`, and installed-state
-(`✓ installed` / `— available` / `plugin: <install cmd>`). The resolver
-`scripts/Get-ToolsCatalog.ps1 -Json` composes registry + presets into the unified item model and
-marks installed via the `Get-SkillGaps` rules — call it and render its `items`. The browse/research
-presentation is refined in #386.
+Run `scripts/Show-ToolsCatalog.ps1` — it renders the unified catalog grouped by domain, each row
+showing `[installed|available|reference]`, the id, the kind, and the URL. It reads
+`scripts/Get-ToolsCatalog.ps1` under the hood (registry + presets merged, installed-state via the
+`Get-SkillGaps` rules); pass `-Json` to the resolver directly when you need the raw item model.
 
 ### research <id>  (read-only)
-Surface the exact reference for ONE tool — its URL and registry note — so the user reads the source
-before installing. Never installs anything.
+Run `scripts/Show-ToolsCatalog.ps1 -Id <id>` — it surfaces ONE tool's name, source, URL, install
+method and note so the user reads the reference before deciding. `<id>` matches the row id or the
+tool name (case-insensitive). Never installs anything.
 
 ### install <id>  (confirm each; never duplicate)
 Install one item by KIND:
