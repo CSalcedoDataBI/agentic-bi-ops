@@ -104,6 +104,7 @@ if (Test-Path -LiteralPath $CatalogDir) {
                 id=$e.name; name=$e.name; domain=$stem; kind=$e.kind; url=$e.homepage
                 installable=$true; installed=$installed; source='preset'; note=$e.purpose
                 installMethod=$method; repo=$e.repo; path=$e.path; detect=$e.detect; refId=$null
+                owner=$e.owner; license=$e.license
             })
             $h = Get-NormUrl $e.homepage
             if ($h) { if (-not $homeIdx.ContainsKey($h)) { $homeIdx[$h] = [System.Collections.Generic.List[string]]::new() }; $homeIdx[$h].Add($pkey) }
@@ -124,6 +125,7 @@ foreach ($r in $refs) {
             id=$r.id; name=$r.title; domain=$r.domain; kind=$r.type; url=$r.ref
             installable=$false; installed=$false; source='registry'; note=$r.note
             installMethod=$null; repo=$null; path=$null; detect=$null; refId=$null
+            owner=$null; license=$null
         })
     }
 }
