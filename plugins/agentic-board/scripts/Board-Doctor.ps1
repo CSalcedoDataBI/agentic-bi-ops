@@ -99,6 +99,10 @@ $ErrorActionPreference = "Stop"
 # The single resolver for the internal state dir (new name + migration + fallback).
 . (Join-Path $PSScriptRoot 'Get-AbiosStateDir.ps1')
 
+# The single resolver for owner/name from this clone's origin (#281, #392). Do NOT inline the regex
+# again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
+
 # Reuse (do not re-implement) the merge verdict and the live-session view. Board-Work.ps1
 # exposes a documented dot-source guard for exactly this: it returns before its main entry,
 # so no token is needed and nothing is executed. `Get-SessionCompletion` is the pure,
@@ -254,12 +258,7 @@ if (-not $env:GH_TOKEN) { throw "$TokenVar not set in Windows USER environment (
 
 if (-not (git rev-parse --git-dir 2>$null)) { throw "Not inside a git repository." }
 
-if (-not $Repo) {
-    $originUrl = ""
-    try { $originUrl = (git remote get-url origin 2>$null) } catch { }
-    if ($originUrl -match 'github\.com[:/](.+?/.+?)(\.git)?/?$') { $Repo = $Matches[1] }
-}
-if (-not $Repo) { throw "No pude resolver el repo desde 'origin' - pasa -Repo owner/name." }
+if (-not $Repo) { $Repo = Get-RepoFromOrigin }
 
 Write-Host ""
 Write-Host "=== /board doctor - inventario de ramas y worktrees ($Repo) ===" -ForegroundColor Cyan

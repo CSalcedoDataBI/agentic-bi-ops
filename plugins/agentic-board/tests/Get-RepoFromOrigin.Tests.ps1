@@ -126,3 +126,26 @@ Describe 'the broken pattern is gone from every script (#281)' {
         $offenders.Name | Should -BeNullOrEmpty
     }
 }
+
+Describe 'every origin-deriving script uses the shared helper (#392)' {
+    # Any script that calls `git remote get-url origin` for repo derivation MUST dot-source the
+    # shared resolver. Having its own inline derivation — even a "correct" one — is a divergence
+    # risk: the next URL format that Get-RepoFromOriginUrl learns (e.g. ssh.github.com:443) won't
+    # reach that script, and the next bug in its ad-hoc regex won't be caught by the shared tests.
+    #
+    # Heuristic: if a script mentions `git remote get-url origin` but does NOT source the helper,
+    # it has its own derivation. Board-Work.ps1 is the only allowed exception: it reads the remote
+    # for VERIFICATION (does the URL contain the already-known owner/name?), not derivation — and
+    # it already dot-sources the helper anyway, so the check still passes for it.
+    It 'every script that reads git remote get-url origin dot-sources Get-RepoFromOrigin.ps1' {
+        $helper = 'Get-RepoFromOrigin.ps1'
+        $scripts = Get-ChildItem (Join-Path $PSScriptRoot '..' 'scripts') -Filter '*.ps1' -File |
+                   Where-Object { $_.Name -ne $helper }
+        $offenders = @($scripts | Where-Object {
+            $content = Get-Content $_.FullName -Raw
+            ($content -match 'git remote get-url origin') -and
+            ($content -notmatch [regex]::Escape($helper))
+        })
+        $offenders.Name | Should -BeNullOrEmpty
+    }
+}

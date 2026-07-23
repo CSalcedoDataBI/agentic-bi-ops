@@ -8,6 +8,13 @@
   dead code that always ended with `remote: Repository not found` on push. It is removed; instead the
   script throws a clear multi-step message directing the user to create the first page at
   `https://github.com/<repo>/wiki` and then re-run the command.
+- **`Get-RepoFromOrigin` is now the single resolver for ALL origin-deriving scripts** (#392).
+  Four scripts — `Board-Merge`, `New-BoardPR`, `Publish-KnowledgeWiki`, `Board-Doctor` — still
+  carried their own correct-but-inline derivation after the #281 consolidation. Any future
+  improvement to the shared helper (new URL scheme, edge-case fix) would have silently missed
+  them. All four now dot-source `Get-RepoFromOrigin.ps1` and call `Get-RepoFromOrigin`, making
+  the consolidation complete. A new Pester guard (`Get-RepoFromOrigin.Tests.ps1`) enforces this:
+  any script that reads `git remote get-url origin` without sourcing the helper fails CI.
 
 ## [0.24.1] - 2026-07-22
 ### Fixed

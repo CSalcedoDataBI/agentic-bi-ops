@@ -90,18 +90,12 @@ if ($env:ABIOS_NEWBOARDPR_DOTSOURCE) { return }
 # used to be indistinguishable from "no PR" and took the silent-skip path above.
 . (Join-Path $PSScriptRoot 'Invoke-Gh.ps1')
 
+# The single resolver for owner/name from this clone's origin (#281, #392). Do NOT inline the regex
+# again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
+
 # -- 1. Repo: -Repo or origin (strip any embedded credential - never reuse it) --
-if (-not $Repo) {
-    $url = git remote get-url origin 2>$null
-    if (-not $url) { throw "No hay remote 'origin' aqui - usa -Repo owner/name." }
-    if ($url -match '(?i)^https://(?:[^@/]+@)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$') {
-        $Repo = "$($Matches[1])/$($Matches[2])"
-    }
-    elseif ($url -match '(?i)^git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$') {
-        $Repo = "$($Matches[1])/$($Matches[2])"
-    }
-    else { throw "No pude derivar owner/name de '$url' - usa -Repo owner/name." }
-}
+if (-not $Repo) { $Repo = Get-RepoFromOrigin }
 if ($Repo -notmatch '^[^/]+/[^/]+$') { throw "-Repo debe ser owner/name (recibi '$Repo')." }
 $owner = ($Repo -split '/')[0]
 
