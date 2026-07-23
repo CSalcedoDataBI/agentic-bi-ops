@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **`Publish-DocsWiki.ps1` — generate product documentation wiki pages from README + commands** (#403).
+  A new script that publishes six pages to the GitHub Wiki: `Docs-Home` (README with HTML stripped)
+  and one `Docs-Command-<X>` page per command file in `commands/`. All pages carry a
+  `<!-- GENERATED -->` marker so the wiki is clearly derived output, never hand-maintained.
+  Supports `-PagesOnly -OutDir` for local preview/testing without git, and `-DryRun` to validate
+  without pushing. Same credential-helper pattern as `Publish-KnowledgeWiki.ps1` (token never on
+  the command line; uses `Get-RepoFromOrigin` for repo resolution).
+
 ### Fixed
 - **`/knowledge wiki` now surfaces an actionable error when the wiki is uninitialized** (#402).
   GitHub creates the wiki git repo lazily — it does not exist until the first page is saved via the web
