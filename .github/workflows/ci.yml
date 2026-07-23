@@ -3,8 +3,10 @@ name: CI
 # Two blocking checks on every pull request:
 #   * `test` — the Pester suite (a failure blocks the merge; Board-ReviewGate
 #     waits on it, and it can be marked "Required" in the branch ruleset, see #201).
-#   * `docs` — the docs-freshness gate (#203): regenerate the derived README
-#     regions from source and fail if they drift from what was committed.
+#   * `docs` — the docs-freshness gate (#203 + #406): regenerate the derived README
+#     regions from source and fail if they drift from what was committed; also
+#     runs Publish-DocsWiki.ps1 -PagesOnly to verify that the wiki pages can still
+#     be generated from the current README + commands/ without error.
 
 on:
   pull_request:
@@ -72,3 +74,23 @@ jobs:
             echo "Fix it locally: run 'plugins/agentic-board/scripts/Update-Docs.ps1' and commit README.md."
             exit 1
           fi
+
+      # Wiki docs freshness (#406): verify that the wiki pages can still be generated
+      # from the current README + commands/ without error, and that every generated page
+      # carries the <!-- GENERATED --> marker.  No git/network — pure -PagesOnly run.
+      - name: Validate wiki doc generation
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'wiki-preview'
+          & plugins/agentic-board/scripts/Publish-DocsWiki.ps1 -Root . -PagesOnly -OutDir $out
+          $pages = @(Get-ChildItem $out -Filter '*.md')
+          if ($pages.Count -eq 0) {
+            Write-Host '::error::Wiki doc generation produced no pages.'
+            exit 1
+          }
+          $bad = @($pages | Where-Object { (Get-Content $_.FullName -Raw) -notmatch '<!-- GENERATED' })
+          if ($bad) {
+            Write-Host "::error::Missing GENERATED marker in: $($bad.Name -join ', ')"
+            exit 1
+          }
+          Write-Host "Wiki docs OK — $($pages.Count) page(s): $($pages.BaseName -join ', ')"
