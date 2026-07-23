@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 ### Added
+- **`Publish-DocsWiki.ps1` now generates `_Sidebar.md` + `_Footer.md` for wiki-wide navigation** (#404).
+  Every publish now writes two GitHub wiki special pages alongside the product docs pages:
+  `_Sidebar` shows a **Product Docs** section (links to `Docs-Home` and each `/command` page)
+  plus a **Knowledge** section (link to the knowledge `Home`); `_Footer` carries a
+  "generated from the repository" notice so editors know not to hand-edit the wiki.
+  Both pages carry the `<!-- GENERATED -->` marker. No new parameters required.
 - **`Publish-DocsWiki.ps1` — generate product documentation wiki pages from README + commands** (#403).
   A new script that publishes six pages to the GitHub Wiki: `Docs-Home` (README with HTML stripped)
   and one `Docs-Command-<X>` page per command file in `commands/`. All pages carry a
