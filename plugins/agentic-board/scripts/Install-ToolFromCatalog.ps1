@@ -20,6 +20,8 @@
 [CmdletBinding()]
 param(
     [string]$Id,
+    [switch]$All,
+    [switch]$Yes,
     [switch]$DryRun,
     [string]$Root = (Get-Location).Path,
     [string]$CatalogDir,
@@ -41,7 +43,7 @@ if ($CatalogDir) { $fwd.CatalogDir = $CatalogDir }
 if ($PSBoundParameters.ContainsKey('InstalledNames'))   { $fwd.InstalledNames   = $InstalledNames }
 if ($PSBoundParameters.ContainsKey('InstalledPlugins')) { $fwd.InstalledPlugins = $InstalledPlugins }
 
-function Install-One($t) {
+function Install-One($t, [bool]$dry) {
     if (-not $t.installable) {
         Write-Output ("  {0}: reference only (not installable). Open: {1}" -f $t.id, $t.url)
         return [pscustomobject]@{ id=$t.id; action='reference'; installed=$false }
@@ -56,7 +58,7 @@ function Install-One($t) {
         return [pscustomobject]@{ id=$t.id; action='surface-plugin'; installed=$false; command=$t.installMethod }
     }
     # skill-clone
-    if ($DryRun) {
+    if ($dry) {
         Write-Output ("  {0}: WOULD clone {1}/{2} -> ~/.claude/skills/{3}" -f $t.id, $t.repo, $t.path, $t.name)
         return [pscustomobject]@{ id=$t.id; action='dry-run'; installed=$false }
     }
@@ -76,7 +78,34 @@ if ($PSBoundParameters.ContainsKey('Id') -and $Id) {
         Write-Output "Tool '$Id' not found in the catalog. Run /tools browse to see valid ids."
         return
     }
-    return (Install-One $item[0])
+    return (Install-One $item[0] ([bool]$DryRun))
 }
 
-Write-Output "Nothing to do: pass -Id <id> to install one tool (or -All once #388 lands)."
+if ($All) {
+    $missing  = @((& $resolver @fwd -MissingOnly).items)
+    $skills   = @($missing | Where-Object { $_.kind -eq 'skill-clone' })
+    $plugins  = @($missing | Where-Object { $_.kind -eq 'plugin' })
+
+    if ($missing.Count -eq 0) {
+        Write-Output "install --all: nothing to install - every installable tool is already present."
+        return [pscustomobject]@{ installed=0; surfaced=0; missing=0 }
+    }
+
+    Write-Output ("install --all: {0} missing installable(s) - {1} skill-clone(s) to install, {2} plugin(s) to surface." -f $missing.Count, $skills.Count, $plugins.Count)
+    foreach ($s in $skills)  { Write-Output ("  - {0} (skill-clone {1}/{2})" -f $s.id, $s.repo, $s.path) }
+    foreach ($p in $plugins) { Write-Output ("  ~ {0} (plugin): {1}" -f $p.id, $p.installMethod) }
+
+    # Safe by default: only -Yes actually clones. Without it (or with -DryRun) this is a preview.
+    $proceed = $Yes -and -not $DryRun
+    if (-not $proceed) {
+        Write-Output "(preview) re-run with -Yes to install the skill-clone(s); plugins are surfaced for you to run."
+        return [pscustomobject]@{ installed=0; surfaced=$plugins.Count; missing=$missing.Count; previewed=$true }
+    }
+
+    $results = foreach ($t in $missing) { Install-One $t $false }
+    $done = @($results | Where-Object { $_.action -eq 'install-skill' }).Count
+    Write-Output ("install --all: installed {0} skill-clone(s); {1} plugin(s) surfaced." -f $done, $plugins.Count)
+    return [pscustomobject]@{ installed=$done; surfaced=$plugins.Count; missing=$missing.Count }
+}
+
+Write-Output "Nothing to do: pass -Id <id> to install one tool, or -All to install every missing installable."

@@ -44,8 +44,10 @@ Run `scripts/Install-ToolFromCatalog.ps1 -Id <id>` — it resolves the item and 
 Confirm before running; `-DryRun` previews. `<id>` matches the row id or the tool name.
 
 ### install --all  (one pass, one confirmation)
-Batch-install every MISSING installable in a single dry-run-then-confirm pass. Plugin-kind entries
-are listed SEPARATELY (surfaced, not installed blindly). Delivered in #388.
+Run `scripts/Install-ToolFromCatalog.ps1 -All` — it lists every MISSING installable, skill-clones and
+plugins SEPARATELY, and is a safe preview by default (installs nothing). Show that plan to the user,
+get ONE confirmation, then re-run with `-All -Yes` to clone the skill-clones; plugin entries are
+always surfaced (their install command printed) for the user to run, never installed blindly.
 
 ## Identity
 `browse` and `research` need no token. An install that clones or files follows the `gh-account`

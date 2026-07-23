@@ -76,3 +76,35 @@ Describe 'Install-ToolFromCatalog — install one (#387)' {
         $out | Should -Match 'not found'
     }
 }
+
+Describe 'Install-ToolFromCatalog — install --all (#388)' {
+    AfterEach { if (Test-Path $script:StubLog) { Remove-Item $script:StubLog -Force } }
+
+    It '-All -DryRun lists skill-clones and plugins separately, installing nothing' {
+        $out = (& $script:Install -All @script:Base -InstalledNames @() -DryRun) -join "`n"
+        (Test-Path $script:StubLog) | Should -BeFalse
+        $out | Should -Match '1 skill-clone\(s\) to install, 1 plugin\(s\)'
+        $out | Should -Match 'skill-creator \(skill-clone anthropics/skills'   # skill listed in the plan
+        $out | Should -Match 'marketplace'                                     # fabric plugin surfaced
+    }
+
+    It '-All without -Yes is a safe preview (no install)' {
+        $out = (& $script:Install -All @script:Base -InstalledNames @()) -join "`n"
+        (Test-Path $script:StubLog) | Should -BeFalse
+        $out | Should -Match '-Yes'
+    }
+
+    It '-All -Yes installs the skill-clones and surfaces the plugins' {
+        $out = (& $script:Install -All @script:Base -InstalledNames @() -Yes) -join "`n"
+        (Get-Content -LiteralPath $script:StubLog -Raw) | Should -Match ([regex]::Escape('anthropics/skills|skill-creator|skill-creator'))
+        (Get-Content -LiteralPath $script:StubLog -Raw) | Should -Not -Match 'skills-for-fabric'  # plugin not auto-run
+        $out | Should -Match 'installed 1 skill-clone'
+    }
+
+    It '-All reports nothing to do when all installables are present' {
+        $b = $script:Base.Clone(); $b.InstalledPlugins = @('fabric-collection')
+        $out = (& $script:Install -All @b -InstalledNames @('skill-creator') -Yes) -join "`n"
+        (Test-Path $script:StubLog) | Should -BeFalse
+        $out | Should -Match 'nothing to install'
+    }
+}
