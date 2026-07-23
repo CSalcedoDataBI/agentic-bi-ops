@@ -60,6 +60,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# The single resolver for owner/name from this clone's origin (#281, #392). Do NOT inline the regex
+# again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
+
 # After a successful merge, gh's --delete-branch removes the REMOTE branch, but its LOCAL delete is
 # best-effort: it silently no-ops when the branch is checked out (here, or in another worktree) or
 # the merge came from the UI/another machine. That silent miss is how merged branches pile up (#302
@@ -76,17 +80,7 @@ function Show-LocalBranchCleanupHint {
 }
 
 # -- 1. Repo: -Repo or origin (strip any embedded credential - never reuse it) --
-if (-not $Repo) {
-    $url = git remote get-url origin 2>$null
-    if (-not $url) { throw "No hay remote 'origin' aqui - usa -Repo owner/name." }
-    if ($url -match '(?i)^https://(?:[^@/]+@)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$') {
-        $Repo = "$($Matches[1])/$($Matches[2])"
-    }
-    elseif ($url -match '(?i)^git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$') {
-        $Repo = "$($Matches[1])/$($Matches[2])"
-    }
-    else { throw "No pude derivar owner/name de '$url' - usa -Repo owner/name." }
-}
+if (-not $Repo) { $Repo = Get-RepoFromOrigin }
 if ($Repo -notmatch '^[^/]+/[^/]+$') { throw "-Repo debe ser owner/name (recibi '$Repo')." }
 $owner = ($Repo -split '/')[0]
 

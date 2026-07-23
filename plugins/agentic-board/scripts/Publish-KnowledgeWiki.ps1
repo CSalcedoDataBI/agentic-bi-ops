@@ -27,6 +27,10 @@ function Get-DomainSlug { param([string]$d) 'Knowledge-' + (($d -replace '[^\w-]
 
 # -- Read the registry --------------------------------------------------------------
 . (Join-Path $PSScriptRoot 'KnowledgeRegistryIo.ps1')
+
+# The single resolver for owner/name from this clone's origin (#281, #392). Do NOT inline the regex
+# again: the copy-pasted version ate any dot in the repo name (midominio.com -> midominio).
+. (Join-Path $PSScriptRoot 'Get-RepoFromOrigin.ps1')
 $regPath = Resolve-KnowledgeRegistryPath -Root $Root
 if (-not (Test-Path -LiteralPath $regPath)) { throw "No registry at $regPath — run /knowledge add first." }
 $reg  = Read-KnowledgeRegistry -Path $regPath
@@ -86,13 +90,7 @@ if ($PagesOnly) {
 }
 
 # -- Resolve repo + account (mirror New-BoardPR) ------------------------------------
-if (-not $Repo) {
-    $url = git remote get-url origin 2>$null
-    if (-not $url) { throw "No origin remote here — pass -Repo owner/name." }
-    if     ($url -match '(?i)^https://(?:[^@/]+@)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$') { $Repo = "$($Matches[1])/$($Matches[2])" }
-    elseif ($url -match '(?i)^git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$')                   { $Repo = "$($Matches[1])/$($Matches[2])" }
-    else { throw "Could not derive owner/name from '$url' — pass -Repo owner/name." }
-}
+if (-not $Repo) { $Repo = Get-RepoFromOrigin }
 if ($Repo -notmatch '^[^/]+/[^/]+$') { throw "-Repo must be owner/name (got '$Repo')." }
 $owner = ($Repo -split '/')[0]
 $ownerVarMap = @{ 'CSalcedoDataBI' = 'GITHUB_TOKEN_PERSONAL'; 'PAL-Devs' = 'GITHUB_TOKEN_BUSINESS' }
