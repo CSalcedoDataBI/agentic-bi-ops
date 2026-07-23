@@ -25,10 +25,10 @@ carrying: `name, domain, kind, url, installable, install-method, installed`.
 
 ### browse  (read-only, no token)
 List every referenced tool grouped by domain. Each row shows `kind`, `url`, and installed-state
-(`✓ installed` / `— available` / `plugin: <install cmd>`). Prefer the resolver
-`scripts/Get-ToolsCatalog.ps1 -Json` (the unified catalog model, delivered in #385) which composes
-registry + presets and marks installed via `Get-SkillGaps.ps1`. Until it lands, compose in-context:
-read `knowledge/registry.json` and every `presets/toolkits/*.json`, then union by `url`/`name`.
+(`✓ installed` / `— available` / `plugin: <install cmd>`). The resolver
+`scripts/Get-ToolsCatalog.ps1 -Json` composes registry + presets into the unified item model and
+marks installed via the `Get-SkillGaps` rules — call it and render its `items`. The browse/research
+presentation is refined in #386.
 
 ### research <id>  (read-only)
 Surface the exact reference for ONE tool — its URL and registry note — so the user reads the source
