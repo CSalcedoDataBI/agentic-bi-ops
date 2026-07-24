@@ -10,7 +10,7 @@ Route the request to the right knowledge-ops skill.
 - `harvest` → invoke **knowledge-harvest** (scan repo → pick → add).
 - `list [domain]` → invoke **knowledge-registry** (Get-KnowledgeInventory) and print the table.
 - `gen` → invoke **knowledge-registry** (Write-KnowledgeTable).
-- `wiki` → invoke **knowledge-registry** (Publish-KnowledgeWiki) to publish the registry to the repo's GitHub Wiki.
+- `wiki` → invoke **knowledge-registry** (Publish-KnowledgeWiki) to publish the registry to the repo's GitHub Wiki. **Deprecated** — delegates to `/docs wiki` (Publish-DocsWiki.ps1), which is now the single publisher for all wiki content (product docs + knowledge registry in one push).
 - no argument → show this menu.
 
 The registry lives at `knowledge/registry.json`; the readable table at `knowledge/KNOWLEDGE.md`.
