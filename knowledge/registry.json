@@ -11,7 +11,8 @@
     "Claude-Code",
     "Research",
     "Multi-Agent-Orchestration",
-    "Diagrams"
+    "Diagrams",
+    "Docs-Publishing"
   ],
   "references": [
     {
@@ -175,6 +176,42 @@
       "ref": "https://github.com/microsoft/skills-for-fabric",
       "note": "MIT first-party marketplace of Fabric/PBI agent skills. Source of the powerbi-authoring plugin (bundles all skills above + registers the Modeling MCP). Cross-tool: Copilot CLI, VS Code, Claude Code, Cursor, Codex, Windsurf.",
       "added": "2026-07-22"
+    },
+    {
+      "id": "kn_019",
+      "domain": "Docs-Publishing",
+      "type": "url",
+      "title": "DeepWiki (Cognition)",
+      "ref": "https://deepwiki.com",
+      "note": "Hosted AI wiki generator for public repos: prose + diagrams from the code, zero setup, re-index on demand. Verified 2026-07-23: knows CSalcedoDataBI/agentic-board but Not Indexed - one click to index. Private repos need paid Devin.",
+      "added": "2026-07-23"
+    },
+    {
+      "id": "kn_020",
+      "domain": "Docs-Publishing",
+      "type": "repo",
+      "title": "deepwiki-open",
+      "ref": "https://github.com/AsyncFuncAI/deepwiki-open",
+      "note": "MIT, 17.4k stars, active. UNOFFICIAL reimplementation of DeepWiki, self-hosted, needs LLM API keys; author is pivoting to paid grok-wiki.com. Generates its own site, NOT a GitHub Wiki.",
+      "added": "2026-07-23"
+    },
+    {
+      "id": "kn_021",
+      "domain": "Docs-Publishing",
+      "type": "repo",
+      "title": "github-wiki-action",
+      "ref": "https://github.com/Andrew-Chen-Wang/github-wiki-action",
+      "note": "Apache-2.0, 107 stars, pushed 2026-07-11 - the liveliest GitHub Wiki publishing action. Solves only the PUSH mechanics (already solved in Publish-DocsWiki.ps1), not the content problem. gh search code: appears almost only in awesome-lists, near-zero real workflow adoption.",
+      "added": "2026-07-23"
+    },
+    {
+      "id": "kn_022",
+      "domain": "Docs-Publishing",
+      "type": "repo",
+      "title": "wiki-sync-action (New Relic)",
+      "ref": "https://github.com/newrelic/wiki-sync-action",
+      "note": "Apache-2.0, 34 stars, last push 2024-08-27 (stale). Two-way repo<->wiki sync. Same limit: push mechanics only.",
+      "added": "2026-07-23"
     }
   ]
 }

@@ -18,6 +18,15 @@
 | Kroki — universal diagram render | url | [https://kroki.io/](https://kroki.io/) | Renders Mermaid/D2/Graphviz/PlantUML to SVG/PNG via a URL — the render path when a diagram is not inline-native and must be embedded as an image. |
 | Mermaid — diagram-as-code | repo | [https://github.com/mermaid-js/mermaid](https://github.com/mermaid-js/mermaid) | Diagram-as-code. GitHub and Claude render fenced mermaid blocks natively — the plugin default, zero build step. |
 
+## Docs-Publishing
+
+| Title | Type | Ref | Note |
+|-------|------|-----|------|
+| DeepWiki (Cognition) | url | [https://deepwiki.com](https://deepwiki.com) | Hosted AI wiki generator for public repos: prose + diagrams from the code, zero setup, re-index on demand. Verified 2026-07-23: knows CSalcedoDataBI/agentic-board but Not Indexed - one click to index. Private repos need paid Devin. |
+| deepwiki-open | repo | [https://github.com/AsyncFuncAI/deepwiki-open](https://github.com/AsyncFuncAI/deepwiki-open) | MIT, 17.4k stars, active. UNOFFICIAL reimplementation of DeepWiki, self-hosted, needs LLM API keys; author is pivoting to paid grok-wiki.com. Generates its own site, NOT a GitHub Wiki. |
+| github-wiki-action | repo | [https://github.com/Andrew-Chen-Wang/github-wiki-action](https://github.com/Andrew-Chen-Wang/github-wiki-action) | Apache-2.0, 107 stars, pushed 2026-07-11 - the liveliest GitHub Wiki publishing action. Solves only the PUSH mechanics (already solved in Publish-DocsWiki.ps1), not the content problem. gh search code: appears almost only in awesome-lists, near-zero real workflow adoption. |
+| wiki-sync-action (New Relic) | repo | [https://github.com/newrelic/wiki-sync-action](https://github.com/newrelic/wiki-sync-action) | Apache-2.0, 34 stars, last push 2024-08-27 (stale). Two-way repo<->wiki sync. Same limit: push mechanics only. |
+
 ## Multi-Agent-Orchestration
 
 | Title | Type | Ref | Note |
