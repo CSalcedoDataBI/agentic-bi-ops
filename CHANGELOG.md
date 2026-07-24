@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 ### Added
+- **`Publish-DocsWiki.ps1` is now the single wiki publisher — includes knowledge registry pages** (#405).
+  Previously `Publish-DocsWiki.ps1` (product docs) and `Publish-KnowledgeWiki.ps1` (knowledge registry)
+  each cloned the wiki, wrote their pages, and pushed independently, creating a race condition.
+  `Publish-DocsWiki.ps1` now generates both sets of pages in one clone → commit → push: product docs
+  (`Docs-Home`, `Docs-Command-*`) + knowledge registry (`Home`, `Knowledge-<Domain>`) when
+  `knowledge/registry.json` exists. `_Sidebar` now lists all knowledge domain pages alongside the
+  product docs links. `Publish-KnowledgeWiki.ps1` is kept as a deprecated thin alias that delegates
+  to `Publish-DocsWiki.ps1` for backward compatibility. A new `/docs` command (`commands/docs.md`)
+  documents the unified publisher. Use `/docs wiki` for new work; `/knowledge wiki` still works.
 - **Wiki docs freshness check in CI** (#406).
   The `docs` job in `ci.yml` now runs `Publish-DocsWiki.ps1 -PagesOnly` on every pull request,
   verifying that wiki pages can be generated from the current `README.md` + `commands/` without
