@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 ### Added
+- **Wiki docs freshness check in CI** (#406).
+  The `docs` job in `ci.yml` now runs `Publish-DocsWiki.ps1 -PagesOnly` on every pull request,
+  verifying that wiki pages can be generated from the current `README.md` + `commands/` without
+  error and that every generated page carries the `<!-- GENERATED -->` marker.  No git or network
+  access — pure generation only.  A broken generator or a removed README now blocks merge immediately
+  rather than silently producing a broken wiki on the next publish run.
 - **`Publish-DocsWiki.ps1` now generates `_Sidebar.md` + `_Footer.md` for wiki-wide navigation** (#404).
   Every publish now writes two GitHub wiki special pages alongside the product docs pages:
   `_Sidebar` shows a **Product Docs** section (links to `Docs-Home` and each `/command` page)
